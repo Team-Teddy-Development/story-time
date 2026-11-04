@@ -118,3 +118,16 @@ test('README documents the Codex install', async () => {
   assert.match(readme, /codex plugin marketplace add team-teddy-development\/story-time/);
   assert.match(readme, /--agent codex/);
 });
+
+test('story-time routes setup requests and every skill reads the project config', async () => {
+  const core = await readFile(join(SKILLS, 'story-time', 'SKILL.md'), 'utf8');
+  assert.match(core, /\*\*story-setup\*\* skill/);
+  assert.match(core, /story config/);
+});
+
+test('skills that produce or change a story end with a copyable export card', async () => {
+  for (const name of ['story-create', 'story-edit', 'story-split']) {
+    const text = await readFile(join(SKILLS, name, 'SKILL.md'), 'utf8');
+    assert.match(text, /story export/, `${name} must hand off with story export`);
+  }
+});

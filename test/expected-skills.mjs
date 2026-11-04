@@ -1,6 +1,7 @@
 // The skills the library ships. Add a name here first (red), then the skill (green).
 export const EXPECTED = [
   'story-time',
+  'story-setup',
   'principle-invest',
   'story-create',
   'story-edit',
