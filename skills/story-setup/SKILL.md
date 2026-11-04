@@ -1,12 +1,12 @@
 ---
 name: story-setup
-description: One-time project setup for story-time. Detects the repo, task tracker (GitHub Issues, Azure DevOps, Jira, Linear, or plain files), tech stack, and test tooling, asks only what it cannot detect (team velocity, WIP limit, process template, Definition of Done), and writes a validated .story-time.json that every other story-time skill reads. Use when the user says "set up story time", "configure story-time", starts using story-time in a new repo, or when `story config` shows no config file.
+description: One-time project setup for story-time. Detects the repo, task tracker (GitHub Issues, Azure DevOps, Jira, Linear, or plain files), tech stack, and test tooling, asks only what it cannot detect (velocity, WIP limit, process template, Definition of Done, whether to push to the tracker automatically), sets up tracker auth safely, and writes .story-time/settings.json, which every other story-time skill reads. Use when the user says "set up story time", "configure story-time", starts using story-time in a new repo, or when `story config` shows no config file.
 ---
 
 # Story Setup
 
-`story` means the CLI from the **story-time** skill. Setup writes one file,
-`.story-time.json`, at the project root. Commit it, so the whole team and
+`story` means the CLI from the **story-time** skill. Setup writes
+`.story-time/settings.json` at the project root. Commit it, so the whole team and
 every agent use the same settings.
 
 ## 1. Check for an existing config
@@ -54,6 +54,14 @@ question so the user can just confirm. In Claude Code, use
    (skip if unknown, since `backlog-groom` asks later), and WIP limit per person.
 5. **Definition of Done / Ready.** Any team rules beyond the defaults in
    the **story-accept** and **story-ready** skills, one line each.
+6. **Sync** (GitHub or ADO only). Should story-time write to the tracker?
+   - `off` (the default): never. Skills hand back copyable cards, and
+     `story push` refuses to run. Pick this when the project must not
+     change the tracker on its own.
+   - `ask`: after each create, edit, or split, ask before pushing.
+   - `auto`: push right after each change.
+
+   For Jira, Linear, or files, sync is always `off`.
 
 Don't ask about anything you detected with certainty unless the user
 wants to change it.
@@ -66,6 +74,7 @@ Nothing is written if any value is invalid:
 ```json
 {
   "tracker": "ado",
+  "sync": "ask",
   "prefix": "PAY",
   "backlogDir": "backlog",
   "ado": {
@@ -87,14 +96,47 @@ story config
 ```
 
 If `init` reports an error, fix that value with the user and run it again.
+`init` writes `.story-time/settings.json` and `.story-time/.gitignore`
+(which ignores `*.env`).
 
-## 5. Confirm and hand off
+## 5. Authentication (only when sync is `ask` or `auto`)
+
+Check what already works, in this order, and stop at the first that does:
+
+1. **An existing CLI login.** `gh auth status` for GitHub, or
+   `az account show` plus `az devops configure --list` for ADO. This is the
+   best option: gh keeps its token in the OS keychain.
+2. **An environment variable** the user already exports (CI, a shell
+   profile): `GH_TOKEN` or `AZURE_DEVOPS_EXT_PAT`.
+3. **A project token file.** Ask the user to run this themselves, in
+   their own terminal:
+
+   ```bash
+   story secret set github     # or: story secret set ado
+   ```
+
+   It prompts with hidden input and saves `.story-time/.github.env` or
+   `.story-time/.ado.env` with mode 600, git-ignored. Suggest a
+   fine-grained PAT: for GitHub, Issues read/write on this repo only. For
+   ADO, the Work Items (Read & write) scope only, with an expiry date.
+
+Never ask for the token, accept it if it is pasted into the chat, or pass
+it to any command yourself. If the user pastes one anyway, tell them to
+revoke it and create a new one, because the chat transcript now contains it.
+Confirm with `story secret status`, which shows only the last four
+characters.
+
+Then prove it works without changing anything: `story push --all --dry-run`.
+
+## 6. Confirm and hand off
 
 Show the effective config from `story config` and say how it will be used:
 
 - `story export <id>` now prints cards in the tracker's format (`github`,
   `ado`, or neutral `markdown` for Jira, Linear, and files). `--command`
   prints the `gh` or `az boards` command that creates the item.
+- With sync `ask` or `auto`, `story push <id>` creates or updates the
+  tracker item and records `remote` / `remote_url` in the story.
 - **story-pick** uses `team.wipLimit` and `team.sprintDays`.
   **backlog-groom** uses `team.velocity` for the ready buffer.
 - **story-ready** and **story-accept** add `definitionOfReady` and
@@ -102,6 +144,6 @@ Show the effective config from `story config` and say how it will be used:
 - **story-kickoff** writes test names for `project.testFramework` and runs
   `project.testCommand`.
 
-Suggest committing `.story-time.json`. Then offer the next step: the
+Suggest committing `.story-time/settings.json` and `.story-time/.gitignore` (never the `.env` files). Then offer the next step: the
 **story-create** skill for a new backlog, or the **backlog-groom** skill
 for an existing one.

@@ -81,7 +81,8 @@ test('init writes a validated config from an answers file and refuses to overwri
   await writeFile(answers, JSON.stringify({ tracker: 'github', github: { repo: 'acme/shop' }, team: { velocity: 21 } }));
   const r = await story(dir, 'init', '--from', answers);
   assert.equal(r.code, 0, r.stderr);
-  const written = JSON.parse(await readFile(join(dir, '.story-time.json'), 'utf8'));
+  const written = JSON.parse(await readFile(join(dir, '.story-time', 'settings.json'), 'utf8'));
+  assert.match(await readFile(join(dir, '.story-time', '.gitignore'), 'utf8'), /^\*\.env$/m, 'token files are ignored from day one');
   assert.equal(written.tracker, 'github');
   assert.equal(written.team.velocity, 21);
   assert.equal(written.team.wipLimit, 1, 'defaults are written out so the file documents itself');
@@ -96,7 +97,14 @@ test('init rejects invalid answers without writing anything', async () => {
   const r = await story(dir, 'init', '--from', answers);
   assert.equal(r.code, 1);
   assert.match(r.stderr, /github\.repo/);
-  assert.ok(!(await exists(join(dir, '.story-time.json'))));
+  assert.ok(!(await exists(join(dir, '.story-time'))));
+});
+
+test('settings.json wins over the legacy .story-time.json when both exist', async () => {
+  const dir = await project({ tracker: 'files', prefix: 'OLD' });
+  await mkdir(join(dir, '.story-time'));
+  await writeFile(join(dir, '.story-time', 'settings.json'), JSON.stringify({ prefix: 'NEW' }));
+  assert.equal(JSON.parse((await story(dir, 'config', '--json')).stdout).prefix, 'NEW');
 });
 
 test('help lists export, init, and config', async () => {

@@ -1,13 +1,17 @@
-// Project configuration (.story-time.json): what this project uses.
+// Project configuration (.story-time/settings.json): what this project uses.
 // parseConfig is pure: raw JSON in, validated config with defaults out.
 // Reading the file is the CLI's job (boundary discipline).
 
 export const TRACKERS = ['files', 'github', 'ado', 'jira', 'linear'];
 export const ADO_PROCESSES = ['agile', 'scrum', 'basic'];
-export const CONFIG_FILE = '.story-time.json';
+export const SYNC_MODES = ['off', 'ask', 'auto'];
+export const PUSHABLE_TRACKERS = ['github', 'ado'];
+export const CONFIG_DIR = '.story-time';
+export const CONFIG_FILE = `${CONFIG_DIR}/settings.json`;
+export const LEGACY_CONFIG_FILE = '.story-time.json';
 
 const KNOWN_KEYS = new Set([
-  '$schema', 'tracker', 'backlogDir', 'prefix', 'github', 'ado', 'jira', 'linear',
+  '$schema', 'tracker', 'sync', 'backlogDir', 'prefix', 'github', 'ado', 'jira', 'linear',
   'team', 'project', 'definitionOfDone', 'definitionOfReady',
 ]);
 
@@ -23,8 +27,15 @@ export function parseConfig(raw = {}) {
   const prefix = raw.prefix ?? 'ST';
   if (!/^[A-Z][A-Z0-9]*$/.test(prefix)) throw new Error(`prefix must be uppercase letters/digits, e.g. "ST" or "PAY"; got "${prefix}".`);
 
+  const sync = raw.sync ?? 'off';
+  if (!SYNC_MODES.includes(sync)) throw new Error(`sync must be one of: ${SYNC_MODES.join(', ')}; got "${sync}".`);
+  if (sync !== 'off' && !PUSHABLE_TRACKERS.includes(tracker)) {
+    throw new Error(`sync "${sync}" needs tracker github or ado; tracker is "${tracker}". Use sync "off" and story export cards.`);
+  }
+
   const config = {
     tracker,
+    sync,
     backlogDir: str(raw.backlogDir, 'backlogDir') ?? 'backlog',
     prefix,
     team: parseTeam(raw.team ?? {}),
@@ -38,6 +49,17 @@ export function parseConfig(raw = {}) {
   if (raw.jira) config.jira = { ...raw.jira };
   if (raw.linear) config.linear = { ...raw.linear };
   return config;
+}
+
+// Pushing is opt-in per project. Throws with the reason and the way out.
+export function pushPolicy(config) {
+  if (config.sync === 'off') {
+    throw new Error(
+      'Pushing is off for this project (sync: "off" in .story-time/settings.json). ' +
+        'Use story export for a copyable card, or run the story-setup skill to set sync to "ask" or "auto".',
+    );
+  }
+  if (!PUSHABLE_TRACKERS.includes(config.tracker)) throw new Error(`story push supports github and ado; tracker is "${config.tracker}".`);
 }
 
 export function defaultExportFormat(config) {

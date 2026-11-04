@@ -45,6 +45,10 @@ The defaults below, plus every line in `definitionOfDone` from
 story set ST-012 status=done --note "accepted: PR #123; all ACs verified (tests + manual check of AC2)"
 ```
 
+If the story has `remote:` and `sync` is `ask` or `auto` (`story config`),
+push it so the tracker item closes as completed: `story push ST-012`
+(ask first when sync is `ask`).
+
 **Reject.** Leave the story `in-progress`. List each unmet criterion and
 exactly what is missing. Don't lower the bar by editing the criteria to fit
 the implementation. If a criterion turns out to be wrong, that is a scope

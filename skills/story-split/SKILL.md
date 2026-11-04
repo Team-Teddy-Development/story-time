@@ -93,6 +93,17 @@ story export <id> --command   # or: the gh / az boards command that creates it
 ```
 
 Put the output in a fenced block in your reply (it gets a copy button).
-For ADO, each field is its own block. Remind the user to close or re-link the parent item in the tracker.
-If you have the tracker's MCP tools or a signed-in `gh` / `az`, offer to
-create the items directly instead. Do it only when the user says yes.
+For ADO, each field is its own block. With sync `off`, remind the user to close or re-link the parent item in the tracker.
+
+Then follow `sync` from `story config`:
+
+- `off`: stop at the card. Never push, even if `gh` / `az` are signed in.
+- `ask`: ask "Push the children to the tracker now?" On yes, run `story push <parent> <child ids>`
+  and report the URLs it prints.
+- `auto`: run `story push <parent> <child ids>` without asking, and report the URLs.
+
+If a push fails, the CLI has already rolled back what it created. Report its
+error, keep the card, and suggest `story push <parent> <child ids> --dry-run` to check the plan.
+
+Pushing the parent along with its children closes the parent's tracker item
+as not planned, because its status is now `split`.

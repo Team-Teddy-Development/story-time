@@ -14,7 +14,7 @@ script. Here the subject is the story lifecycle, from idea to accepted.
 | Skill | Say | What it does |
 |---|---|---|
 | `story-time` | "story time" | Entry point. Lifecycle, file format, the `story` CLI, and routing to the right skill. |
-| `story-setup` | "set up story time" | One-time setup: detects repo, tracker, stack, and test tooling, asks the rest, and writes `.story-time.json`. |
+| `story-setup` | "set up story time" | One-time setup: detects repo, tracker, stack, and test tooling, asks the rest (including whether to push to the tracker), and writes `.story-time/settings.json`. |
 | `story-create` | "write a story for…" | Turns ideas, bugs, PRDs, or notes into INVEST stories with persona, benefit, criteria, and scope. |
 | `story-edit` | "update ST-012" | Changes a story safely: classifies the change, guards done and in-progress work, catches scope creep, logs why. |
 | `story-split` | "this is too big" | Splits with SPIDR and the classic patterns into vertical slices, and writes them as an all-or-nothing saga. |
@@ -107,11 +107,21 @@ Run the `story-setup` skill once per repo ("set up story time"). It reads the
 git remote, `package.json` / `*.csproj` / `pyproject.toml`, and whether `gh` or
 `az` is installed. It asks only what it can't detect (where work items live,
 ADO process template, velocity, WIP limit, extra Definition of Done or Ready
-rules), then writes a validated `.story-time.json`. Commit it.
+rules, and whether story-time may push to the tracker), then writes a
+validated `.story-time/settings.json`. Commit it.
+
+```
+.story-time/
+  settings.json   committed: tracker, sync mode, team, stack
+  .gitignore      written by story-time: *.env
+  .github.env     GH_TOKEN=…              (mode 600, never committed)
+  .ado.env        AZURE_DEVOPS_EXT_PAT=…  (mode 600, never committed)
+```
 
 ```json
 {
   "tracker": "github",
+  "sync": "ask",
   "github": { "repo": "acme/shop" },
   "prefix": "ST",
   "team": { "sprintDays": 10, "velocity": 21, "wipLimit": 1 },
@@ -131,7 +141,7 @@ Skills that create or change a story end with a copyable card. You can
 also run it yourself:
 
 ```bash
-story export ST-012                    # format follows the tracker in .story-time.json
+story export ST-012                    # format follows the tracker in .story-time/settings.json
 story export ST-012 --format ado       # one copyable block per ADO field
 story export ST-012 --command          # the gh issue create / az boards work-item create command
 ```
@@ -142,9 +152,54 @@ story export ST-012 --command          # the gh issue create / az boards work-it
 | `ado` | Work Item Type, Title, Description, Acceptance Criteria, Story Points or Effort, Tags, and Area/Iteration Path. Mapped to the Agile, Scrum, or Basic process template; bugs use Repro Steps |
 | `markdown` | A neutral card for Jira, Linear, or anywhere else |
 
-Nothing is pushed to a tracker unless you say so. Pasting the card, or
-running the printed command with your own signed-in `gh` / `az`, is the
-default.
+## Pushing to GitHub and Azure DevOps
+
+Pushing is opt-in per project, with `sync` in `settings.json`:
+
+| `sync` | Behaviour |
+|---|---|
+| `off` (default) | Never push. Skills hand back cards, and `story push` refuses to run |
+| `ask` | After each create, edit, or split, the skill asks before pushing |
+| `auto` | Skills push right after each change |
+
+```bash
+story push ST-012 ST-013     # create, or update if already linked
+story push --all --dry-run   # show the plan; touch nothing
+```
+
+- **Linking.** Created items are linked back into the story (`remote`,
+  `remote_url`), so the next push updates the same item instead of making a duplicate.
+- **Status.** `done` closes the item (completed / Closed / Done).
+  `archived` and `split` close it as not planned or Removed. Active
+  statuses never change the ADO board state.
+- **Labels.** GitHub labels that story-time owns (`story`, `size:*`, `value:*`,
+  `epic:*`) are kept current. Your team's own labels are left alone.
+- **Rollback.** A push is a saga: if any step fails, items created in this
+  run are closed (GitHub) or sent to the recycle bin (ADO), and local files
+  are restored.
+
+### Tokens (PATs)
+
+An existing `gh auth login` / `az login`, or `GH_TOKEN` /
+`AZURE_DEVOPS_EXT_PAT` already in your environment, is used first, and no
+file is needed. Otherwise, run this yourself in a terminal:
+
+```bash
+story secret set github      # or: story secret set ado (hidden prompt, or pipe it on stdin)
+story secret status          # shows only the last 4 characters
+```
+
+- The token is saved to `.story-time/.<tracker>.env` with mode 600, and
+  `.story-time/.gitignore` ignores `*.env`.
+- `story` refuses to load a token file that is group- or world-readable, or
+  that is tracked by git. In the git case, it tells you to rotate the token.
+- Tokens reach `gh` / `az` only through environment variables, never as
+  arguments, so they don't appear in process lists or shell history.
+- The agent never sees the token: the skills tell it not to ask for one or
+  accept one in chat.
+
+Use a fine-grained PAT. For GitHub: Issues read/write on the one repo.
+For ADO: Work Items (Read & write), with an expiry date.
 
 ## The backlog
 
@@ -168,6 +223,8 @@ story set ST-001 status=ready  # refused unless lint passes
 story split ST-004 --from children.json   # saga: all children or none
 story stats
 story export ST-001 --format github
+story push ST-001 --dry-run
+story secret status
 story init --from answers.json   # usually done for you by story-setup
 story config
 ```
@@ -179,12 +236,13 @@ The CLI under `skills/story-time/scripts/` is a small hexagonal codebase:
 ```
 src/
   domain/        story.mjs (format), invest.mjs (lint rules), wsjf.mjs (ranking). Pure, no I/O.
-  ports/         story-repository.mjs. The StoryRepository interface the use cases depend on.
-  adapters/      memory-story-repository.mjs, fs-story-repository.mjs.
+  ports/         story-repository.mjs (StoryRepository) and tracker-gateway.mjs (TrackerGateway).
+  adapters/      memory/fs story repositories; memory, GitHub (gh), and ADO (az boards) tracker
+                 gateways; process-exec.mjs (no shell); file-secret-store.mjs (0600, git checks).
   saga/          saga.mjs. Ordered steps with compensations, rolled back in reverse on failure.
-  config/        config.mjs. Parses and validates .story-time.json (pure; the CLI reads the file).
+  config/        config.mjs parses .story-time/settings.json (pure); secrets.mjs holds token helpers.
   domain/export.mjs  Card and create-command exporters (github, ado, markdown) in a strategy registry.
-  application/   create, update, note, split (a saga), backlog-stats use cases.
+  application/   create, update, note, split (a saga), push (a saga), backlog-stats use cases.
 story.mjs        Composition root and CLI boundary. Parsing, wiring, output only.
 ```
 
@@ -202,7 +260,14 @@ story.mjs        Composition root and CLI boundary. Parsing, wiring, output only
 - **Repository pattern.** Storage stays behind `StoryRepository`. The
   filesystem adapter writes atomically (temp file, then rename) and rejects
   path-escaping ids.
-- **Saga pattern.** `split` creates N children, then updates the parent.
+- **Tracker gateways.** `TrackerGateway` (create / update / remove) is a second,
+  narrower port. The memory, GitHub, and ADO gateways all pass one contract
+  suite (`test/tracker-gateway.contract.mjs`). Adapters get an injected
+  `exec`, so tests drive a `gh` / `az` simulator. The same simulator also
+  runs as fake binaries on PATH for the CLI end-to-end tests.
+- **Saga pattern.** `push` runs the remote creates and updates first, then the
+  local links. A failure removes the remote items this run created and restores
+  the local files. `split` creates N children, then updates the parent.
   Any failure compensates the completed steps in reverse. A compensation
   that fails is reported, and does not stop the others from running. Tracker
   backends follow the same discipline by hand.

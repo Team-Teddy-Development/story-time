@@ -8,7 +8,7 @@ export const TYPES = ['story', 'spike', 'bug', 'chore'];
 const KEY_ORDER = [
   'id', 'title', 'status', 'type', 'epic', 'persona',
   'value', 'time_criticality', 'risk_reduction', 'size', 'timebox',
-  'depends_on', 'parent', 'children', 'created', 'updated',
+  'depends_on', 'parent', 'children', 'remote', 'remote_url', 'created', 'updated',
 ];
 
 const FRONTMATTER = /^---\r?\n([\s\S]*?)\r?\n---\r?\n?([\s\S]*)$/;
