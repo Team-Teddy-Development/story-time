@@ -131,3 +131,17 @@ test('skills that produce or change a story end with a copyable export card', as
     assert.match(text, /story export/, `${name} must hand off with story export`);
   }
 });
+
+test('story-setup asks about sync and stores tokens only through story secret set', async () => {
+  const text = await readFile(join(SKILLS, 'story-setup', 'SKILL.md'), 'utf8');
+  assert.match(text, /sync/);
+  assert.match(text, /story secret set/);
+  assert.match(text, /never.*(paste|chat)/is, 'must tell the agent never to take a PAT in chat');
+});
+
+test('skills that hand off a card follow the sync mode', async () => {
+  for (const name of ['story-create', 'story-edit', 'story-split']) {
+    const text = await readFile(join(SKILLS, name, 'SKILL.md'), 'utf8');
+    assert.match(text, /story push/, `${name} must use story push when sync allows`);
+  }
+});

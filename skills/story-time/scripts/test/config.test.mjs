@@ -1,6 +1,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { parseConfig, defaultExportFormat, TRACKERS } from '../src/config/config.mjs';
+import {
+  parseConfig, defaultExportFormat, pushPolicy, TRACKERS, CONFIG_DIR, CONFIG_FILE, LEGACY_CONFIG_FILE,
+} from '../src/config/config.mjs';
 
 test('an empty config gets file-backed defaults', () => {
   const c = parseConfig({});
@@ -62,6 +64,31 @@ test('parseConfig does not mutate its input', () => {
   const raw = { tracker: 'files' };
   parseConfig(raw);
   assert.deepEqual(raw, { tracker: 'files' });
+});
+
+test('sync defaults to off so nothing is pushed unless the project opts in', () => {
+  assert.equal(parseConfig({}).sync, 'off');
+  assert.equal(parseConfig({ tracker: 'github', github: { repo: 'a/b' } }).sync, 'off');
+});
+
+test('sync accepts off, ask, and auto, and needs a pushable tracker', () => {
+  for (const sync of ['off', 'ask', 'auto']) {
+    assert.equal(parseConfig({ tracker: 'ado', sync, ado: { organization: 'o', project: 'p' } }).sync, sync);
+  }
+  assert.throws(() => parseConfig({ sync: 'always' }), /sync must be one of: off, ask, auto/);
+  assert.throws(() => parseConfig({ sync: 'auto' }), /sync "auto" needs tracker github or ado/);
+  assert.throws(() => parseConfig({ tracker: 'jira', sync: 'ask' }), /sync "ask" needs tracker github or ado/);
+});
+
+test('pushPolicy explains why pushing is refused', () => {
+  assert.throws(() => pushPolicy(parseConfig({})), /Pushing is off for this project.*story export.*story-setup/s);
+  assert.doesNotThrow(() => pushPolicy(parseConfig({ tracker: 'github', sync: 'ask', github: { repo: 'a/b' } })));
+});
+
+test('config lives in .story-time/settings.json, with the old .story-time.json as a fallback', () => {
+  assert.equal(CONFIG_DIR, '.story-time');
+  assert.equal(CONFIG_FILE, '.story-time/settings.json');
+  assert.equal(LEGACY_CONFIG_FILE, '.story-time.json');
 });
 
 test('export format follows the tracker', () => {
