@@ -15,8 +15,8 @@ story list --status in-progress --json
 
 If anything is already in progress, especially if it's the user's own,
 recommend finishing it first and ask whether they still want a new story.
-The default WIP limit is one story per person, unless the user has said
-otherwise.
+The WIP limit is `team.wipLimit` from `story config` (default: one story
+per person).
 
 ## 2. Rank
 
@@ -37,8 +37,9 @@ scored) and offer the **story-ready**, **story-estimate**, or
 
 WSJF is a heuristic, so check the top three against what it can't see:
 
-- **Fits the time left.** Size against the days remaining in the sprint, or
-  the user's available time.
+- **Fits the time left.** Size against the days remaining in the sprint
+  (`team.sprintDays`) and the team's pace (`team.velocity`), or the user's
+  available time.
 - **Fits the person.** Skills, access, the area of the codebase they know.
 - **Unblocks others.** Does finishing it unblock excluded stories? That
   counts in its favour.

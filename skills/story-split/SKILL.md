@@ -80,3 +80,19 @@ still need the **acceptance-criteria** and **story-estimate** skills.
 
 The parent id, now `split`. Each child id with its title and the pattern
 used. What each child needs next.
+
+## Hand-off card
+
+Unless the tracker is `files` (see `story config`), finish with each
+child as a copyable card in the tracker's format, so the user can paste it
+straight into GitHub, Azure DevOps, Jira, or Linear:
+
+```bash
+story export <id>             # card: GitHub issue, ADO fields, or neutral markdown
+story export <id> --command   # or: the gh / az boards command that creates it
+```
+
+Put the output in a fenced block in your reply (it gets a copy button).
+For ADO, each field is its own block. Remind the user to close or re-link the parent item in the tracker.
+If you have the tracker's MCP tools or a signed-in `gh` / `az`, offer to
+create the items directly instead. Do it only when the user says yes.

@@ -7,7 +7,7 @@ description: Entry point for the story-time agile planning skills. Explains the 
 
 A small, opinionated agile planning loop. Each skill does one job. All of them
 read and write the same backlog through the same tool, so the output of one is
-the input of the next.
+the input of the next. Start a new project with the **story-setup** skill.
 
 ## Lifecycle
 
@@ -23,6 +23,7 @@ backlog-groom runs on a cadence over the whole backlog. story-edit changes any s
 
 | Request | Skill |
 |---|---|
+| "set up story time", first use in a repo | **story-setup** skill |
 | "write a story for…", "turn this into stories" | **story-create** skill |
 | "change / update / rewrite ST-012" | **story-edit** skill |
 | "this is too big", "break this down" | **story-split** skill |
@@ -61,6 +62,8 @@ that full command. Pass `--json` when you need to parse output.
 | `story note <id> "why"` | Log a prose edit (sections) in the changelog |
 | `story split <id> --from children.json` | Split into children atomically. A failure rolls everything back |
 | `story stats` | Counts, points, unestimated and stale stories |
+| `story export <id> [--format github\|ado\|markdown] [--command]` | Copy-paste card for the tracker, or the `gh` / `az boards` command that creates it |
+| `story init --from answers.json` / `story config` | Write / show the project config (`.story-time.json`) |
 
 The backlog lives in `./backlog/` (override with `--dir` or `$STORY_TIME_DIR`),
 one markdown file per story. Ids default to `ST-001`; set `--prefix` or
@@ -72,6 +75,19 @@ the change is validated and logged.
 If the team keeps its backlog in GitHub Issues, Jira, or Linear, follow
 [backends.md](references/backends.md). The skills stay the same; only the
 storage adapter changes.
+
+## Project config
+
+`.story-time.json` at the project root records what the project uses: the
+tracker (`files`, `github`, `ado`, `jira`, `linear`) and its coordinates,
+the id prefix, the backlog folder, the team's sprint length, velocity, and
+WIP limit, the stack and test command, and any extra Definition of Ready
+or Done rules. The **story-setup** skill writes it.
+
+Run `story config --json` at the start of any story-time work and use what
+it says. Never ask the user for something the config already answers. If no
+file exists, the defaults apply (files backlog, `ST` ids, WIP 1). Offer
+the **story-setup** skill once, then carry on.
 
 ## Statuses
 

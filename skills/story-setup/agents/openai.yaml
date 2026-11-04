@@ -1,0 +1,4 @@
+interface:
+  display_name: "Story Setup"
+  short_description: "Configure repo, tracker, team, and stack for story-time"
+  default_prompt: "Use $story-setup to configure story-time for this project."

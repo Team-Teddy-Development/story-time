@@ -5,13 +5,23 @@ tracker keep using the skills unchanged. You act as the adapter: implement
 the same five port operations with the tracker's own tools (GitHub MCP or `gh`,
 Jira or Linear MCP), and keep the same fields.
 
-| Port operation | GitHub Issues | Jira / Linear |
-|---|---|---|
-| `list({status})` | issues with label `story`, filtered by `status:<s>` label | JQL / filter on status |
-| `get(id)` | issue by number | issue by key |
-| `save(story)` | create or edit issue; body = sections; fields as labels | create or edit issue; fields as native fields |
-| `remove(id)` | close as "not planned" (never delete) | move to Won't Do |
-| `nextId` | tracker assigns | tracker assigns |
+| Port operation | GitHub Issues | Azure DevOps Boards | Jira / Linear |
+|---|---|---|---|
+| `list({status})` | issues with label `story`, filtered by `status:<s>` label | WIQL query on tag `story-time` and State | JQL / filter on status |
+| `get(id)` | issue by number | work item by id | issue by key |
+| `save(story)` | create or edit issue; body = sections; fields as labels | create or update work item; native fields (see below) | create or edit issue; fields as native fields |
+| `remove(id)` | close as "not planned" (never delete) | set State to Removed | move to Won't Do |
+| `nextId` | tracker assigns | tracker assigns | tracker assigns |
+
+The tracker and its coordinates come from `.story-time.json` (the
+**story-setup** skill). `story export <id>` renders the exact card or
+create command for GitHub and ADO, so use it rather than formatting items by hand.
+
+ADO field mapping (by process template): Agile = User Story with Story
+Points; Scrum = Product Backlog Item with Effort; Basic = Issue with
+Effort, and acceptance criteria folded into the Description. Criteria go
+in `Microsoft.VSTS.Common.AcceptanceCriteria`, bugs use
+`Microsoft.VSTS.TCM.ReproSteps`, and tags are `story-time; <id>; epic:<epic>`.
 
 Field mapping for GitHub labels: `status:<s>`, `type:<t>`, `size:<n>`,
 `value:<n>`, `tc:<n>`, `rr:<n>`, `epic:<id>`. Put `depends_on` in a

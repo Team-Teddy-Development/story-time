@@ -24,7 +24,9 @@ handles it.
 
 ## 2. Definition of Done
 
-Unless the team has its own (check `CLAUDE.md`, `CONTRIBUTING.md`, or ask):
+The defaults below, plus every line in `definitionOfDone` from
+`story config`. If the team has its own list elsewhere (`CLAUDE.md`,
+`CONTRIBUTING.md`), use that too:
 
 - [ ] Every acceptance criterion has evidence.
 - [ ] Every Test Plan item is ticked. The suite is green on the final commit.
