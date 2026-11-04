@@ -1,0 +1,11 @@
+{
+  "name": "story-time",
+  "owner": { "name": "Team Teddy Development" },
+  "plugins": [
+    {
+      "name": "story-time",
+      "source": "./",
+      "description": "Agile story planning skills for Claude Code."
+    }
+  ]
+}

@@ -1,0 +1,9 @@
+{
+  "name": "story-time",
+  "version": "0.1.0",
+  "description": "Agile story planning skills: create, edit, split, groom, estimate, ready-check, and pick high-value user stories, then kick them off test-first and accept them against their criteria.",
+  "author": { "name": "Team Teddy Development" },
+  "repository": "https://github.com/team-teddy-development/story-time",
+  "license": "MIT",
+  "keywords": ["agile", "user-stories", "backlog", "invest", "wsjf", "planning", "tdd"]
+}

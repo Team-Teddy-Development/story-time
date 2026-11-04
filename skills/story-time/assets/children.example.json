@@ -1,0 +1,19 @@
+[
+  {
+    "title": "Save cart for signed-in shoppers",
+    "statement": "As a signed-in shopper, I want my cart saved across sessions, so that I can finish checkout later.",
+    "acceptance": [
+      "Given items in my cart, when I sign out and back in, then the same items and quantities are in my cart"
+    ],
+    "size": 2
+  },
+  {
+    "title": "Merge guest cart on sign-in",
+    "statement": "As a guest shopper, I want my cart kept when I sign in, so that I do not lose what I picked.",
+    "acceptance": [
+      "Given a guest cart and a saved cart, when I sign in, then the carts merge and duplicate items sum their quantities"
+    ],
+    "size": 3,
+    "depends_on": []
+  }
+]
