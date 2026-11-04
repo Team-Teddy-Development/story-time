@@ -25,7 +25,7 @@ const tempDir = () => mkdtemp(join(tmpdir(), 'story-cli-'));
 test('help lists every command', async () => {
   const r = await story(await tempDir(), 'help');
   assert.equal(r.code, 0);
-  for (const cmd of ['new', 'list', 'show', 'lint', 'rank', 'set', 'split', 'stats']) assert.match(r.stdout, new RegExp(`\\b${cmd}\\b`));
+  for (const cmd of ['new', 'list', 'show', 'lint', 'rank', 'set', 'note', 'split', 'stats']) assert.match(r.stdout, new RegExp(`\\b${cmd}\\b`));
 });
 
 test('unknown command exits 2 with usage', async () => {
@@ -96,4 +96,13 @@ test('stats --json reports counts', async () => {
   await writeFile(join(dir, 'ST-001.md'), READY_MD);
   const r = await story(dir, 'stats', '--json');
   assert.equal(JSON.parse(r.stdout).readyPoints, 3);
+});
+
+test('note appends a changelog line', async () => {
+  const dir = await tempDir();
+  await writeFile(join(dir, 'ST-001.md'), READY_MD);
+  const r = await story(dir, 'note', 'ST-001', 'reworded AC2 for clarity');
+  assert.equal(r.code, 0, r.stderr);
+  assert.match((await story(dir, 'show', 'ST-001')).stdout, /reworded AC2 for clarity/);
+  assert.equal((await story(dir, 'note', 'ST-001')).code, 2);
 });

@@ -80,3 +80,14 @@ test('backlogStats summarizes counts, points, readiness gaps, and stale stories'
   assert.deepEqual(st.stale, ['ST-3']);
   assert.equal(st.open, 3);
 });
+
+test('noteStory appends a changelog entry without changing fields', async () => {
+  const { noteStory } = await import('../src/application/note-story.mjs');
+  const repo = new InMemoryStoryRepository([story({ id: 'ST-1', status: 'ready' })]);
+  const s = await noteStory(repo, 'ST-1', 'added lockout criterion', { date: '2026-11-04' });
+  assert.equal(s.status, 'ready');
+  assert.equal(s.updated, '2026-11-04');
+  assert.match(s.sections.Changelog, /- 2026-11-04 added lockout criterion$/);
+  await assert.rejects(noteStory(repo, 'ST-1', '  '), /note/);
+  await assert.rejects(noteStory(repo, 'ST-404', 'x'), /not found/);
+});
