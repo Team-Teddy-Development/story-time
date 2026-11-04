@@ -152,29 +152,45 @@ function toHtml(text) {
 
 const COMMANDS = {
   github(s, config) {
-    if (!config?.github?.repo) throw new Error('Set github.repo in .story-time.json (run the story-setup skill) to print a gh command.');
+    if (!config?.github?.repo) throw new Error('Set github.repo in .story-time/settings.json (run the story-setup skill) to print a gh command.');
     const card = github.render(s);
     const labels = card.labels.map((l) => `--label ${arg(l)}`).join(' ');
     return `gh issue create --repo ${arg(config.github.repo)} --title ${q(s.title)} ${labels} --body-file - <<'STORY_TIME_EOF'\n${card.body}\nSTORY_TIME_EOF`;
   },
   ado(s, config) {
-    if (!config?.ado?.organization) throw new Error('Set ado.organization and ado.project in .story-time.json (run the story-setup skill) to print an az command.');
-    const fields = adoFields(s, config);
-    const get = (name) => fields.find((f) => f.name === name);
-    const head = `az boards work-item create --org ${q(config.ado.organization)} --project ${q(config.ado.project)} --type ${q(get('Work Item Type').value)} --title ${q(s.title)}`;
+    if (!config?.ado?.organization) throw new Error('Set ado.organization and ado.project in .story-time/settings.json (run the story-setup skill) to print an az command.');
+    const a = adoArgs(s, config.ado);
+    const head = `az boards work-item create --org ${q(config.ado.organization)} --project ${q(config.ado.project)} --type ${q(a.type)} --title ${q(s.title)}`;
     const lines = [head];
-    const desc = get('Description');
-    if (desc) lines.push(`--description ${q(toHtml(desc.value))}`);
-    if (get('Area Path')) lines.push(`--area ${q(get('Area Path').value)}`);
-    if (get('Iteration Path')) lines.push(`--iteration ${q(get('Iteration Path').value)}`);
-    const extra = fields.filter((f) => f.ref && !['System.Description', 'System.AreaPath', 'System.IterationPath'].includes(f.ref));
-    if (extra.length) {
-      const value = (f) => (/AcceptanceCriteria|ReproSteps/.test(f.ref) ? toHtml(f.value) : f.value);
-      lines.push(`--fields ${extra.map((f) => q(`${f.ref}=${value(f)}`)).join(' ')}`);
-    }
+    if (a.description) lines.push(`--description ${q(a.description)}`);
+    if (a.area) lines.push(`--area ${q(a.area)}`);
+    if (a.iteration) lines.push(`--iteration ${q(a.iteration)}`);
+    if (a.fields.length) lines.push(`--fields ${a.fields.map(q).join(' ')}`);
     return lines.join(' \\\n  ');
   },
 };
+
+// The az boards arguments for a story, shared by the printed command and the
+// push gateway so the two can never disagree about field mapping.
+export function adoArgs(s, ado) {
+  const fields = adoFields(s, { ado });
+  const get = (name) => fields.find((f) => f.name === name);
+  const html = (f) => (/AcceptanceCriteria|ReproSteps/.test(f.ref) ? toHtml(f.value) : f.value);
+  const extra = fields.filter((f) => f.ref && !['System.Description', 'System.AreaPath', 'System.IterationPath'].includes(f.ref));
+  return {
+    type: get('Work Item Type').value,
+    title: s.title,
+    description: get('Description') ? toHtml(get('Description').value) : undefined,
+    area: get('Area Path')?.value,
+    iteration: get('Iteration Path')?.value,
+    fields: extra.map((f) => `${f.ref}=${html(f)}`),
+  };
+}
+
+export function githubIssue(s) {
+  const { labels, body } = github.render(s);
+  return { title: s.title, labels, body };
+}
 
 export function renderCommand(story, format, { config } = {}) {
   const build = COMMANDS[format];

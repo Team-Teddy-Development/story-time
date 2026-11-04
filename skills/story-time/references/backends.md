@@ -13,9 +13,14 @@ Jira or Linear MCP), and keep the same fields.
 | `remove(id)` | close as "not planned" (never delete) | set State to Removed | move to Won't Do |
 | `nextId` | tracker assigns | tracker assigns | tracker assigns |
 
-The tracker and its coordinates come from `.story-time.json` (the
-**story-setup** skill). `story export <id>` renders the exact card or
-create command for GitHub and ADO, so use it rather than formatting items by hand.
+The tracker and its coordinates come from `.story-time/settings.json` (the
+**story-setup** skill). For GitHub and ADO you don't hand-write any of this:
+
+- `story export <id>` renders the exact card or create command.
+- `story push <id...>` runs it for you through the `TrackerGateway` adapters
+  (`GitHubIssuesGateway`, `AdoBoardsGateway`), as a saga, when `sync` allows.
+
+The manual adapter steps below are for Jira and Linear.
 
 ADO field mapping (by process template): Agile = User Story with Story
 Points; Scrum = Product Backlog Item with Effort; Basic = Issue with

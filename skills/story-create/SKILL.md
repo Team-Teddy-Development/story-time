@@ -98,5 +98,13 @@ story export <id> --command   # or: the gh / az boards command that creates it
 
 Put the output in a fenced block in your reply (it gets a copy button).
 For ADO, each field is its own block. For several stories, one card each.
-If you have the tracker's MCP tools or a signed-in `gh` / `az`, offer to
-create the items directly instead. Do it only when the user says yes.
+
+Then follow `sync` from `story config`:
+
+- `off`: stop at the card. Never push, even if `gh` / `az` are signed in.
+- `ask`: ask "Push these stories to the tracker now?" On yes, run `story push <ids>`
+  and report the URLs it prints.
+- `auto`: run `story push <ids>` without asking, and report the URLs.
+
+If a push fails, the CLI has already rolled back what it created. Report its
+error, keep the card, and suggest `story push <ids> --dry-run` to check the plan.

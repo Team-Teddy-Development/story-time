@@ -2,8 +2,8 @@
 // story — CLI for the story-time backlog. This file is the composition root
 // and the only boundary: it parses argv, picks the adapter, calls use cases,
 // and formats output. No business rules live here.
-import { readFile, writeFile, access } from 'node:fs/promises';
-import { dirname, resolve } from 'node:path';
+import { readFile, writeFile, access, mkdir } from 'node:fs/promises';
+import { basename, dirname, join, resolve } from 'node:path';
 import { FileSystemStoryRepository } from './src/adapters/fs-story-repository.mjs';
 import { lintStory } from './src/domain/invest.mjs';
 import { rankBacklog } from './src/domain/wsjf.mjs';
@@ -13,7 +13,13 @@ import { updateStory } from './src/application/update-story.mjs';
 import { noteStory } from './src/application/note-story.mjs';
 import { splitStory } from './src/application/split-story.mjs';
 import { backlogStats } from './src/application/backlog-stats.mjs';
-import { CONFIG_FILE, defaultExportFormat, parseConfig } from './src/config/config.mjs';
+import { CONFIG_DIR, CONFIG_FILE, LEGACY_CONFIG_FILE, defaultExportFormat, parseConfig, pushPolicy } from './src/config/config.mjs';
+import { SECRET_SPECS, mask, tokenEnv } from './src/config/secrets.mjs';
+import { FileSecretStore, ensureGitignore } from './src/adapters/file-secret-store.mjs';
+import { GitHubIssuesGateway } from './src/adapters/github-issues-gateway.mjs';
+import { AdoBoardsGateway } from './src/adapters/ado-boards-gateway.mjs';
+import { processExec } from './src/adapters/process-exec.mjs';
+import { pushStories } from './src/application/push-stories.mjs';
 import { renderCard, renderCommand } from './src/domain/export.mjs';
 
 const USAGE = `story — agile backlog toolkit (story-time)
@@ -35,14 +41,16 @@ Commands:
   stats  [--stale-days 30]                 Backlog health summary
   export <id> [--format github|ado|markdown] [--command]
                                            Copy-paste card for your tracker, or the gh/az create command
-  init   [--from answers.json] [--force]   Write a validated .story-time.json (see the story-setup skill)
+  push   <id...> | --all [--dry-run]       Create/update items in GitHub or ADO (only if sync is not "off")
+  secret set|status|clear <github|ado>     Store a tracker token (PAT) in .story-time/.<tracker>.env (0600, git-ignored)
+  init   [--from answers.json] [--force]   Write a validated .story-time/settings.json (see the story-setup skill)
   config                                   Show the effective project config
   help                                     This text
 
-Config: --config, else $STORY_TIME_CONFIG, else ./.story-time.json (optional).
+Config: --config, else $STORY_TIME_CONFIG, else ./.story-time/settings.json, else ./.story-time.json (optional).
 Backlog directory: --dir, else $STORY_TIME_DIR, else config backlogDir, else ./backlog.`;
 
-const BOOLEAN = new Set(['json', 'force', 'include-refined', 'command']);
+const BOOLEAN = new Set(['json', 'force', 'include-refined', 'command', 'all', 'dry-run']);
 const REPEATABLE = new Set(['ac']);
 
 function parseArgs(argv) {
@@ -184,8 +192,71 @@ const commands = {
     if (!f.force && (await exists(ctx.configPath))) {
       throw new Error(`${ctx.configPath} already exists. Re-run with --force to replace it.`);
     }
+    await mkdir(dirname(ctx.configPath), { recursive: true });
+    await ensureGitignore(join(ctx.root, CONFIG_DIR));
     await writeFile(ctx.configPath, `${JSON.stringify(config, null, 2)}\n`, 'utf8');
     out(f, config, () => `Wrote ${ctx.configPath} (tracker: ${config.tracker}).`);
+  },
+
+  async push(repo, ids, f, ctx) {
+    pushPolicy(ctx.config);
+    const targets = f.all ? (await repo.list()).map((s) => s.id) : ids;
+    if (!targets.length) throw new UsageError('Usage: story push <id...> | --all [--dry-run]');
+    const gateway = await makeGateway(ctx);
+    const r = await pushStories(repo, gateway, targets, { dryRun: f['dry-run'] });
+    if (!r.ok) {
+      const undone = r.compensated?.length ? `\nRolled back: ${r.compensated.join(', ')}.` : '';
+      const stuck = r.compensationFailures?.length
+        ? `\nCould not roll back (fix by hand): ${r.compensationFailures.map((c) => `${c.step} (${c.error.message})`).join('; ')}`
+        : '';
+      throw new Error(`Push failed${r.failedStep ? ` at "${r.failedStep}"` : ''}: ${r.error.message}${undone}${stuck}`);
+    }
+    if (r.plan) {
+      out(f, r, () => table(['Action', 'ID', 'Remote'], r.plan.map((p) => [p.action, p.id, p.remoteId ?? '-'])));
+      return;
+    }
+    out(f, r, () =>
+      [
+        r.pushed.length ? table(['Action', 'ID', 'URL'], r.pushed.map((p) => [p.action, p.id, p.url])) : 'Nothing to push.',
+        r.skipped.length ? `Skipped (closed, never pushed): ${r.skipped.join(', ')}` : '',
+      ].filter(Boolean).join('\n'),
+    );
+  },
+
+  async secret(_repo, [action, tracker, ...extra], f, ctx) {
+    const store = new FileSecretStore(join(ctx.root, CONFIG_DIR));
+    if (action === 'status') {
+      const rows = [];
+      for (const [name, spec] of Object.entries(SECRET_SPECS)) {
+        // Always inspect the file: a leaked or loose token file matters even when the env wins.
+        let file;
+        try {
+          const token = await store.load(name);
+          file = token ? `set (${mask(token)})  ${join(CONFIG_DIR, spec.file)}` : undefined;
+        } catch (e) {
+          file = `unusable: ${e.message}`;
+        }
+        const fromEnv = process.env[spec.variable] ? `set via ${spec.variable} (environment)` : undefined;
+        const state = [fromEnv, fromEnv && file ? `file ${file}` : file].filter(Boolean).join('; ') || 'not set';
+        rows.push([name, state]);
+      }
+      out(f, Object.fromEntries(rows), () => table(['Tracker', 'Token'], rows));
+      return;
+    }
+    if (!['set', 'clear'].includes(action) || !tracker) throw new UsageError('Usage: story secret set|clear <github|ado>, or story secret status');
+    if (!SECRET_SPECS[tracker]) throw new UsageError(`There is no token support for "${tracker}". Use: ${Object.keys(SECRET_SPECS).join(', ')}.`);
+    if (action === 'clear') {
+      const removed = await store.clear(tracker);
+      console.log(removed ? `Removed the ${tracker} token.` : `No ${tracker} token was stored.`);
+      return;
+    }
+    if (extra.length) {
+      throw new UsageError('Pass the token at the hidden prompt or on stdin, not as an argument (arguments end up in shell history and process lists).');
+    }
+    const token = await readToken(`Paste your ${tracker === 'ado' ? 'Azure DevOps' : 'GitHub'} token (input hidden): `);
+    if (!token) throw new Error('No token received.');
+    await store.save(tracker, token);
+    console.log(`Saved the ${tracker} token (${mask(token)}) to ${join(CONFIG_DIR, SECRET_SPECS[tracker].file)} with mode 600. It is git-ignored.`);
   },
 
   async config(_repo, _args, f, ctx) {
@@ -229,6 +300,62 @@ function table(headers, rows) {
 
 const exists = (p) => access(p).then(() => true, () => false);
 
+async function makeGateway(ctx) {
+  const { config } = ctx;
+  const store = new FileSecretStore(join(ctx.root, CONFIG_DIR));
+  const env = tokenEnv(config.tracker, { file: await store.load(config.tracker) });
+  if (config.tracker === 'github') return new GitHubIssuesGateway({ repo: config.github.repo, exec: processExec, env });
+  return new AdoBoardsGateway({ ado: config.ado, exec: processExec, env });
+}
+
+// Reads a token without echoing it: a raw-mode prompt on a terminal, or the
+// first line of stdin when piped. The token never touches argv.
+async function readToken(prompt) {
+  const stdin = process.stdin;
+  if (!stdin.isTTY) {
+    let data = '';
+    for await (const chunk of stdin) data += chunk;
+    return data.split(/\r?\n/)[0].trim();
+  }
+  process.stderr.write(prompt);
+  stdin.setRawMode(true);
+  stdin.resume();
+  stdin.setEncoding('utf8');
+  return new Promise((resolveToken, reject) => {
+    let value = '';
+    const finish = (fn) => {
+      stdin.setRawMode(false);
+      stdin.pause();
+      stdin.removeListener('data', onData);
+      process.stderr.write('\n');
+      fn();
+    };
+    const onData = (chunk) => {
+      for (const ch of chunk) {
+        if (ch === '\r' || ch === '\n') return finish(() => resolveToken(value.trim()));
+        if (ch === '\u0003') return finish(() => reject(new Error('Cancelled.')));
+        if (ch === '\u007f' || ch === '\b') value = value.slice(0, -1);
+        else value += ch;
+      }
+    };
+    stdin.on('data', onData);
+  });
+}
+
+async function resolveConfigPath(flags) {
+  const explicit = flags.config ?? process.env.STORY_TIME_CONFIG;
+  if (explicit) return resolve(explicit);
+  if (await exists(resolve(CONFIG_FILE))) return resolve(CONFIG_FILE);
+  if (await exists(resolve(LEGACY_CONFIG_FILE))) return resolve(LEGACY_CONFIG_FILE);
+  return resolve(CONFIG_FILE);
+}
+
+// .story-time/settings.json lives one level below the project root.
+function projectRoot(configPath) {
+  const dir = dirname(configPath);
+  return basename(dir) === CONFIG_DIR ? dirname(dir) : dir;
+}
+
 async function loadConfig(path) {
   let text;
   try {
@@ -257,11 +384,12 @@ async function main(argv) {
   }
   try {
     const { positional, flags } = parseArgs(rest);
-    const configPath = resolve(flags.config ?? process.env.STORY_TIME_CONFIG ?? CONFIG_FILE);
+    const configPath = command === 'init' ? resolve(flags.config ?? process.env.STORY_TIME_CONFIG ?? CONFIG_FILE) : await resolveConfigPath(flags);
+    const root = projectRoot(configPath);
     // init must work even when the existing config is broken, so it skips loading.
     const { config, found } = command === 'init' ? { config: parseConfig({}), found: false } : await loadConfig(configPath);
-    const dir = resolve(flags.dir ?? process.env.STORY_TIME_DIR ?? resolve(dirname(configPath), config.backlogDir));
-    const ctx = { config, configPath, configFound: found };
+    const dir = resolve(flags.dir ?? process.env.STORY_TIME_DIR ?? resolve(root, config.backlogDir));
+    const ctx = { config, configPath, configFound: found, root };
     await handler(new FileSystemStoryRepository(dir), positional, flags, ctx);
     return process.exitCode ?? 0;
   } catch (e) {

@@ -29,7 +29,7 @@ test('pushStories creates remote items and links them back with a changelog line
   assert.equal(r.ok, true);
   assert.deepEqual(r.pushed.map((p) => [p.id, p.action, p.remoteId]), [['ST-1', 'create', '1'], ['ST-2', 'create', '2']]);
   const s1 = await repo.get('ST-1');
-  assert.equal(s1.remote, '1');
+  assert.equal(s1.remote, 1, 'numeric tracker ids are stored as numbers');
   assert.equal(s1.remote_url, 'https://tracker.example/1');
   assert.match(s1.sections.Changelog, /2026-11-04 pushed to tracker as 1/);
 });

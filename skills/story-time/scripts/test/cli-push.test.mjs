@@ -148,6 +148,17 @@ test('push hands the stored token to gh through the environment', async () => {
   assert.ok(!JSON.stringify((await bin.readState()).calls).includes('ghp_tok'));
 });
 
+test('secret status still reports an unsafe token file when the environment also has a token', async () => {
+  const bin = await makeFakeBin();
+  const dir = await project(GITHUB);
+  await story(dir, bin.dir, ['secret', 'set', 'github'], { input: 'ghp_filetoken1234\n' });
+  const { chmod } = await import('node:fs/promises');
+  await chmod(join(dir, '.story-time', '.github.env'), 0o644);
+  const r = await story(dir, bin.dir, ['secret', 'status'], { env: { GH_TOKEN: 'from-env' } });
+  assert.match(r.stdout, /github\s+set via GH_TOKEN \(environment\)/);
+  assert.match(r.stdout, /unusable: .*permissions 644/);
+});
+
 test('secret clear removes the token file', async () => {
   const bin = await makeFakeBin();
   const dir = await project(GITHUB);

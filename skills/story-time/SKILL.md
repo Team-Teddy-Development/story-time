@@ -63,7 +63,9 @@ that full command. Pass `--json` when you need to parse output.
 | `story split <id> --from children.json` | Split into children atomically. A failure rolls everything back |
 | `story stats` | Counts, points, unestimated and stale stories |
 | `story export <id> [--format github\|ado\|markdown] [--command]` | Copy-paste card for the tracker, or the `gh` / `az boards` command that creates it |
-| `story init --from answers.json` / `story config` | Write / show the project config (`.story-time.json`) |
+| `story push <id...> \| --all [--dry-run]` | Create or update the items in GitHub / ADO. Refused when `sync` is `off` |
+| `story secret set\|status\|clear <github\|ado>` | Store a tracker token in `.story-time/.<tracker>.env` (mode 600, git-ignored). The user runs `set` themselves |
+| `story init --from answers.json` / `story config` | Write / show the project config (`.story-time/settings.json`) |
 
 The backlog lives in `./backlog/` (override with `--dir` or `$STORY_TIME_DIR`),
 one markdown file per story. Ids default to `ST-001`; set `--prefix` or
@@ -78,11 +80,16 @@ storage adapter changes.
 
 ## Project config
 
-`.story-time.json` at the project root records what the project uses: the
-tracker (`files`, `github`, `ado`, `jira`, `linear`) and its coordinates,
+`.story-time/settings.json` at the project root (committed) records what
+the project uses: the tracker (`files`, `github`, `ado`, `jira`, `linear`)
+and its coordinates, whether to push to it (`sync`: `off`, `ask`, `auto`),
 the id prefix, the backlog folder, the team's sprint length, velocity, and
 WIP limit, the stack and test command, and any extra Definition of Ready
 or Done rules. The **story-setup** skill writes it.
+
+Tokens never go in settings. They live in `.story-time/.github.env` /
+`.story-time/.ado.env` (git-ignored, mode 600), written only by the user
+running `story secret set`. Never ask for a token, and never handle one.
 
 Run `story config --json` at the start of any story-time work and use what
 it says. Never ask the user for something the config already answers. If no
