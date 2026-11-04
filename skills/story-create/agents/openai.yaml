@@ -1,0 +1,4 @@
+interface:
+  display_name: "Story Create"
+  short_description: "Turn ideas and notes into INVEST user stories"
+  default_prompt: "Use $story-create to turn this request into backlog stories."

@@ -1,0 +1,4 @@
+interface:
+  display_name: "Backlog Groom"
+  short_description: "Refine the backlog: stale, duplicate, oversized work"
+  default_prompt: "Use $backlog-groom to run a refinement pass over the backlog."

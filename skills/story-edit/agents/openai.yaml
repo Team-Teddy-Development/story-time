@@ -1,0 +1,4 @@
+interface:
+  display_name: "Story Edit"
+  short_description: "Change a story safely with an honest changelog"
+  default_prompt: "Use $story-edit to update this story and log why."

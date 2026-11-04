@@ -1,0 +1,4 @@
+interface:
+  display_name: "Story Accept"
+  short_description: "Verify a story against its criteria and the DoD"
+  default_prompt: "Use $story-accept to check whether this story is done."

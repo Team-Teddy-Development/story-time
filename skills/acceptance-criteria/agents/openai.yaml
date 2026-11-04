@@ -1,0 +1,4 @@
+interface:
+  display_name: "Acceptance Criteria"
+  short_description: "Write testable Given/When/Then acceptance criteria"
+  default_prompt: "Use $acceptance-criteria to write the acceptance criteria and edge cases for this story."

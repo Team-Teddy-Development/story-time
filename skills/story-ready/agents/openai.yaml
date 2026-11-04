@@ -1,0 +1,4 @@
+interface:
+  display_name: "Story Ready"
+  short_description: "Definition of Ready gate before stories enter a sprint"
+  default_prompt: "Use $story-ready to check whether this story is ready to pull into a sprint."

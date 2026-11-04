@@ -1,0 +1,14 @@
+{
+  "name": "story-time",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Agent skills for agile story planning: create, edit, split, groom, estimate, and pick high-value user stories.",
+  "type": "module",
+  "license": "MIT",
+  "engines": { "node": ">=20" },
+  "scripts": {
+    "test": "node scripts/run-tests.mjs",
+    "install:codex": "node scripts/install.mjs --agent codex",
+    "install:claude": "node scripts/install.mjs --agent claude"
+  }
+}

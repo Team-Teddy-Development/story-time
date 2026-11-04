@@ -1,0 +1,4 @@
+interface:
+  display_name: "Story Map"
+  short_description: "Map an epic into a walking skeleton and releases"
+  default_prompt: "Use $story-map to break this epic into a story map and release slices."

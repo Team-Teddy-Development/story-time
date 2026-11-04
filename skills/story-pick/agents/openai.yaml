@@ -1,0 +1,4 @@
+interface:
+  display_name: "Story Pick"
+  short_description: "Pick the highest-value ready story to work on next"
+  default_prompt: "Use $story-pick to choose what I should work on next."
