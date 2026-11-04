@@ -3,7 +3,8 @@
 // don't edit the linter). Rules are pure: (story, context) -> findings.
 import { acceptanceCriteria } from './story.mjs';
 
-const STATEMENT = /^\s*As an? (.+?),\s*I (?:want|need|can)\s+(.+?)(?:,?\s*so that\s+(.+?))?\.?\s*$/is;
+const STATEMENT = /^\s*As (?:an?\s+|the\s+)?(.+?),\s*I (?:want|need|can)\s+(.+?)(?:,?\s*so that\s+(.+?))?\.?\s*$/is;
+const GENERIC_PERSONA = /^(?:end[-\s]?)?(?:user|someone|anyone|somebody|person|people|customer|visitor)s?$/i;
 const GHERKIN = /^Given\b.+\bwhen\b.+\bthen\b/is;
 const VAGUE = [
   'fast', 'quickly', 'easy', 'easily', 'simple', 'intuitive', 'user-friendly', 'seamless',
@@ -35,6 +36,14 @@ export const DEFAULT_RULES = [
     if (!needsStatement(s)) return [];
     const m = STATEMENT.exec(s.sections?.Story ?? '');
     return m && !m[3] ? [err('Statement has no "so that <benefit>". Without the why, value cannot be judged.')] : [];
+  }),
+
+  rule('statement.persona', 'V', (s) => {
+    if (!needsStatement(s)) return [];
+    const m = STATEMENT.exec(s.sections?.Story ?? '');
+    return m && GENERIC_PERSONA.test(m[1].trim())
+      ? [warn(`Generic persona "${m[1].trim()}". Name who benefits (e.g. "billing admin", "first-time buyer").`)]
+      : [];
   }),
 
   rule('ac.present', 'T', (s) => {
