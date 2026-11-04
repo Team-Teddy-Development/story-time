@@ -96,3 +96,13 @@ test('rules are open for extension: custom rules run alongside defaults', () => 
   const r = lintStory(story({ title: 'TODO later' }), { rules: [...DEFAULT_RULES, noTodo] });
   assert.ok(ids(r).includes('custom.todo'));
 });
+
+test('a generic persona ("a user", "someone") is a Valuable warning', () => {
+  for (const who of ['a user', 'an end user', 'someone', 'the customer']) {
+    const r = lintStory(story({ sections: { ...story().sections, Story: `As ${who}, I want to save my cart, so that I can finish later.` } }));
+    const f = r.findings.find((x) => x.rule === 'statement.persona');
+    assert.ok(f, `expected a persona warning for "${who}"`);
+    assert.equal(f.severity, 'warning');
+  }
+  assert.ok(!lintStory(story()).findings.some((x) => x.rule === 'statement.persona'));
+});
