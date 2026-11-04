@@ -20,7 +20,8 @@ status=in-progress --note "kickoff"`. If it isn't ready, stop and use the
 ## 2. Map criteria to tests
 
 For each acceptance criterion, write one or more test names in the
-codebase's test style. One Given/When/Then is usually one test, and a
+codebase's test style. Use `project.testFramework` from `story config`, or
+look at the existing tests. One Given/When/Then is usually one test, and a
 rule table is one parameterized test.
 
 Order them so each step is the smallest move from green to green:
@@ -65,7 +66,8 @@ Then `story set <id> status=in-progress --note "test plan written"`.
 
 ## 5. Hand off
 
-Create the branch. Write the **first** test from the plan, run it, and show
+Create the branch. Write the **first** test from the plan, run it with
+`project.testCommand` from `story config` (or the repo's usual command), and show
 that it fails for the right reason (an assertion, not a typo or import
 error). Then stop and hand over, or continue the red-green-refactor loop if
 the user asked you to build it:

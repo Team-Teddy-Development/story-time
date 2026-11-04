@@ -14,6 +14,7 @@ script. Here the subject is the story lifecycle, from idea to accepted.
 | Skill | Say | What it does |
 |---|---|---|
 | `story-time` | "story time" | Entry point. Lifecycle, file format, the `story` CLI, and routing to the right skill. |
+| `story-setup` | "set up story time" | One-time setup: detects repo, tracker, stack, and test tooling, asks the rest, and writes `.story-time.json`. |
 | `story-create` | "write a story for…" | Turns ideas, bugs, PRDs, or notes into INVEST stories with persona, benefit, criteria, and scope. |
 | `story-edit` | "update ST-012" | Changes a story safely: classifies the change, guards done and in-progress work, catches scope creep, logs why. |
 | `story-split` | "this is too big" | Splits with SPIDR and the classic patterns into vertical slices, and writes them as an all-or-nothing saga. |
@@ -29,7 +30,7 @@ script. Here the subject is the story lifecycle, from idea to accepted.
 | `principle-invest` | (referenced) | The quality bar: INVEST, vertical slices, the 3 Cs, and anti-patterns. |
 
 ```
-idea → story-create → acceptance-criteria → story-estimate → story-ready → story-pick → story-kickoff → build → story-accept
+story-setup (once) → idea → story-create → acceptance-criteria → story-estimate → story-ready → story-pick → story-kickoff → build → story-accept
           ├─ too big → story-split      ├─ epic → story-map      └─ unknown → spike
 backlog-groom runs on a cadence; story-edit applies anywhere.
 ```
@@ -100,6 +101,51 @@ OpenCode, and others:
 npx skills add team-teddy-development/story-time
 ```
 
+## Setup: tell it what the project uses
+
+Run the `story-setup` skill once per repo ("set up story time"). It reads the
+git remote, `package.json` / `*.csproj` / `pyproject.toml`, and whether `gh` or
+`az` is installed. It asks only what it can't detect (where work items live,
+ADO process template, velocity, WIP limit, extra Definition of Done or Ready
+rules), then writes a validated `.story-time.json`. Commit it.
+
+```json
+{
+  "tracker": "github",
+  "github": { "repo": "acme/shop" },
+  "prefix": "ST",
+  "team": { "sprintDays": 10, "velocity": 21, "wipLimit": 1 },
+  "project": { "stack": ["typescript", "react"], "testFramework": "vitest", "testCommand": "npm test" },
+  "definitionOfDone": ["Release note added"]
+}
+```
+
+Every skill reads it: cards come out in your tracker's format, `story-pick`
+respects your WIP limit, `backlog-groom` sizes the ready buffer from your
+velocity, `story-kickoff` writes tests for your framework, and
+`story-ready` / `story-accept` add your team's rules.
+
+## Copy-paste cards
+
+Skills that create or change a story end with a copyable card. You can
+also run it yourself:
+
+```bash
+story export ST-012                    # format follows the tracker in .story-time.json
+story export ST-012 --format ado       # one copyable block per ADO field
+story export ST-012 --command          # the gh issue create / az boards work-item create command
+```
+
+| Format | What you get |
+|---|---|
+| `github` | Title, labels (`story`, `size:3`, `value:8`, `epic:EP-2`), and an issue body with a criteria checklist |
+| `ado` | Work Item Type, Title, Description, Acceptance Criteria, Story Points or Effort, Tags, and Area/Iteration Path. Mapped to the Agile, Scrum, or Basic process template; bugs use Repro Steps |
+| `markdown` | A neutral card for Jira, Linear, or anywhere else |
+
+Nothing is pushed to a tracker unless you say so. Pasting the card, or
+running the printed command with your own signed-in `gh` / `az`, is the
+default.
+
 ## The backlog
 
 Stories are markdown files in `./backlog/` of the project you're planning,
@@ -121,6 +167,9 @@ story set ST-001 size=3 value=8 time_criticality=5 risk_reduction=3 --note "poke
 story set ST-001 status=ready  # refused unless lint passes
 story split ST-004 --from children.json   # saga: all children or none
 story stats
+story export ST-001 --format github
+story init --from answers.json   # usually done for you by story-setup
+story config
 ```
 
 ## Design
@@ -133,13 +182,16 @@ src/
   ports/         story-repository.mjs. The StoryRepository interface the use cases depend on.
   adapters/      memory-story-repository.mjs, fs-story-repository.mjs.
   saga/          saga.mjs. Ordered steps with compensations, rolled back in reverse on failure.
+  config/        config.mjs. Parses and validates .story-time.json (pure; the CLI reads the file).
+  domain/export.mjs  Card and create-command exporters (github, ado, markdown) in a strategy registry.
   application/   create, update, note, split (a saga), backlog-stats use cases.
 story.mjs        Composition root and CLI boundary. Parsing, wiring, output only.
 ```
 
 - **Single responsibility.** Each INVEST rule is its own object.
   `lintStory` only composes them.
-- **Open/closed.** Pass extra rules to `lintStory({ rules: [...DEFAULT_RULES, mine] })`
+- **Open/closed.** Exporters are a registry: a new tracker format is a new
+  entry, and `renderCard` doesn't change. Lint rules work the same way: pass extra rules to `lintStory({ rules: [...DEFAULT_RULES, mine] })`
   instead of editing the linter.
 - **Liskov.** Both adapters run the same repository contract suite
   (`test/repository.contract.mjs`). A new adapter (GitHub, Jira) must pass it too.

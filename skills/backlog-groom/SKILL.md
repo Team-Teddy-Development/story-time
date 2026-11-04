@@ -19,8 +19,9 @@ story rank --include-refined --json
 From these, note: open points versus ready points, and how many stories
 are unestimated, stale, blocked, or not ready.
 
-**Ready buffer.** Ask for (or read from the user's notes) the team's
-velocity. The target is ready points worth 1.5–2 sprints. Below one sprint,
+**Ready buffer.** Read the team's velocity from `story config`
+(`team.velocity`). If it isn't set, ask, and offer to save it with the
+**story-setup** skill. The target is ready points worth 1.5–2 sprints. Below one sprint,
 refining the top of the backlog matters more than anything else this
 session.
 

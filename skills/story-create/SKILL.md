@@ -84,3 +84,19 @@ statements first and wait for approval before writing.
 
 Run `story lint <ids>`. Report each new id and title, the lint verdict, and
 what it still needs to become ready (usually: estimate and value score).
+
+## Hand-off card
+
+Unless the tracker is `files` (see `story config`), finish with the
+story as a copyable card in the tracker's format, so the user can paste it
+straight into GitHub, Azure DevOps, Jira, or Linear:
+
+```bash
+story export <id>             # card: GitHub issue, ADO fields, or neutral markdown
+story export <id> --command   # or: the gh / az boards command that creates it
+```
+
+Put the output in a fenced block in your reply (it gets a copy button).
+For ADO, each field is its own block. For several stories, one card each.
+If you have the tracker's MCP tools or a signed-in `gh` / `az`, offer to
+create the items directly instead. Do it only when the user says yes.

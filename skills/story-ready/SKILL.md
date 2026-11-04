@@ -42,6 +42,7 @@ Lint can't see these. Check each one and give a one-line reason:
   questions left in Notes.
 - **Agreed scope.** `## Out of Scope` exists if anything nearby could be
   confused for part of this story.
+- **Team rules.** Every line in `definitionOfReady` from `story config`.
 
 ## 3. Decide
 

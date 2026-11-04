@@ -2,8 +2,8 @@
 // story — CLI for the story-time backlog. This file is the composition root
 // and the only boundary: it parses argv, picks the adapter, calls use cases,
 // and formats output. No business rules live here.
-import { readFile } from 'node:fs/promises';
-import { resolve } from 'node:path';
+import { readFile, writeFile, access } from 'node:fs/promises';
+import { dirname, resolve } from 'node:path';
 import { FileSystemStoryRepository } from './src/adapters/fs-story-repository.mjs';
 import { lintStory } from './src/domain/invest.mjs';
 import { rankBacklog } from './src/domain/wsjf.mjs';
@@ -13,6 +13,8 @@ import { updateStory } from './src/application/update-story.mjs';
 import { noteStory } from './src/application/note-story.mjs';
 import { splitStory } from './src/application/split-story.mjs';
 import { backlogStats } from './src/application/backlog-stats.mjs';
+import { CONFIG_FILE, defaultExportFormat, parseConfig } from './src/config/config.mjs';
+import { renderCard, renderCommand } from './src/domain/export.mjs';
 
 const USAGE = `story — agile backlog toolkit (story-time)
 
@@ -31,11 +33,16 @@ Commands:
   note   <id> "what changed and why"       Log a prose edit in the changelog
   split  <id> --from children.json         Split into children (saga: all or nothing)
   stats  [--stale-days 30]                 Backlog health summary
+  export <id> [--format github|ado|markdown] [--command]
+                                           Copy-paste card for your tracker, or the gh/az create command
+  init   [--from answers.json] [--force]   Write a validated .story-time.json (see the story-setup skill)
+  config                                   Show the effective project config
   help                                     This text
 
-Backlog directory: --dir, else $STORY_TIME_DIR, else ./backlog`;
+Config: --config, else $STORY_TIME_CONFIG, else ./.story-time.json (optional).
+Backlog directory: --dir, else $STORY_TIME_DIR, else config backlogDir, else ./backlog.`;
 
-const BOOLEAN = new Set(['json', 'force', 'include-refined']);
+const BOOLEAN = new Set(['json', 'force', 'include-refined', 'command']);
 const REPEATABLE = new Set(['ac']);
 
 function parseArgs(argv) {
@@ -69,7 +76,7 @@ const commands = {
     console.log(USAGE);
   },
 
-  async new(repo, _args, f) {
+  async new(repo, _args, f, ctx) {
     const s = await createStory(
       repo,
       {
@@ -86,7 +93,7 @@ const commands = {
         timebox: f.timebox,
         question: f.question,
       },
-      { prefix: f.prefix ?? process.env.STORY_TIME_PREFIX ?? 'ST' },
+      { prefix: f.prefix ?? process.env.STORY_TIME_PREFIX ?? ctx.config.prefix },
     );
     out(f, s, () => `${s.id} created: ${repo.path(s.id)}`);
   },
@@ -160,6 +167,31 @@ const commands = {
     out(f, r, () => `${id} split into ${r.childIds.join(', ')}.`);
   },
 
+  async export(repo, [id], f, ctx) {
+    const s = await requireStory(repo, id);
+    const format = f.format ?? defaultExportFormat(ctx.config);
+    if (f.command) {
+      console.log(renderCommand(s, format, { config: ctx.config }));
+      return;
+    }
+    const card = renderCard(s, format, { config: ctx.config });
+    out(f, card, () => card.text);
+  },
+
+  async init(_repo, _args, f, ctx) {
+    const raw = f.from ? JSON.parse(await readFile(f.from, 'utf8')) : {};
+    const config = parseConfig(raw); // validate before touching the disk
+    if (!f.force && (await exists(ctx.configPath))) {
+      throw new Error(`${ctx.configPath} already exists. Re-run with --force to replace it.`);
+    }
+    await writeFile(ctx.configPath, `${JSON.stringify(config, null, 2)}\n`, 'utf8');
+    out(f, config, () => `Wrote ${ctx.configPath} (tracker: ${config.tracker}).`);
+  },
+
+  async config(_repo, _args, f, ctx) {
+    out(f, ctx.config, () => `# ${ctx.configFound ? ctx.configPath : 'no config file; defaults'}\n${JSON.stringify(ctx.config, null, 2)}`);
+  },
+
   async stats(repo, _args, f) {
     const st = await backlogStats(repo, { staleDays: f['stale-days'] ? Number(f['stale-days']) : 30 });
     out(f, st, () =>
@@ -195,6 +227,23 @@ function table(headers, rows) {
   return [line(headers), ...rows.map(line)].join('\n');
 }
 
+const exists = (p) => access(p).then(() => true, () => false);
+
+async function loadConfig(path) {
+  let text;
+  try {
+    text = await readFile(path, 'utf8');
+  } catch (e) {
+    if (e.code === 'ENOENT') return { config: parseConfig({}), found: false };
+    throw e;
+  }
+  try {
+    return { config: parseConfig(JSON.parse(text)), found: true };
+  } catch (e) {
+    throw new Error(`${path}: ${e.message}`);
+  }
+}
+
 function out(flags, data, human) {
   console.log(flags.json ? JSON.stringify(data, null, 2) : human());
 }
@@ -208,8 +257,12 @@ async function main(argv) {
   }
   try {
     const { positional, flags } = parseArgs(rest);
-    const dir = resolve(flags.dir ?? process.env.STORY_TIME_DIR ?? 'backlog');
-    await handler(new FileSystemStoryRepository(dir), positional, flags);
+    const configPath = resolve(flags.config ?? process.env.STORY_TIME_CONFIG ?? CONFIG_FILE);
+    // init must work even when the existing config is broken, so it skips loading.
+    const { config, found } = command === 'init' ? { config: parseConfig({}), found: false } : await loadConfig(configPath);
+    const dir = resolve(flags.dir ?? process.env.STORY_TIME_DIR ?? resolve(dirname(configPath), config.backlogDir));
+    const ctx = { config, configPath, configFound: found };
+    await handler(new FileSystemStoryRepository(dir), positional, flags, ctx);
     return process.exitCode ?? 0;
   } catch (e) {
     console.error(e.message);
