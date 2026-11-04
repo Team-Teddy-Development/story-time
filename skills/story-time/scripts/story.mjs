@@ -10,6 +10,7 @@ import { rankBacklog } from './src/domain/wsjf.mjs';
 import { serializeStory } from './src/domain/story.mjs';
 import { createStory } from './src/application/create-story.mjs';
 import { updateStory } from './src/application/update-story.mjs';
+import { noteStory } from './src/application/note-story.mjs';
 import { splitStory } from './src/application/split-story.mjs';
 import { backlogStats } from './src/application/backlog-stats.mjs';
 
@@ -27,6 +28,7 @@ Commands:
   rank   [--limit N] [--include-refined]   WSJF-ranked ready stories, with exclusions
   set    <id> key=value... [--note N] [--force]
                                            Update fields; status=ready is lint-gated
+  note   <id> "what changed and why"       Log a prose edit in the changelog
   split  <id> --from children.json         Split into children (saga: all or nothing)
   stats  [--stale-days 30]                 Backlog health summary
   help                                     This text
@@ -137,6 +139,12 @@ const commands = {
     );
     const s = await updateStory(repo, id, changes, { note: f.note, force: f.force });
     out(f, s, () => `${s.id} updated.`);
+  },
+
+  async note(repo, [id, ...words], f) {
+    if (!id || !words.length) throw new UsageError('Usage: story note <id> "what changed and why"');
+    const s = await noteStory(repo, id, words.join(' '));
+    out(f, s, () => `${s.id} noted.`);
   },
 
   async split(repo, [id], f) {
