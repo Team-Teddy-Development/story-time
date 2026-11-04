@@ -7,7 +7,7 @@
   "license": "MIT",
   "engines": { "node": ">=20" },
   "scripts": {
-    "test": "node --test 'skills/story-time/scripts/test/*.test.mjs' 'test/*.test.mjs'",
+    "test": "node scripts/run-tests.mjs",
     "install:codex": "node scripts/install.mjs --agent codex",
     "install:claude": "node scripts/install.mjs --agent claude"
   }
