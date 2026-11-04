@@ -1,0 +1,7 @@
+interface:
+  display_name: "INVEST Principles"
+  short_description: "The INVEST quality bar for user stories"
+  default_prompt: "Use $principle-invest to judge whether this story is well formed."
+
+policy:
+  allow_implicit_invocation: false

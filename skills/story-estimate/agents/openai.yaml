@@ -1,0 +1,4 @@
+interface:
+  display_name: "Story Estimate"
+  short_description: "Planning poker sizing and WSJF value scoring"
+  default_prompt: "Use $story-estimate to size and score these stories."

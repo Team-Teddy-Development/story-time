@@ -1,0 +1,4 @@
+interface:
+  display_name: "Story Time"
+  short_description: "Agile story lifecycle, backlog CLI, and routing"
+  default_prompt: "Use $story-time to show me where this backlog work fits and which skill to use."

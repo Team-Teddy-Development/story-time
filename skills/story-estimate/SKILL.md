@@ -19,7 +19,8 @@ ask the user for one story everyone agrees is a "3" and anchor on it.
 ### 2. Play planning poker
 
 For each story, spawn three estimators in parallel, one message, three
-subagent calls (Claude Code: `Agent`, `subagent_type: general-purpose`).
+subagent calls (Claude Code: `Agent`, `subagent_type: general-purpose`;
+Codex: `spawn_agent`).
 Give each the story file, the anchors, and the codebase if there is one.
 Give each a different lens:
 

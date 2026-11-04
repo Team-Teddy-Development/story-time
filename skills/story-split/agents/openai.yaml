@@ -1,0 +1,4 @@
+interface:
+  display_name: "Story Split"
+  short_description: "Split big stories into vertical slices atomically"
+  default_prompt: "Use $story-split to break this story into smaller vertical slices."

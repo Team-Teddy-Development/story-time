@@ -1,0 +1,4 @@
+interface:
+  display_name: "Story Kickoff"
+  short_description: "Turn acceptance criteria into a red-green test plan"
+  default_prompt: "Use $story-kickoff to start this story with a test-first plan."

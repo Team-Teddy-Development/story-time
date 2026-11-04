@@ -1,6 +1,6 @@
 # story-time
 
-Agent skills for agile story planning. They work in Claude Code, and in any
+Agent skills for agile story planning. They work in Claude Code, Codex, and any
 harness that reads [Agent Skills](https://agentskills.io)
 (`skills/<name>/SKILL.md`).
 
@@ -39,28 +39,66 @@ of them.
 
 ## Install
 
-As a Claude Code plugin (inside Claude Code):
+Requires Node 20+. No npm install: the CLI has zero dependencies.
+
+### Installer (Claude Code, Codex, or both)
+
+```bash
+git clone https://github.com/team-teddy-development/story-time
+cd story-time
+node scripts/install.mjs --agent codex       # Codex       -> ~/.agents/skills
+node scripts/install.mjs --agent claude      # Claude Code -> ~/.claude/skills
+node scripts/install.mjs --agent all         # both
+```
+
+| Flag | Effect |
+|---|---|
+| `--scope project --project DIR` | Install into a repo instead: `DIR/.agents/skills` (Codex), `DIR/.claude/skills` (Claude Code) |
+| `--codex-home DIR` | Use the older Codex location `DIR/skills` (`$CODEX_HOME/skills`) |
+| `--dry-run` | Print the plan, write nothing |
+| `--force` | Replace story-time skills that are already installed. Without it, the installer refuses and writes nothing |
+| `--uninstall` | Remove the story-time skills, and nothing else |
+
+The installer copies the skills without the test suite.
+
+### Codex
+
+The installer above is the simplest route. Restart Codex afterwards, then
+call a skill with `$story-time`, `$story-pick`, and so on, or just describe
+the task. Each skill carries `agents/openai.yaml` with its Codex display
+name, short description, and default prompt. `principle-invest` is
+explicit-only, so it loads only when another skill or you reference it.
+
+As a Codex plugin:
+
+```bash
+codex plugin marketplace add team-teddy-development/story-time
+codex plugin add story-time@story-time
+```
+
+Or from inside Codex with the built-in installer: ask
+`$skill-installer install the skills under skills/ from team-teddy-development/story-time`.
+Install all of them: every skill calls the `story` CLI in `story-time`.
+
+### Claude Code
+
+As a plugin (inside Claude Code):
 
 ```text
 /plugin marketplace add team-teddy-development/story-time
 /plugin install story-time@story-time
 ```
 
-Or copy the skills:
+Or with the installer: `node scripts/install.mjs --agent claude`.
 
-```bash
-git clone https://github.com/team-teddy-development/story-time
-cp -R story-time/skills/* ~/.claude/skills/      # Claude Code, all projects
-cp -R story-time/skills/* .claude/skills/        # Claude Code, this project
-```
+### Any agent
 
-Or with the [skills CLI](https://skills.sh):
+With the [skills CLI](https://skills.sh), which also supports Cursor, Pi,
+OpenCode, and others:
 
 ```bash
 npx skills add team-teddy-development/story-time
 ```
-
-Requires Node 20+. No npm install: the CLI has zero dependencies.
 
 ## The backlog
 
@@ -130,12 +168,13 @@ Two suites:
 
 - `skills/story-time/scripts/test/`: domain, repository contract, saga,
   use cases, CLI end-to-end.
+- `test/install.test.mjs`: the installer, against a temp `$HOME`, for both agents.
 - `test/skills.test.mjs`: the skill library itself. Expected skill set, valid
-  frontmatter with a "Use when" trigger, links that resolve, cross-references
-  to skills that exist, length limits, README coverage, plugin manifest.
+  frontmatter with a "Use when" trigger, Codex `agents/openai.yaml`, links that resolve, cross-references
+  to skills that exist, length limits, README coverage, Claude and Codex plugin manifests.
 
-To add a skill, add its name to `EXPECTED` in `test/skills.test.mjs` first
-(red), then write `skills/<name>/SKILL.md` (green).
+To add a skill, add its name to `EXPECTED` in `test/expected-skills.mjs` first
+(red), then write `skills/<name>/SKILL.md` and `skills/<name>/agents/openai.yaml` (green).
 
 ## License
 

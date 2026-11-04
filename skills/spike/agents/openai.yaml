@@ -1,0 +1,4 @@
+interface:
+  display_name: "Spike"
+  short_description: "Time-boxed research that answers one question"
+  default_prompt: "Use $spike to frame a time-boxed spike for this unknown."
