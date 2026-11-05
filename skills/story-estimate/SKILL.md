@@ -5,16 +5,28 @@ description: Size stories with relative story points through a simulated plannin
 
 # Story Estimate
 
-`story` means the CLI from the **story-time** skill. The scale for every
-number is `1 2 3 5 8 13 20`, relative within this backlog.
+`story` means the CLI from the **story-time** skill. Use the modified
+Fibonacci scale `1 2 3 5 8 13 20`, relative within this backlog.
+
+Estimate the smallest credible implementation of the written scope. Missing
+detail lowers confidence; it does not add imagined work. Do not size every
+possible interpretation, contingency, or future hardening task.
 
 ## Part A: size (effort, complexity, uncertainty)
 
 ### 1. Find anchors
 
-Run `story list --status done --json`. Pick up to three finished stories
-the team sized 1–2, 3, and 5 as reference points. If the backlog has none,
-ask the user for one story everyone agrees is a "3" and anchor on it.
+Run `story list --status done --json`. Pick up to three finished stories the
+team sized 1–2, 3, and 5. Prefer anchors with similar work, boundaries, and
+test obligations. A diff's line count is context, not an estimate. If the
+backlog has no useful anchors, ask for one story everyone agrees is a 3.
+
+Before poker, check that the story identifies the outcome and its boundary.
+If the title could reasonably mean different domain objects, or the criteria
+do not identify what behavior proves completion, report `unestimated` and
+list the specific missing product decisions. Route to **acceptance-criteria**
+or **story-edit**. Use a **spike** only for a technical unknown that can be
+answered by investigation or experiment.
 
 ### 2. Get a first read
 
@@ -24,39 +36,45 @@ story judge <id> --json
 
 `decisions.size` is a suggested size with a confidence. Jev-based with a
 key, it reads the statement and criteria. Code-driven, it only counts the
-criteria (confidence 0.3). Treat it as one more voice in the round. Never
-treat it as the answer. A size of 13 or more, or a `splitPattern`, means
-the story should go to the **story-split** skill before poker.
+criteria (confidence 0.3). Treat it as one more voice in the round, never as
+the answer. It cannot expand the written scope. A size of 13 or more, or a
+`splitPattern`, is a signal to inspect the scope before poker, not an automatic
+split. Split only when the clearly defined work is genuinely large.
 
 ### 3. Play planning poker
 
 For each story, spawn three estimators in parallel, one message, three
 subagent calls (Claude Code: `Agent`, `subagent_type: general-purpose`;
 Codex: `spawn_agent`).
-Give each the story file, the anchors, and the codebase if there is one.
-Give each a different lens:
+Give each the story, anchors, and relevant codebase context. Tell every
+estimator to use only written scope and the simplest implementation consistent
+with the repository. Give each a different lens:
 
 | Estimator | Lens |
 |---|---|
-| Builder | Code to write and change, unfamiliar areas, migrations |
-| Tester | Criteria count, edge cases, test setup, data fixtures |
-| Operator | Deployment, flags, observability, rollout and rollback |
+| Builder | Required code changes and migrations; exclude speculative redesigns |
+| Tester | Tests needed to prove the written criteria; exclude unrelated hardening |
+| Operator | Operational work explicitly required to ship safely in this repository |
 
 Each returns `{ size, confidence: low|med|high, drivers: [..], risks: [..] }`
 and must not see the others' answers. If your harness has no subagents, write
 each estimate yourself, one after another, before reading the last.
 
+Risks explain confidence. Do not convert every risk into points. Existing or
+historical implementations may calibrate the estimate, but separate bundled
+work, refactors, generated files, and adjacent stories before comparing.
+
 ### 4. Converge
 
-- All three within one step of each other: take the higher of the two
-  closest values.
-- Spread of two or more steps: the high and low estimators each give their
-  strongest driver. Usually one of them has found missing scope or a missing
-  criterion. Fix the story (the **acceptance-criteria** skill), then
-  re-estimate once.
-- Still split, or any estimate of 13 or more: don't average. Recommend the
-  **story-split** skill. If it's low confidence everywhere, recommend the
-  **spike** skill.
+- Use the median vote when all three estimates are within one scale step.
+  Examples: `3/3/5 -> 3`, `3/5/5 -> 5`, `5/5/5 -> 5`.
+- With a spread of two or more steps, compare assumptions. Remove work not
+  required by the story, then re-estimate once. Do not average disagreement.
+- If disagreement comes from a missing product decision, return `unestimated`
+  and request that decision instead of inflating the estimate.
+- Recommend **story-split** only when a clearly defined scope still earns 13
+  or more. Recommend **spike** only when a technical unknown prevents sizing.
+- If every estimate has low confidence, do not record points.
 
 ### 5. Record
 
@@ -64,7 +82,9 @@ each estimate yourself, one after another, before reading the last.
 story set ST-012 size=3 --note "poker 3/3/5; anchors ST-003(2) ST-007(5); driver: token expiry edge cases"
 ```
 
-Put the drivers and risks under `## Notes`.
+Record only when the scope is clear enough and the converged confidence is at
+least medium. Put the drivers, material risks, poker votes, and anchors under
+`## Notes`.
 
 ## Part B: value (WSJF cost-of-delay inputs)
 
