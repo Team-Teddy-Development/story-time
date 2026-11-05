@@ -14,7 +14,8 @@ import { noteStory } from './src/application/note-story.mjs';
 import { splitStory } from './src/application/split-story.mjs';
 import { backlogStats } from './src/application/backlog-stats.mjs';
 import { CONFIG_DIR, CONFIG_FILE, LEGACY_CONFIG_FILE, defaultExportFormat, parseConfig, pushPolicy } from './src/config/config.mjs';
-import { SECRET_SPECS, mask, tokenEnv } from './src/config/secrets.mjs';
+import { SECRET_LABELS, SECRET_SPECS, mask, tokenEnv } from './src/config/secrets.mjs';
+import { selectDecisionEngine } from './src/application/select-decision-engine.mjs';
 import { FileSecretStore, ensureGitignore } from './src/adapters/file-secret-store.mjs';
 import { GitHubIssuesGateway } from './src/adapters/github-issues-gateway.mjs';
 import { AdoBoardsGateway } from './src/adapters/ado-boards-gateway.mjs';
@@ -42,7 +43,9 @@ Commands:
   export <id> [--format github|ado|markdown] [--command]
                                            Copy-paste card for your tracker, or the gh/az create command
   push   <id...> | --all [--dry-run]       Create/update items in GitHub or ADO (only if sync is not "off")
-  secret set|status|clear <github|ado>     Store a tracker token (PAT) in .story-time/.<tracker>.env (0600, git-ignored)
+  judge  [id...]                           Judgement calls: need vs solution, real benefit, testable criteria,
+                                           type, size, split pattern. Jev with a key, code heuristics without
+  secret set|status|clear <github|ado|jev> Store a token or API key in .story-time/.<name>.env (0600, git-ignored)
   init   [--from answers.json] [--force]   Write a validated .story-time/settings.json (see the story-setup skill)
   config                                   Show the effective project config
   help                                     This text
@@ -243,7 +246,7 @@ const commands = {
       out(f, Object.fromEntries(rows), () => table(['Tracker', 'Token'], rows));
       return;
     }
-    if (!['set', 'clear'].includes(action) || !tracker) throw new UsageError('Usage: story secret set|clear <github|ado>, or story secret status');
+    if (!['set', 'clear'].includes(action) || !tracker) throw new UsageError('Usage: story secret set|clear <github|ado|jev>, or story secret status');
     if (!SECRET_SPECS[tracker]) throw new UsageError(`There is no token support for "${tracker}". Use: ${Object.keys(SECRET_SPECS).join(', ')}.`);
     if (action === 'clear') {
       const removed = await store.clear(tracker);
@@ -253,10 +256,26 @@ const commands = {
     if (extra.length) {
       throw new UsageError('Pass the token at the hidden prompt or on stdin, not as an argument (arguments end up in shell history and process lists).');
     }
-    const token = await readToken(`Paste your ${tracker === 'ado' ? 'Azure DevOps' : 'GitHub'} token (input hidden): `);
+    const token = await readToken(`Paste your ${SECRET_LABELS[tracker]} ${tracker === 'jev' ? 'API key' : 'token'} (input hidden): `);
     if (!token) throw new Error('No token received.');
     await store.save(tracker, token);
     console.log(`Saved the ${tracker} token (${mask(token)}) to ${join(CONFIG_DIR, SECRET_SPECS[tracker].file)} with mode 600. It is git-ignored.`);
+  },
+
+  async judge(repo, ids, f, ctx) {
+    const CLOSED = new Set(['done', 'split', 'archived']);
+    const targets = ids.length
+      ? await Promise.all(ids.map((id) => requireStory(repo, id)))
+      : (await repo.list()).filter((s) => !CLOSED.has(s.status));
+    const store = new FileSecretStore(join(ctx.root, CONFIG_DIR));
+    const apiKey = process.env.TYPESAFE_API_KEY || (await store.load('jev'));
+    const { engine, mode, model, why } = selectDecisionEngine({ apiKey, config: ctx.config });
+    const judgements = [];
+    for (const s of targets) judgements.push({ ...(await engine.judge(s)), title: s.title });
+    const info = { mode, model, why };
+    out(f, { engine: info, judgements }, () =>
+      [`engine: ${mode === 'jev' ? `jev (${model})` : `code (${why})`}`, ...judgements.map(formatJudgement)].join('\n\n'),
+    );
   },
 
   async config(_repo, _args, f, ctx) {
@@ -282,6 +301,24 @@ async function requireStory(repo, id) {
   const s = await repo.get(id);
   if (!s) throw new Error(`Story ${id} not found.`);
   return s;
+}
+
+function formatJudgement(j) {
+  const d = j.decisions;
+  const yn = (x) => (x.value ? 'yes' : 'no');
+  const c = (x) => (typeof x.confidence === 'number' ? x.confidence.toFixed(2) : '-');
+  const rows = [];
+  if (d.negotiable) rows.push(['need, not solution', yn(d.negotiable), c(d.negotiable), d.negotiable.reason ?? '']);
+  if (d.valuable) rows.push(['real benefit', yn(d.valuable), c(d.valuable), d.valuable.reason ?? '']);
+  for (const k of d.criteria) rows.push([`criterion ${k.index} testable`, k.testable ? 'yes' : 'no', c(k), '']);
+  rows.push(['type', d.type.value, c(d.type), '']);
+  if (d.size) rows.push(['size', String(d.size.value), c(d.size), d.size.reason ?? '']);
+  if (d.splitPattern) rows.push(['split pattern', d.splitPattern.value, c(d.splitPattern), '']);
+  const head = `${j.id}  ${j.title}  [${j.source}${j.model ? ` ${j.model}` : ''}]`;
+  const note = j.source === 'fallback' ? `\n  Jev unavailable (${j.reason}); code heuristics used.` : '';
+  const usage = j.usage ? `\n  tokens: ${j.usage.inputTokens} in / ${j.usage.outputTokens} out, about $${j.usage.costUsd}` : '';
+  const body = table(['Decision', 'Value', 'Conf', 'Why'], rows).split('\n').map((l) => `  ${l}`).join('\n');
+  return `${head}${note}\n${body}${usage}`;
 }
 
 function formatLint(r) {

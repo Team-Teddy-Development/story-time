@@ -29,7 +29,17 @@ Warnings don't block, but report them.
 
 ## 2. Judgment checks
 
-Lint can't see these. Check each one and give a one-line reason:
+Lint can't see these. Start with:
+
+```bash
+story judge <id...> --json
+```
+
+It answers Negotiable (`negotiable`), Valuable (`valuable`), and Testable
+(`criteria[].testable`), each with a confidence and its source (`jev`,
+`code`, or `fallback`). A `no` with confidence of 0.5 or more is a gap to
+fix. Anything lower is a prompt to look closely, not a verdict. Then check
+each item below and give a one-line reason:
 
 - **Negotiable.** The statement describes a need, not a solution.
 - **Valuable.** The benefit is real to the named persona. A stakeholder

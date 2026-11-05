@@ -57,6 +57,13 @@ If there is no user-facing outcome, look for the one it enables and write
 that. If there really is none (dependency upgrades, CI changes), use
 `--type chore` and say plainly why it is worth doing.
 
+### Check the type
+
+After writing, run `story judge <id>`. If its `type` disagrees with what
+you chose, re-read the input and pick deliberately: for example, a "story"
+that is really a broken behaviour is a `bug`. Fix the type with `story set
+<id> type=...`.
+
 ### Unknowns
 
 If the team can't estimate it because of an open question, create a spike

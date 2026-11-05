@@ -62,6 +62,19 @@ question so the user can just confirm. In Claude Code, use
    - `auto`: push right after each change.
 
    For Jira, Linear, or files, sync is always `off`.
+7. **Decisions: bring your own TypeSafe key?** (optional) story-time's
+   judgement calls (need vs. solution, real benefit, testable criteria,
+   type, size, split pattern) are code-driven by default: deterministic
+   heuristics, nothing leaves the machine. With a TypeSafe API key they are
+   Jev-based, with the code heuristics as the fallback.
+   - Say exactly what is sent, and only to `https://api.typesafe.ai`: each
+     judged story's title, persona, statement, and acceptance criteria. Never
+     the changelog, notes, or files. A story containing an email address, a
+     phone number, or a token-shaped string is never sent; code decides it.
+   - Ask whether the backlog may go to that vendor. If not, or there's no
+     key, skip this: everything still works, code-driven.
+   - To pin the model for reproducible decisions, set `"jev": { "model": "jev-1.13.0" }`.
+     The key itself never goes in settings.
 
 Don't ask about anything you detected with certainty unless the user
 wants to change it.
@@ -128,10 +141,27 @@ characters.
 
 Then prove it works without changing anything: `story push --all --dry-run`.
 
+**Jev key (only if the user chose bring-your-own-key).** The same rules
+apply. If `TYPESAFE_API_KEY` is already exported, nothing more is needed.
+Otherwise the user runs this themselves:
+
+```bash
+story secret set jev
+```
+
+That stores `.story-time/.jev.env` (mode 600, git-ignored). Never take the
+key in chat. Prove it with `story judge <any id>`: the first line must read
+`engine: jev (...)`. If it reads `engine: code (...)`, it says why. A
+rejected key falls back to code for the run and warns once, without the key.
+`STORY_TIME_JEV=off` turns Jev off without deleting the key.
+
 ## 6. Confirm and hand off
 
 Show the effective config from `story config` and say how it will be used:
 
+- `story judge <id>` makes the judgement calls: Jev-based with a key,
+  code-driven without. Each decision says its source (`jev`, `code`, or
+  `fallback` with the reason) and a confidence.
 - `story export <id>` now prints cards in the tracker's format (`github`,
   `ado`, or neutral `markdown` for Jira, Linear, and files). `--command`
   prints the `gh` or `az boards` command that creates the item.

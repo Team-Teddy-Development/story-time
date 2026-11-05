@@ -135,6 +135,47 @@ respects your WIP limit, `backlog-groom` sizes the ready buffer from your
 velocity, `story-kickoff` writes tests for your framework, and
 `story-ready` / `story-accept` add your team's rules.
 
+## Decisions: code-driven, or Jev with your own key
+
+`story lint` checks rules. `story judge` makes the judgement calls:
+- Does the statement describe a need rather than a solution?
+- Is the benefit real?
+- Is each acceptance criterion testable?
+- What type is it (story, bug, spike, chore), and what size?
+- If it's too big, which split pattern fits?
+
+```bash
+story judge ST-012        # engine: code (no TypeSafe key; ...)  or  engine: jev (jev-1.13.0)
+story judge --json        # every open story, structured, with source and confidence
+```
+
+| Setup | Decisions |
+|---|---|
+| No key (default) | **Code-driven.** Deterministic heuristics. Nothing leaves the machine. |
+| `story secret set jev`, or `TYPESAFE_API_KEY` exported | **Jev-based.** One batched request per story to Jev (TypeSafe AI's System One model for typed decisions). Each answer comes back as a probability. |
+| `STORY_TIME_JEV=off` | Code-driven, even with a key. |
+
+The `story-setup` skill asks whether to bring a key. The key is stored like
+the PATs (`.story-time/.jev.env`, mode 600, git-ignored), and the agent never
+handles it. You can pin the model with `"jev": { "model": "jev-1.13.0" }` in
+`settings.json`, and the CLI rejects any other `jev` key, so a key can't end
+up in that file.
+
+The Jev client follows the contract your org already runs in production
+(`varsity-engine`, `lib/pdca/jev-*`):
+- **Endpoint.** It talks only to `https://api.typesafe.ai`, with a Bearer key. It refuses redirects,
+  because a redirect would re-send the request body to another origin.
+- **Retries and auth.** Requests time out after 10 s. 408, 429, 5xx, timeouts and transport errors get three attempts, honouring `retry-after`.
+  A 401 or 403 switches Jev off for the rest of the run, with one warning.
+- **Strict decoding.** A missing or extra answer, a wrong type, or an out-of-range probability
+  rejects the whole response. Nothing is defaulted.
+- **Canary.** A contradiction canary runs before the first real call, so a model that answers
+  everything alike is caught.
+- **What is sent.** Only a story's title, persona, statement and criteria. Any story containing an
+  email address, a phone number, or a token-shaped string is not sent at all.
+- **Fallback.** Whenever Jev can't answer, the code engine decides, and the judgement says
+  `fallback` and why. A judgement is never left half-made.
+
 ## Copy-paste cards
 
 Skills that create or change a story end with a copyable card. You can
@@ -225,6 +266,7 @@ story stats
 story export ST-001 --format github
 story push ST-001 --dry-run
 story secret status
+story judge ST-001 --json
 story init --from answers.json   # usually done for you by story-setup
 story config
 ```
@@ -235,10 +277,13 @@ The CLI under `skills/story-time/scripts/` is a small hexagonal codebase:
 
 ```
 src/
-  domain/        story.mjs (format), invest.mjs (lint rules), wsjf.mjs (ranking). Pure, no I/O.
-  ports/         story-repository.mjs (StoryRepository) and tracker-gateway.mjs (TrackerGateway).
+  domain/        story.mjs (format), invest.mjs (lint rules), wsjf.mjs (ranking), judgement.mjs
+                 (typed questions and answers), code-decision-engine.mjs (heuristics). Pure, no I/O.
+  ports/         story-repository.mjs (StoryRepository), tracker-gateway.mjs (TrackerGateway),
+                 decision-engine.mjs (DecisionEngine).
   adapters/      memory/fs story repositories; memory, GitHub (gh), and ADO (az boards) tracker
-                 gateways; process-exec.mjs (no shell); file-secret-store.mjs (0600, git checks).
+                 gateways; process-exec.mjs (no shell); file-secret-store.mjs (0600, git checks);
+                 jev/ (client, egress gate, JevDecisionEngine).
   saga/          saga.mjs. Ordered steps with compensations, rolled back in reverse on failure.
   config/        config.mjs parses .story-time/settings.json (pure); secrets.mjs holds token helpers.
   domain/export.mjs  Card and create-command exporters (github, ado, markdown) in a strategy registry.
@@ -260,6 +305,10 @@ story.mjs        Composition root and CLI boundary. Parsing, wiring, output only
 - **Repository pattern.** Storage stays behind `StoryRepository`. The
   filesystem adapter writes atomically (temp file, then rename) and rejects
   path-escaping ids.
+- **Decision strategies.** `DecisionEngine` has two implementations,
+  `CodeDecisionEngine` and `JevDecisionEngine`. `selectDecisionEngine` picks
+  one by whether a key is present. The Jev engine wraps the code engine as its
+  fallback, so callers never branch on which one they got.
 - **Tracker gateways.** `TrackerGateway` (create / update / remove) is a second,
   narrower port. The memory, GitHub, and ADO gateways all pass one contract
   suite (`test/tracker-gateway.contract.mjs`). Adapters get an injected
