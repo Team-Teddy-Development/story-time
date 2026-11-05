@@ -145,3 +145,17 @@ test('skills that hand off a card follow the sync mode', async () => {
     assert.match(text, /story push/, `${name} must use story push when sync allows`);
   }
 });
+
+test('story-setup offers bring-your-own-key for Jev and explains what is sent', async () => {
+  const text = await readFile(join(SKILLS, 'story-setup', 'SKILL.md'), 'utf8');
+  assert.match(text, /story secret set jev/);
+  assert.match(text, /code.driven|code heuristics/i);
+  assert.match(text, /api\.typesafe\.ai/);
+});
+
+test('judgement skills use story judge', async () => {
+  for (const name of ['story-ready', 'story-estimate', 'story-create', 'story-split', 'principle-invest']) {
+    const text = await readFile(join(SKILLS, name, 'SKILL.md'), 'utf8');
+    assert.match(text, /story judge/, `${name} must use story judge for its decisions`);
+  }
+});

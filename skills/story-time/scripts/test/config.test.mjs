@@ -91,6 +91,13 @@ test('config lives in .story-time/settings.json, with the old .story-time.json a
   assert.equal(LEGACY_CONFIG_FILE, '.story-time.json');
 });
 
+test('jev settings are optional; a model pin must be a jev model id', () => {
+  assert.equal(parseConfig({}).jev, undefined);
+  assert.deepEqual(parseConfig({ jev: { model: 'jev-1.13.0' } }).jev, { model: 'jev-1.13.0' });
+  assert.throws(() => parseConfig({ jev: { model: 'gpt-4' } }), /jev\.model/);
+  assert.throws(() => parseConfig({ jev: { apiKey: 'x' } }), /Unknown jev key "apiKey".*story secret set jev/s);
+});
+
 test('export format follows the tracker', () => {
   assert.equal(defaultExportFormat(parseConfig({})), 'markdown');
   assert.equal(defaultExportFormat(parseConfig({ tracker: 'github', github: { repo: 'a/b' } })), 'github');
