@@ -20,7 +20,9 @@ the team can finish it in one sprint and everyone agrees when it is done.
 
 `story lint` checks what a machine can check (form, benefit, criteria shape,
 vague words, size, dependencies, spike timebox). Independent, Negotiable, and
-Valuable still take judgment. Apply it.
+Valuable still take judgment. `story judge` gives you a second opinion on
+Negotiable, Valuable, and Testable, Jev-based when a TypeSafe key is set.
+Weigh it, and apply your own judgment where its confidence is low.
 
 ## Vertical slices
 

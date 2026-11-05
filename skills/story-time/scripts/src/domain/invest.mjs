@@ -3,15 +3,15 @@
 // don't edit the linter). Rules are pure: (story, context) -> findings.
 import { acceptanceCriteria } from './story.mjs';
 
-const STATEMENT = /^\s*As (?:an?\s+|the\s+)?(.+?),\s*I (?:want|need|can)\s+(.+?)(?:,?\s*so that\s+(.+?))?\.?\s*$/is;
+export const STATEMENT = /^\s*As (?:an?\s+|the\s+)?(.+?),\s*I (?:want|need|can)\s+(.+?)(?:,?\s*so that\s+(.+?))?\.?\s*$/is;
 const GENERIC_PERSONA = /^(?:end[-\s]?)?(?:user|someone|anyone|somebody|person|people|customer|visitor)s?$/i;
-const GHERKIN = /^Given\b.+\bwhen\b.+\bthen\b/is;
+export const GHERKIN = /^Given\b.+\bwhen\b.+\bthen\b/is;
 const VAGUE = [
   'fast', 'quickly', 'easy', 'easily', 'simple', 'intuitive', 'user-friendly', 'seamless',
   'robust', 'properly', 'correctly', 'appropriate', 'etc', 'and so on', 'as needed', 'should work',
   'efficient', 'flexible', 'nice',
 ];
-const VAGUE_RE = new RegExp(`\\b(${VAGUE.map((w) => w.replace(/[-\s]/g, '[-\\s]')).join('|')})\\b`, 'i');
+export const VAGUE_RE = new RegExp(`\\b(${VAGUE.map((w) => w.replace(/[-\s]/g, '[-\\s]')).join('|')})\\b`, 'i');
 
 const isSpike = (s) => s.type === 'spike';
 const needsStatement = (s) => !s.type || s.type === 'story';

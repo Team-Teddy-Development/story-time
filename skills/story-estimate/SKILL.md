@@ -16,7 +16,19 @@ Run `story list --status done --json`. Pick up to three finished stories
 the team sized 1–2, 3, and 5 as reference points. If the backlog has none,
 ask the user for one story everyone agrees is a "3" and anchor on it.
 
-### 2. Play planning poker
+### 2. Get a first read
+
+```bash
+story judge <id> --json
+```
+
+`decisions.size` is a suggested size with a confidence. Jev-based with a
+key, it reads the statement and criteria. Code-driven, it only counts the
+criteria (confidence 0.3). Treat it as one more voice in the round. Never
+treat it as the answer. A size of 13 or more, or a `splitPattern`, means
+the story should go to the **story-split** skill before poker.
+
+### 3. Play planning poker
 
 For each story, spawn three estimators in parallel, one message, three
 subagent calls (Claude Code: `Agent`, `subagent_type: general-purpose`;
@@ -34,7 +46,7 @@ Each returns `{ size, confidence: low|med|high, drivers: [..], risks: [..] }`
 and must not see the others' answers. If your harness has no subagents, write
 each estimate yourself, one after another, before reading the last.
 
-### 3. Converge
+### 4. Converge
 
 - All three within one step of each other: take the higher of the two
   closest values.
@@ -46,7 +58,7 @@ each estimate yourself, one after another, before reading the last.
   **story-split** skill. If it's low confidence everywhere, recommend the
   **spike** skill.
 
-### 4. Record
+### 5. Record
 
 ```bash
 story set ST-012 size=3 --note "poker 3/3/5; anchors ST-003(2) ST-007(5); driver: token expiry edge cases"

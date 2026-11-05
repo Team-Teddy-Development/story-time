@@ -1,7 +1,7 @@
 import { mkdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises';
 import { execFile } from 'node:child_process';
 import { join } from 'node:path';
-import { formatEnvFile, parseEnvFile, secretSpec } from '../config/secrets.mjs';
+import { SECRET_LABELS, formatEnvFile, parseEnvFile, secretSpec } from '../config/secrets.mjs';
 
 const GITIGNORE = '# story-time: tracker tokens stay on this machine.\n*.env\n';
 
@@ -46,7 +46,7 @@ export class FileSecretStore {
     }
     if (await this.isTracked(file)) {
       throw new Error(
-        `${file} is committed to git. Treat the token as leaked: rotate it in ${tracker === 'ado' ? 'Azure DevOps' : 'GitHub'}, ` +
+        `${file} is committed to git. Treat the token as leaked: rotate it in ${SECRET_LABELS[tracker]}, ` +
           `then run git rm --cached "${file}" and story secret set ${tracker}.`,
       );
     }

@@ -18,8 +18,10 @@ you must preserve across the children.
 
 ## 2. Pick a pattern
 
-Try these in order. Stop at the first one that gives slices that are each
-worth shipping.
+`story judge <id>` suggests a `split pattern` with a confidence (Jev-based
+with a key, a keyword heuristic without). Try that pattern first. If its
+slices aren't each worth shipping, try the others in this order and stop at
+the first one whose slices are:
 
 | Pattern | Split by | Example |
 |---|---|---|

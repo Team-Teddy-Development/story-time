@@ -64,7 +64,8 @@ that full command. Pass `--json` when you need to parse output.
 | `story stats` | Counts, points, unestimated and stale stories |
 | `story export <id> [--format github\|ado\|markdown] [--command]` | Copy-paste card for the tracker, or the `gh` / `az boards` command that creates it |
 | `story push <id...> \| --all [--dry-run]` | Create or update the items in GitHub / ADO. Refused when `sync` is `off` |
-| `story secret set\|status\|clear <github\|ado>` | Store a tracker token in `.story-time/.<tracker>.env` (mode 600, git-ignored). The user runs `set` themselves |
+| `story judge [id...]` | Judgement calls: need vs. solution, real benefit, testable criteria, type, size, split pattern. Jev with a key, code heuristics without |
+| `story secret set\|status\|clear <github\|ado\|jev>` | Store a tracker token or the TypeSafe key in `.story-time/.<name>.env` (mode 600, git-ignored). The user runs `set` themselves |
 | `story init --from answers.json` / `story config` | Write / show the project config (`.story-time/settings.json`) |
 
 The backlog lives in `./backlog/` (override with `--dir` or `$STORY_TIME_DIR`),
@@ -95,6 +96,24 @@ Run `story config --json` at the start of any story-time work and use what
 it says. Never ask the user for something the config already answers. If no
 file exists, the defaults apply (files backlog, `ST` ids, WIP 1). Offer
 the **story-setup** skill once, then carry on.
+
+## Decisions: code or Jev
+
+`story lint` is rules. `story judge` is judgement, through one
+`DecisionEngine` port with two strategies:
+
+- **No TypeSafe key: code-driven.** Deterministic heuristics. Nothing leaves
+  the machine.
+- **A key (`story secret set jev`, or `TYPESAFE_API_KEY`): Jev-based.** Each
+  story's decisions go to Jev in one batched request, and come back as
+  probabilities. If Jev can't give a trustworthy answer, the code heuristics
+  decide and the judgement says `fallback` and why. That covers an outage, a
+  rejected key, a failed contradiction check, a story carrying personal data
+  or a secret, or a malformed answer.
+
+Treat a judgement as evidence, not a verdict. Low confidence (under 0.5),
+or a `fallback`, means you apply judgement yourself, per the
+**principle-invest** skill. Never present a code-driven decision as Jev's.
 
 ## Statuses
 

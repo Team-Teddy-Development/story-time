@@ -4,7 +4,10 @@
 export const SECRET_SPECS = {
   github: { file: '.github.env', variable: 'GH_TOKEN' },
   ado: { file: '.ado.env', variable: 'AZURE_DEVOPS_EXT_PAT' },
+  jev: { file: '.jev.env', variable: 'TYPESAFE_API_KEY' },
 };
+
+export const SECRET_LABELS = { github: 'GitHub', ado: 'Azure DevOps', jev: 'TypeSafe (Jev)' };
 
 export function secretSpec(tracker) {
   const spec = SECRET_SPECS[tracker];

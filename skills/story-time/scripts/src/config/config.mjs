@@ -12,7 +12,7 @@ export const LEGACY_CONFIG_FILE = '.story-time.json';
 
 const KNOWN_KEYS = new Set([
   '$schema', 'tracker', 'sync', 'backlogDir', 'prefix', 'github', 'ado', 'jira', 'linear',
-  'team', 'project', 'definitionOfDone', 'definitionOfReady',
+  'team', 'project', 'definitionOfDone', 'definitionOfReady', 'jev',
 ]);
 
 export function parseConfig(raw = {}) {
@@ -48,6 +48,7 @@ export function parseConfig(raw = {}) {
   if (raw.ado || tracker === 'ado') config.ado = parseAdo(raw.ado ?? {});
   if (raw.jira) config.jira = { ...raw.jira };
   if (raw.linear) config.linear = { ...raw.linear };
+  if (raw.jev) config.jev = parseJev(raw.jev);
   return config;
 }
 
@@ -64,6 +65,17 @@ export function pushPolicy(config) {
 
 export function defaultExportFormat(config) {
   return config.tracker === 'github' || config.tracker === 'ado' ? config.tracker : 'markdown';
+}
+
+// Jev settings carry no secrets: the key is stored with `story secret set jev`.
+function parseJev(j) {
+  for (const key of Object.keys(j)) {
+    if (key !== 'model') throw new Error(`Unknown jev key "${key}". Keys never go in settings; store one with: story secret set jev`);
+  }
+  if (j.model !== undefined && !/^jev-[\w.-]+$/.test(String(j.model))) {
+    throw new Error(`jev.model must be a Jev model id such as "jev-1.13.0"; got "${j.model}".`);
+  }
+  return j.model ? { model: j.model } : {};
 }
 
 function parseGithub(g) {
