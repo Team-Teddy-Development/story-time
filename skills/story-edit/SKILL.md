@@ -1,6 +1,6 @@
 ---
 name: story-edit
-description: Change an existing story safely — clarify wording, add or rework acceptance criteria, change scope, re-score, or re-link dependencies — keeping the changelog honest and sending the story back through refinement when the change invalidates its estimate. Use when the user says "edit/update/change/rewrite ST-xxx", "add a criterion to…", or "this story is wrong".
+description: Change an existing story safely — clarify wording, add or rework acceptance criteria, change scope, re-score, or re-link dependencies — keeping the changelog honest and preserving existing estimates unless the user explicitly requests re-estimation. Use when the user says "edit/update/change/rewrite ST-xxx", "add a criterion to…", or "this story is wrong".
 ---
 
 # Story Edit
@@ -15,7 +15,7 @@ decides what happens next:
 | Kind | Examples | Consequence |
 |---|---|---|
 | **Clarification** | Fix wording, add a note, link a design | No status change |
-| **Scope change** | Add, remove, or rework a criterion; change the persona or goal | Estimate is suspect. A `ready` story drops back to `refined` |
+| **Scope change** | Add, remove, or rework a criterion; change the persona or goal | Keep the estimate unchanged. A `ready` story drops back to `refined` |
 | **Re-score** | New value, deadline, or size | Fields only. Note the reason |
 | **Re-link** | Add or remove `depends_on` | Re-run lint for independence |
 
@@ -26,6 +26,9 @@ decides what happens next:
 - **In-progress stories belong to someone.** A scope change on an
   `in-progress` story needs the user to confirm the implementer knows.
   Prefer adding a new story over growing the current one.
+- **Estimates are planning records.** Never change `size` or run the
+  **story-estimate** skill unless the user explicitly asks. Do not describe
+  re-estimation as required after a scope change.
 - **Watch for creep.** If the edit adds a new "and", pushes criteria above ~8,
   or the size would reach 13 or more, stop and offer the **story-split**
   skill instead.
@@ -39,7 +42,7 @@ decides what happens next:
 
   ```bash
   story set ST-012 value=13 time_criticality=8 --note "contract deadline moved to Dec 1"
-  story set ST-012 status=refined --note "added lockout criterion; needs re-estimate"
+  story set ST-012 status=refined --note "added lockout criterion; needs readiness review"
   ```
 
 - **Sections** (Story, Acceptance Criteria, Notes, Out of Scope): edit the
@@ -53,10 +56,10 @@ Every edit leaves exactly one changelog line that says what changed and why.
 
 ## 4. Re-verify
 
-Run `story lint <id>`. If the change was a scope change, tell the user the
-story needs the **story-estimate** skill again before it can be ready.
-Report the diff in one or two lines: what changed, what status it is in now,
-and what it needs next.
+Run `story lint <id>`. Report the diff in one or two lines: what changed,
+what status it is in now, and what it needs next. Preserve the current estimate.
+At handoff, offer re-estimation as an explicit choice instead of recommending it
+or treating it as a readiness requirement.
 
 ## Hand-off card
 
@@ -76,11 +79,14 @@ rather than create a new one.
 Then follow `sync` from `story config`:
 
 - `off`: stop at the card. Never push, even if `gh` / `az` are signed in.
-- `ask`: ask "Push this change to the tracker now?" On yes, run `story push <id>`
-  and report the URLs it prints.
-- `auto`: run `story push <id>` without asking, and report the URLs.
+- `ask`: ask "Push this change to the tracker now, keeping the current estimate?
+  If you want re-estimation first, say so." On yes, run `story push <id>` and
+  report the URLs it prints.
+- `auto`: run `story push <id>` without asking, preserve the current estimate,
+  and report the URLs.
 
 If a push fails, the CLI has already rolled back what it created. Report its
 error, keep the card, and suggest `story push <id> --dry-run` to check the plan.
 
 A story that already has `remote:` is updated in place, never duplicated.
+
