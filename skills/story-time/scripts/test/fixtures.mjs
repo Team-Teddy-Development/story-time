@@ -53,3 +53,62 @@ export function story(overrides = {}) {
     ...overrides,
   };
 }
+
+// A lifecycle with a guard, two terminal states and a way back.
+export const ENROLLMENT = `entity = "enrollment"
+states = ["draft", "submitted", "approved", "rejected"]
+initial = "draft"
+terminal = ["approved", "rejected"]
+events = ["submit", "approve", "reject", "withdraw"]
+invariants = ["An approved enrollment has a coverage start date."]
+
+[guards]
+complete = "every required field is filled in"
+
+[[transitions]]
+from = "draft"
+to = "submitted"
+event = "submit"
+guard = "complete"
+
+[[transitions]]
+from = "submitted"
+to = "approved"
+event = "approve"
+
+[[transitions]]
+from = "submitted"
+to = "rejected"
+event = "reject"
+
+[[transitions]]
+from = "submitted"
+to = "draft"
+event = "withdraw"
+`;
+
+// A complete unique-hit table: 3 x 2 combinations, 4 rules.
+export const PROMOTION = `name = "promotion"
+hit_policy = "unique"
+outputs = ["promote"]
+
+[inputs]
+role = ["admin", "member", "guest"]
+verified = [true, false]
+
+[[rules]]
+when = { role = "admin", verified = "-" }
+then = { promote = "yes" }
+
+[[rules]]
+when = { role = "member", verified = true }
+then = { promote = "yes" }
+
+[[rules]]
+when = { role = "member", verified = false }
+then = { promote = "no" }
+
+[[rules]]
+when = { role = "guest", verified = "-" }
+then = { promote = "no" }
+`;

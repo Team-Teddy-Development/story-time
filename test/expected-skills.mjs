@@ -15,4 +15,6 @@ export const EXPECTED = [
   'spike',
   'story-kickoff',
   'story-accept',
+  'state-machine',
+  'decision-table',
 ];

@@ -91,3 +91,10 @@ test('noteStory appends a changelog entry without changing fields', async () => 
   await assert.rejects(noteStory(repo, 'ST-1', '  '), /note/);
   await assert.rejects(noteStory(repo, 'ST-404', 'x'), /not found/);
 });
+
+test('updateStory gates ready on a missing state_machine file when given a file check', async () => {
+  const repo = new InMemoryStoryRepository([story({ id: 'ST-010', status: 'refined', state_machine: 'model/state/x.toml' })]);
+  await assert.rejects(updateStory(repo, 'ST-010', { status: 'ready' }, { exists: () => false }), /state_machine\.exists/);
+  const s = await updateStory(repo, 'ST-010', { status: 'ready' }, { exists: () => true });
+  assert.equal(s.status, 'ready');
+});
