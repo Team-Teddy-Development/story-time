@@ -32,7 +32,9 @@ story new --type spike --title "Spike: provider X 3-D Secure in hosted checkout"
 story set ST-031 depends_on=ST-040 --note "blocked on spike ST-040"
 ```
 
-Link each blocked story to the spike with `depends_on`.
+Link each blocked story to the spike with `depends_on`. `story lint`
+enforces it: an open spike that no story lists in `depends_on` fails
+`spike.unblocks`. If nothing is waiting on the answer, don't run the spike.
 
 ## 3. Run it (if asked to do the research)
 
@@ -52,7 +54,8 @@ Link each blocked story to the spike with `depends_on`.
    **story-edit** skill, and estimate them with the **story-estimate** skill.
 4. `story set <id> status=done --note "answer: <one line>"`.
 5. Remove the spike from blocked stories' `depends_on` if the answer
-   unblocks them, or replace it with the new stories.
+   unblocks them, or replace it with the new stories. A `done` spike is
+   exempt from `spike.unblocks`, so this is safe.
 
 ## Report
 

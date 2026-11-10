@@ -44,7 +44,7 @@ test('overlapping rules in a unique table are named', () => {
   ]);
 });
 
-test('a first-hit table may overlap, but a rule earlier rules always win over never fires', () => {
+test('a first-hit table may overlap, but a rule shadowed by earlier rules is reported', () => {
   const r = check(PROMOTION.replace('"unique"', '"first"') + EXTRA_ADMIN_RULE);
   assert.deepEqual(r.defects, [
     { code: 'unreachable', message: 'Rule 5 never fires: earlier rules match every combination it covers (hit policy first).', rules: [5] },

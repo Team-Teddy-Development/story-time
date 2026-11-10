@@ -38,7 +38,7 @@ test('a transition without an event is a defect', () => {
 
 test('unknown states, events and guards are defects', () => {
   const r = check(ENROLLMENT.replace('to = "rejected"', 'to = "rejeced"').replace('event = "withdraw"', 'event = "retract"').replace('guard = "complete"', 'guard = "done"'));
-  assert.deepEqual(codes(r).sort(), ['unknown-event', 'unknown-guard', 'unknown-state']);
+  assert.deepEqual(codes(r).sort(), ['unknown-event', 'unknown-guard', 'unknown-state', 'unreachable'], 'rejected is now unreachable too');
   assert.ok(r.defects.some((d) => d.message === 'Transition 3 goes to unknown state "rejeced".'));
   assert.ok(r.defects.some((d) => d.message === 'Transition 4 uses unknown event "retract".'));
   assert.ok(r.defects.some((d) => d.message === 'Transition 1 uses unknown guard "done".'));

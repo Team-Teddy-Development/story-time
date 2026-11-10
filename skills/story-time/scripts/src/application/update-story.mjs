@@ -8,7 +8,7 @@ const IMMUTABLE = new Set(['id', 'created', 'updated', 'sections']);
 
 // Applies field changes with domain validation and an audit trail.
 // Moving to "ready" is gated by the INVEST lint unless force is set.
-export async function updateStory(repo, id, changes, { note, force = false, date = today() } = {}) {
+export async function updateStory(repo, id, changes, { note, force = false, date = today(), exists } = {}) {
   assertStoryRepository(repo);
   const current = await repo.get(id);
   if (!current) throw new Error(`Story ${id} not found.`);
@@ -22,7 +22,7 @@ export async function updateStory(repo, id, changes, { note, force = false, date
   }
 
   if (next.status === 'ready' && current.status !== 'ready' && !force) {
-    const { findings } = lintStory(next, { stories: await repo.list() });
+    const { findings } = lintStory(next, { stories: await repo.list(), exists });
     const errors = findings.filter((f) => f.severity === 'error');
     if (errors.length) {
       throw new Error(`${id} is not ready:\n${errors.map((e) => `  ${e.rule}: ${e.message}`).join('\n')}`);

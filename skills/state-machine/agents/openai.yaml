@@ -1,0 +1,4 @@
+interface:
+  display_name: "State Machine"
+  short_description: "Model an entity lifecycle and check it"
+  default_prompt: "Use $state-machine to model and check this entity's lifecycle."

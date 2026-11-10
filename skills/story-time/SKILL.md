@@ -19,6 +19,7 @@ idea ──► story-create ──► acceptance-criteria ──► story-estima
             └─ unknown? ──► spike                             story-pick ──► story-kickoff ──► build ──► story-accept ──► [done]
 
 backlog-groom runs on a cadence over the whole backlog. story-edit changes any story at any stage.
+state-machine and decision-table write checked models that acceptance-criteria and story-kickoff build on.
 ```
 
 | Request | Skill |
@@ -36,6 +37,8 @@ backlog-groom runs on a cadence over the whole backlog. story-edit changes any s
 | "we don't know enough to estimate" | **spike** skill |
 | "start ST-012" | **story-kickoff** skill |
 | "is ST-012 done?", "accept this story" | **story-accept** skill |
+| "what states can X be in", "model this lifecycle" | **state-machine** skill |
+| "the outcome depends on several inputs", "decision table" | **decision-table** skill |
 
 The **principle-invest** skill holds the quality bar all of them apply.
 
@@ -66,6 +69,8 @@ that full command. Pass `--json` when you need to parse output.
 | `story push <id...> \| --all [--dry-run]` | Create or update the items in GitHub / ADO. Refused when `sync` is `off` |
 | `story judge [id...]` | Judgement calls: need vs. solution, real benefit, testable criteria, type, size, split pattern. Jev with a key, code heuristics without |
 | `story secret set\|status\|clear <github\|ado\|jev>` | Store a tracker token or the TypeSafe key in `.story-time/.<name>.env` (mode 600, git-ignored). The user runs `set` themselves |
+| `story machine check\|criteria\|diagram <file>` | Check a state machine (`model/state/<entity>.toml`) for unreachable states, dead ends, transitions without an event, and unknown names; print one criterion per transition and per refused event; or print its Mermaid diagram. Exit 1 on defects |
+| `story table check\|criteria <file>` | Check a decision table for uncovered input combinations and, under `unique`, overlapping rules; or print one criterion with a row per combination for a parameterized test. Exit 1 on defects |
 | `story init --from answers.json` / `story config` | Write / show the project config (`.story-time/settings.json`) |
 
 The backlog lives in `./backlog/` (override with `--dir` or `$STORY_TIME_DIR`),
