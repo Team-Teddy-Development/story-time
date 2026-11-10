@@ -146,3 +146,13 @@ Can provider X do 3DS?
   await writeFile(join(root, 'backlog', 'ST-001.md'), READY_MD.replace('depends_on: []', 'depends_on: [ST-002]'));
   assert.equal((await story(root, 'lint', 'ST-002')).code, 0);
 });
+
+test('criteria name the entity and the rule from the file, not its stem', async () => {
+  const machine = ENROLLMENT.replace('entity = "enrollment"', 'name = "cutover"');
+  const root = await project({ 'bad.toml': machine, 'stem.toml': PROMOTION });
+  const m = await story(root, 'machine', 'criteria', 'bad.toml');
+  assert.equal(m.code, 0, m.stderr);
+  assert.match(m.stdout, /^- \[ \] Given a cutover in draft/);
+  const t = await story(root, 'table', 'criteria', 'stem.toml');
+  assert.match(t.stdout, /of the promotion table/);
+});

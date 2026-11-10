@@ -23,7 +23,7 @@ export function checkMachine(doc, { name } = {}) {
   if (defects.length) return { machine: undefined, defects };
 
   const machine = {
-    entity: doc.entity ?? name ?? 'entity',
+    entity: doc.entity ?? doc.name ?? name ?? 'entity',
     states: doc.states,
     initial: doc.initial,
     terminal: doc.terminal ?? [],

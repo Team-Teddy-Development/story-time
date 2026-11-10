@@ -25,7 +25,7 @@ column names.
 ## 2. Write the model
 
 ```toml
-entity = "enrollment"
+entity = "enrollment"     # or name = "enrollment"; defaults to the file name
 states = ["draft", "submitted", "approved", "rejected"]
 initial = "draft"
 terminal = ["approved", "rejected"]
