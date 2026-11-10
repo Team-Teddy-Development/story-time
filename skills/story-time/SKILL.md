@@ -53,7 +53,7 @@ that full command. Pass `--json` when you need to parse output.
 
 | Command | Does |
 |---|---|
-| `story new --title T [--statement S] [--ac A]... [--type story\|spike\|bug\|chore]` | Create a draft with the next id |
+| `story new --title T [--statement S] [--ac A]... [--type story\|spike\|bug\|chore]` | Create a draft with the next id. In a git repo the id is above every id on all local and remote-tracking branches; `git fetch` first so other branches' ids are seen |
 | `story list [--status S]` | List stories |
 | `story show <id>` | Print one story |
 | `story lint [id...]` | INVEST / Definition of Ready check. Exit 1 if any story has errors |
