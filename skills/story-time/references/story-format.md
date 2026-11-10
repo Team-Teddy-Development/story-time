@@ -15,6 +15,7 @@ time_criticality: 5        # cost of waiting               (1 2 3 5 8 13 20)
 risk_reduction: 3          # risk reduction / enablement   (1 2 3 5 8 13 20)
 size: 3                    # relative effort               (1 2 3 5 8 13 20)
 depends_on: [ST-010]
+state_machine: model/state/enrollment.toml   # optional, see below
 parent: ST-004             # set on children of a split
 children: []               # set on a split parent
 created: 2026-11-01
@@ -41,6 +42,14 @@ Written by story-kickoff.
 - 2026-11-01 created
 - 2026-11-04 set size=3 — planning poker, anchors ST-003 (2) and ST-007 (5)
 ```
+
+`state_machine:` names the lifecycle model the story moves an entity
+through, relative to the repo root (see the **state-machine** skill).
+`story lint` reports `state_machine.exists` as an error when the file is
+missing.
+
+An open spike must be listed in at least one story's `depends_on`, or
+`story lint` reports `spike.unblocks` as an error.
 
 Spikes replace `## Story` / `## Acceptance Criteria` with `## Question` and
 `## Exit Criteria`, and need `timebox:` (e.g. `2d`) instead of `size`.

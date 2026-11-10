@@ -1,0 +1,4 @@
+interface:
+  display_name: "Decision Table"
+  short_description: "Write a rule as a checked decision table"
+  default_prompt: "Use $decision-table to turn this rule into a checked decision table."

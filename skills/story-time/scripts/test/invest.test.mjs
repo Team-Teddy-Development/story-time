@@ -106,3 +106,48 @@ test('a generic persona ("a user", "someone") is a Valuable warning', () => {
   }
   assert.ok(!lintStory(story()).findings.some((x) => x.rule === 'statement.persona'));
 });
+
+const spike = (overrides = {}) =>
+  story({ id: 'ST-200', type: 'spike', size: undefined, timebox: '1d', sections: { Question: 'Can X do 3DS?', 'Exit Criteria': '- [ ] Decision recorded' }, ...overrides });
+
+test('an open spike no story depends on is a spike.unblocks error', () => {
+  const s = spike();
+  const r = lintStory(s, { stories: [s, story({ id: 'ST-201' })] });
+  const f = r.findings.find((x) => x.rule === 'spike.unblocks');
+  assert.equal(f.severity, 'error');
+  assert.equal(f.message, 'No story lists ST-200 in depends_on. A spike must unblock a named story: link it, or archive the spike.');
+  assert.equal(r.ready, false);
+});
+
+test('spike.unblocks does not fire when at least one story depends on the spike', () => {
+  const s = spike();
+  const r = lintStory(s, { stories: [s, story({ id: 'ST-201', depends_on: ['ST-200'] })] });
+  assert.ok(!ids(r).includes('spike.unblocks'));
+  assert.equal(r.ready, true);
+});
+
+test('spike.unblocks ignores closed spikes and runs only with the backlog as context', () => {
+  for (const status of ['done', 'archived', 'split']) {
+    const s = spike({ status });
+    assert.ok(!ids(lintStory(s, { stories: [s] })).includes('spike.unblocks'), status);
+  }
+  assert.ok(!ids(lintStory(spike())).includes('spike.unblocks'));
+  assert.ok(!ids(lintStory(story(), { stories: [story()] })).includes('spike.unblocks'), 'only spikes');
+});
+
+test('a state_machine path that does not exist is an error', () => {
+  const s = story({ state_machine: 'model/state/enrollment.toml' });
+  const seen = [];
+  const r = lintStory(s, { exists: (p) => (seen.push(p), false) });
+  assert.deepEqual(seen, ['model/state/enrollment.toml']);
+  const f = r.findings.find((x) => x.rule === 'state_machine.exists');
+  assert.equal(f.severity, 'error');
+  assert.equal(f.message, 'state_machine: model/state/enrollment.toml does not exist (paths are relative to the repo root). Write it with the state-machine skill.');
+});
+
+test('state_machine.exists passes when the file exists, and is skipped without a field or a file check', () => {
+  const s = story({ state_machine: 'model/state/enrollment.toml' });
+  assert.ok(!ids(lintStory(s, { exists: () => true })).includes('state_machine.exists'));
+  assert.ok(!ids(lintStory(story(), { exists: () => false })).includes('state_machine.exists'));
+  assert.ok(!ids(lintStory(s)).includes('state_machine.exists'));
+});

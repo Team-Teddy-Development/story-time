@@ -23,7 +23,9 @@ Every `error` blocks. Route each one to the skill that fixes it:
 | `size.estimated`, `value.scored` | **story-estimate** skill |
 | `size.small`, `ac.count` | **story-split** skill |
 | `independent.deps` | Resolve the dependency, or sequence the work |
+| `spike.unblocks` | Link the waiting story (`story set <story> depends_on=<spike>`), or archive the spike. A spike nobody waits on buys nothing |
 | `spike.*` | **spike** skill |
+| `state_machine.exists` | **state-machine** skill |
 
 Warnings don't block, but report them.
 

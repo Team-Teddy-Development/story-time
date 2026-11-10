@@ -159,3 +159,40 @@ test('judgement skills use story judge', async () => {
     assert.match(text, /story judge/, `${name} must use story judge for its decisions`);
   }
 });
+
+test('story-time routes to the design skills and documents their commands', async () => {
+  const core = await readFile(join(SKILLS, 'story-time', 'SKILL.md'), 'utf8');
+  assert.match(core, /\*\*state-machine\*\* skill/);
+  assert.match(core, /\*\*decision-table\*\* skill/);
+  assert.match(core, /story machine check/);
+  assert.match(core, /story table check/);
+});
+
+test('state-machine writes the design doc and the model, and hands checks to the CLI', async () => {
+  const text = await readFile(join(SKILLS, 'state-machine', 'SKILL.md'), 'utf8');
+  assert.match(text, /docs\/design\/state\/<entity>\.md/);
+  assert.match(text, /model\/state\/<entity>\.toml/);
+  assert.match(text, /story machine check/);
+  assert.match(text, /story machine criteria/);
+  assert.match(text, /state_machine:/);
+});
+
+test('decision-table hands checks and criteria to the CLI', async () => {
+  const text = await readFile(join(SKILLS, 'decision-table', 'SKILL.md'), 'utf8');
+  assert.match(text, /story table check/);
+  assert.match(text, /story table criteria/);
+  assert.match(text, /hit_policy/);
+});
+
+test('spike and story-ready explain spike.unblocks; story-ready routes state_machine.exists', async () => {
+  for (const name of ['spike', 'story-ready']) {
+    const text = await readFile(join(SKILLS, name, 'SKILL.md'), 'utf8');
+    assert.match(text, /spike\.unblocks/, `${name} must mention spike.unblocks`);
+  }
+  assert.match(await readFile(join(SKILLS, 'story-ready', 'SKILL.md'), 'utf8'), /state_machine\.exists/);
+});
+
+test('the story format documents the state_machine field', async () => {
+  const text = await readFile(join(SKILLS, 'story-time', 'references', 'story-format.md'), 'utf8');
+  assert.match(text, /state_machine:/);
+});

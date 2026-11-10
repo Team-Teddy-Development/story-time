@@ -14,6 +14,7 @@ const VAGUE = [
 export const VAGUE_RE = new RegExp(`\\b(${VAGUE.map((w) => w.replace(/[-\s]/g, '[-\\s]')).join('|')})\\b`, 'i');
 
 const isSpike = (s) => s.type === 'spike';
+const CLOSED = new Set(['done', 'split', 'archived']);
 const needsStatement = (s) => !s.type || s.type === 'story';
 const isNum = (v) => typeof v === 'number' && Number.isFinite(v);
 
@@ -99,10 +100,25 @@ export const DEFAULT_RULES = [
   rule('spike.question', 'T', (s) =>
     isSpike(s) && !s.sections?.Question?.trim() ? [err('Spike has no "## Question" to answer.')] : [],
   ),
+
+  rule('spike.unblocks', 'V', (s, ctx) => {
+    if (!isSpike(s) || CLOSED.has(s.status) || !ctx.stories) return [];
+    return ctx.stories.some((x) => x.depends_on?.includes(s.id))
+      ? []
+      : [err(`No story lists ${s.id} in depends_on. A spike must unblock a named story: link it, or archive the spike.`)];
+  }),
+
+  rule('state_machine.exists', 'T', (s, ctx) =>
+    s.state_machine && ctx.exists && !ctx.exists(s.state_machine)
+      ? [err(`state_machine: ${s.state_machine} does not exist (paths are relative to the repo root). Write it with the state-machine skill.`)]
+      : [],
+  ),
 ];
 
-export function lintStory(story, { rules = DEFAULT_RULES, stories } = {}) {
-  const ctx = { stories };
+// ctx.stories is the whole backlog; ctx.exists(path) answers for a repo-root-relative path.
+// Rules that need either skip when it is absent.
+export function lintStory(story, { rules = DEFAULT_RULES, stories, exists } = {}) {
+  const ctx = { stories, exists };
   const findings = rules.flatMap((r) =>
     r.check(story, ctx).map((f) => ({ rule: r.id, invest: r.invest, ...f })),
   );

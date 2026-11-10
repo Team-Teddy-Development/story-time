@@ -27,11 +27,14 @@ script. Here the subject is the story lifecycle, from idea to accepted.
 | `spike` | "we need to investigate" | A time-boxed, single-question spike with exit criteria, which ends in estimated follow-up stories. |
 | `story-kickoff` | "start ST-012" | Turns criteria into an ordered red-green-refactor test list, finds ports, adapters, and saga seams, and writes a Test Plan. |
 | `story-accept` | "accept ST-012" | Verifies each criterion and the Definition of Done with evidence. Accepts, or rejects with gaps. |
+| `state-machine` | "what states can X be in?" | Models an entity lifecycle in `model/state/<entity>.toml` with a design note, checks it for unreachable states and dead ends, and generates a criterion per transition and per refused event. |
+| `decision-table` | "decision table" | Writes a rule as a table with finite inputs and a hit policy, checks it for gaps and overlaps, and generates one rule table for a parameterized test. |
 | `principle-invest` | (referenced) | The quality bar: INVEST, vertical slices, the 3 Cs, and anti-patterns. |
 
 ```
 story-setup (once) → idea → story-create → acceptance-criteria → story-estimate → story-ready → story-pick → story-kickoff → build → story-accept
           ├─ too big → story-split      ├─ epic → story-map      └─ unknown → spike
+          ├─ a lifecycle → state-machine      └─ a multi-input rule → decision-table   (both feed acceptance-criteria)
 backlog-groom runs on a cadence; story-edit applies anywhere.
 ```
 
@@ -267,6 +270,10 @@ story export ST-001 --format github
 story push ST-001 --dry-run
 story secret status
 story judge ST-001 --json
+story machine check model/state/enrollment.toml      # exit 1 naming each defect
+story machine criteria model/state/enrollment.toml   # one Given/When/Then per transition and per refused event
+story table check model/rules/promotion.toml         # uncovered combinations, overlapping rules
+story table criteria model/rules/promotion.toml      # one rule table for a parameterized test
 story init --from answers.json   # usually done for you by story-setup
 story config
 ```
@@ -278,7 +285,9 @@ The CLI under `skills/story-time/scripts/` is a small hexagonal codebase:
 ```
 src/
   domain/        story.mjs (format), invest.mjs (lint rules), wsjf.mjs (ranking), judgement.mjs
-                 (typed questions and answers), code-decision-engine.mjs (heuristics). Pure, no I/O.
+                 (typed questions and answers), code-decision-engine.mjs (heuristics), toml.mjs (the
+                 TOML subset the models use), state-machine.mjs and decision-table.mjs (checks,
+                 criteria, diagram). Pure, no I/O.
   ports/         story-repository.mjs (StoryRepository), tracker-gateway.mjs (TrackerGateway),
                  decision-engine.mjs (DecisionEngine).
   adapters/      memory/fs story repositories; memory, GitHub (gh), and ADO (az boards) tracker

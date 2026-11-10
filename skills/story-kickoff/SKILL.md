@@ -22,7 +22,9 @@ status=in-progress --note "kickoff"`. If it isn't ready, stop and use the
 For each acceptance criterion, write one or more test names in the
 codebase's test style. Use `project.testFramework` from `story config`, or
 look at the existing tests. One Given/When/Then is usually one test, and a
-rule table is one parameterized test.
+rule table is one parameterized test. If the story has `state_machine:`,
+each invariant in that model is one property test, run after every
+transition.
 
 Order them so each step is the smallest move from green to green:
 

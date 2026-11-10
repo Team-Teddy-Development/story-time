@@ -3,6 +3,7 @@
 // and the only boundary: it parses argv, picks the adapter, calls use cases,
 // and formats output. No business rules live here.
 import { readFile, writeFile, access, mkdir } from 'node:fs/promises';
+import { existsSync } from 'node:fs';
 import { basename, dirname, join, resolve } from 'node:path';
 import { FileSystemStoryRepository } from './src/adapters/fs-story-repository.mjs';
 import { gitReservedIds } from './src/adapters/git-reserved-ids.mjs';
@@ -23,6 +24,9 @@ import { AdoBoardsGateway } from './src/adapters/ado-boards-gateway.mjs';
 import { processExec } from './src/adapters/process-exec.mjs';
 import { pushStories } from './src/application/push-stories.mjs';
 import { renderCard, renderCommand } from './src/domain/export.mjs';
+import { parseToml } from './src/domain/toml.mjs';
+import { checkMachine, machineCriteria, machineDiagram } from './src/domain/state-machine.mjs';
+import { checkTable, tableCriteria } from './src/domain/decision-table.mjs';
 
 const USAGE = `story — agile backlog toolkit (story-time)
 
@@ -47,6 +51,10 @@ Commands:
   judge  [id...]                           Judgement calls: need vs solution, real benefit, testable criteria,
                                            type, size, split pattern. Jev with a key, code heuristics without
   secret set|status|clear <github|ado|jev> Store a token or API key in .story-time/.<name>.env (0600, git-ignored)
+  machine check|criteria|diagram <file>    Check a state machine (model/state/<entity>.toml), or print its
+                                           Given/When/Then criteria or its Mermaid diagram (exit 1 on defects)
+  table  check|criteria <file>             Check a decision table for gaps and overlaps, or print its criteria
+                                           as one parameterized rule table (exit 1 on defects)
   init   [--from answers.json] [--force]   Write a validated .story-time/settings.json (see the story-setup skill)
   config                                   Show the effective project config
   help                                     This text
@@ -122,10 +130,10 @@ const commands = {
     out(f, s, () => serializeStory(s).trimEnd());
   },
 
-  async lint(repo, ids, f) {
+  async lint(repo, ids, f, ctx) {
     const all = await repo.list();
     const targets = ids.length ? await Promise.all(ids.map((id) => requireStory(repo, id))) : all;
-    const results = targets.map((s) => ({ ...lintStory(s, { stories: all }), title: s.title }));
+    const results = targets.map((s) => ({ ...lintStory(s, { stories: all, exists: inRepo(ctx) }), title: s.title }));
     out(f, results, () => results.map(formatLint).join('\n\n') || 'No stories.');
     if (results.some((r) => !r.ready)) process.exitCode = 1;
   },
@@ -147,7 +155,7 @@ const commands = {
     });
   },
 
-  async set(repo, [id, ...pairs], f) {
+  async set(repo, [id, ...pairs], f, ctx) {
     if (!id || !pairs.length) throw new UsageError('Usage: story set <id> key=value...');
     const changes = Object.fromEntries(
       pairs.map((p) => {
@@ -156,7 +164,7 @@ const commands = {
         return [p.slice(0, i).replace(/-/g, '_'), p.slice(i + 1)];
       }),
     );
-    const s = await updateStory(repo, id, changes, { note: f.note, force: f.force });
+    const s = await updateStory(repo, id, changes, { note: f.note, force: f.force, exists: inRepo(ctx) });
     out(f, s, () => `${s.id} updated.`);
   },
 
@@ -279,6 +287,37 @@ const commands = {
     );
   },
 
+  async machine(_repo, [action, file], f) {
+    if (!['check', 'criteria', 'diagram'].includes(action) || !file) throw new UsageError('Usage: story machine check|criteria|diagram <file>');
+    const name = modelName(file);
+    const { machine, defects } = checkMachine(await readModel(file), { name });
+    if (defects.length || action === 'check') {
+      reportDefects(f, machine?.entity ?? name, defects, () =>
+        `${machine.states.length} states, ${machine.events.length} events, ${machine.transitions.length} transitions`);
+      return;
+    }
+    if (action === 'diagram') {
+      const diagram = machineDiagram(machine);
+      out(f, { diagram }, () => diagram);
+      return;
+    }
+    const criteria = machineCriteria(machine);
+    out(f, criteria, () => criteria.map((c) => `- [ ] ${c.text}`).join('\n'));
+  },
+
+  async table(_repo, [action, file], f) {
+    if (!['check', 'criteria'].includes(action) || !file) throw new UsageError('Usage: story table check|criteria <file>');
+    const { table: t, defects } = checkTable(await readModel(file), { name: modelName(file) });
+    if (defects.length || action === 'check') {
+      const combinations = t.inputs.reduce((p, i) => p * i.domain.length, 1);
+      reportDefects(f, t.name, defects, () =>
+        `${t.inputs.length} inputs, ${combinations} combinations, ${t.rules.length} rules, hit policy ${t.hitPolicy}`);
+      return;
+    }
+    const c = tableCriteria(t);
+    out(f, c, () => c.markdown);
+  },
+
   async config(_repo, _args, f, ctx) {
     out(f, ctx.config, () => `# ${ctx.configFound ? ctx.configPath : 'no config file; defaults'}\n${JSON.stringify(ctx.config, null, 2)}`);
   },
@@ -326,7 +365,7 @@ function formatLint(r) {
   const errors = r.findings.filter((x) => x.severity === 'error').length;
   const warnings = r.findings.length - errors;
   const verdict = r.ready ? 'READY' : 'NOT READY';
-  const lines = r.findings.map((x) => `  ${x.severity.padEnd(7)} [${x.invest}] ${x.rule.padEnd(18)} ${x.message}`);
+  const lines = r.findings.map((x) => `  ${x.severity.padEnd(7)} [${x.invest}] ${x.rule.padEnd(20)} ${x.message}`);
   return [`${r.id}  ${r.title}  ${verdict} (${errors} errors, ${warnings} warnings)`, ...lines].join('\n');
 }
 
@@ -337,6 +376,34 @@ function table(headers, rows) {
 }
 
 const exists = (p) => access(p).then(() => true, () => false);
+
+// Story fields that name a file (state_machine) are relative to the project root.
+const inRepo = (ctx) => (path) => existsSync(resolve(ctx.root, path));
+
+const modelName = (file) => basename(file).replace(/\.toml$/, '');
+
+async function readModel(file) {
+  let text;
+  try {
+    text = await readFile(file, 'utf8');
+  } catch (e) {
+    throw new Error(e.code === 'ENOENT' ? `${file}: not found.` : `${file}: ${e.message}`);
+  }
+  try {
+    return parseToml(text);
+  } catch (e) {
+    throw new Error(`${file}: ${e.message}`);
+  }
+}
+
+function reportDefects(flags, name, defects, summary) {
+  out(flags, { ok: !defects.length, defects }, () =>
+    defects.length
+      ? [`${name}: ${defects.length} defect${defects.length === 1 ? '' : 's'}`, ...defects.map((d) => `  ${d.code.padEnd(14)} ${d.message}`)].join('\n')
+      : `${name}: OK (${summary()})`,
+  );
+  if (defects.length) process.exitCode = 1;
+}
 
 async function makeGateway(ctx) {
   const { config } = ctx;
