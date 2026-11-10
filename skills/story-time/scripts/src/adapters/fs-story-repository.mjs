@@ -6,8 +6,11 @@ import { assertValidId, byId, formatId, highestNumber, ID_PATTERN } from '../por
 // Filesystem adapter: one markdown file per story, <dir>/<ID>.md.
 // Files are the source of truth so humans and agents can edit them directly.
 export class FileSystemStoryRepository {
-  constructor(dir) {
+  // reservedIds: optional async () => string[] of ids used elsewhere (for example on other git
+  // branches). nextId allocates above them too, so parallel branches never collide.
+  constructor(dir, { reservedIds } = {}) {
     this.dir = dir;
+    this.reservedIds = reservedIds;
   }
 
   path(id) {
@@ -59,6 +62,7 @@ export class FileSystemStoryRepository {
   }
 
   async nextId(prefix) {
-    return formatId(prefix, highestNumber(await this.ids(), prefix) + 1);
+    const reserved = this.reservedIds ? await this.reservedIds() : [];
+    return formatId(prefix, highestNumber([...(await this.ids()), ...reserved], prefix) + 1);
   }
 }

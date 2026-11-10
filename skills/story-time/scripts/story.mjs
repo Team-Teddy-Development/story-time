@@ -5,6 +5,7 @@
 import { readFile, writeFile, access, mkdir } from 'node:fs/promises';
 import { basename, dirname, join, resolve } from 'node:path';
 import { FileSystemStoryRepository } from './src/adapters/fs-story-repository.mjs';
+import { gitReservedIds } from './src/adapters/git-reserved-ids.mjs';
 import { lintStory } from './src/domain/invest.mjs';
 import { rankBacklog } from './src/domain/wsjf.mjs';
 import { serializeStory } from './src/domain/story.mjs';
@@ -427,7 +428,7 @@ async function main(argv) {
     const { config, found } = command === 'init' ? { config: parseConfig({}), found: false } : await loadConfig(configPath);
     const dir = resolve(flags.dir ?? process.env.STORY_TIME_DIR ?? resolve(root, config.backlogDir));
     const ctx = { config, configPath, configFound: found, root };
-    await handler(new FileSystemStoryRepository(dir), positional, flags, ctx);
+    await handler(new FileSystemStoryRepository(dir, { reservedIds: gitReservedIds(dir) }), positional, flags, ctx);
     return process.exitCode ?? 0;
   } catch (e) {
     console.error(e.message);
