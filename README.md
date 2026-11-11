@@ -194,9 +194,10 @@ story export ST-012 --command          # the gh issue create / az boards work-it
 |---|---|
 | `github` | Title, labels (`story`, `size:3`, `value:8`, `epic:EP-2`), and an issue body with a criteria checklist |
 | `ado` | Work Item Type, Title, Description, Acceptance Criteria, Story Points or Effort, Tags, and Area/Iteration Path. Mapped to the Agile, Scrum, or Basic process template; bugs use Repro Steps |
+| `gitea` | The same card as `github` (Gitea renders the same markdown and labels) |
 | `markdown` | A neutral card for Jira, Linear, or anywhere else |
 
-## Pushing to GitHub and Azure DevOps
+## Pushing to GitHub, Gitea, and Azure DevOps
 
 Pushing is opt-in per project, with `sync` in `settings.json`:
 
@@ -213,23 +214,26 @@ story push --all --dry-run   # show the plan; touch nothing
 
 - **Linking.** Created items are linked back into the story (`remote`,
   `remote_url`), so the next push updates the same item instead of making a duplicate.
+- **Gitea.** Set `"gitea": { "baseUrl", "owner", "repo" }` (the web URL, not
+  the SSH remote). story-time calls the Gitea REST API v1 directly. Gitea has
+  no close reason, so "not planned" is the `not-planned` label.
 - **Status.** `done` closes the item (completed / Closed / Done).
   `archived` and `split` close it as not planned or Removed. Active
   statuses never change the ADO board state.
-- **Labels.** GitHub labels that story-time owns (`story`, `size:*`, `value:*`,
-  `epic:*`) are kept current. Your team's own labels are left alone.
+- **Labels.** GitHub and Gitea labels that story-time owns (`story`, `size:*`, `value:*`,
+  `epic:*`, and on Gitea `not-planned`) are kept current. Your team's own labels are left alone.
 - **Rollback.** A push is a saga: if any step fails, items created in this
-  run are closed (GitHub) or sent to the recycle bin (ADO), and local files
+  run are closed (GitHub, Gitea) or sent to the recycle bin (ADO), and local files
   are restored.
 
 ### Tokens (PATs)
 
-An existing `gh auth login` / `az login`, or `GH_TOKEN` /
+An existing `gh auth login` / `az login`, or `GH_TOKEN` / `GITEA_TOKEN` /
 `AZURE_DEVOPS_EXT_PAT` already in your environment, is used first, and no
 file is needed. Otherwise, run this yourself in a terminal:
 
 ```bash
-story secret set github      # or: story secret set ado (hidden prompt, or pipe it on stdin)
+story secret set github      # or: story secret set gitea / ado (hidden prompt, or pipe it on stdin)
 story secret status          # shows only the last 4 characters
 ```
 
@@ -238,7 +242,8 @@ story secret status          # shows only the last 4 characters
 - `story` refuses to load a token file that is group- or world-readable, or
   that is tracked by git. In the git case, it tells you to rotate the token.
 - Tokens reach `gh` / `az` only through environment variables, never as
-  arguments, so they don't appear in process lists or shell history.
+  arguments, so they don't appear in process lists or shell history. The
+  Gitea token goes only in the REST `Authorization` header.
 - The agent never sees the token: the skills tell it not to ask for one or
   accept one in chat.
 
@@ -290,12 +295,12 @@ src/
                  criteria, diagram). Pure, no I/O.
   ports/         story-repository.mjs (StoryRepository), tracker-gateway.mjs (TrackerGateway),
                  decision-engine.mjs (DecisionEngine).
-  adapters/      memory/fs story repositories; memory, GitHub (gh), and ADO (az boards) tracker
+  adapters/      memory/fs story repositories; memory, GitHub (gh), Gitea (REST), and ADO (az boards) tracker
                  gateways; process-exec.mjs (no shell); file-secret-store.mjs (0600, git checks);
                  jev/ (client, egress gate, JevDecisionEngine).
   saga/          saga.mjs. Ordered steps with compensations, rolled back in reverse on failure.
   config/        config.mjs parses .story-time/settings.json (pure); secrets.mjs holds token helpers.
-  domain/export.mjs  Card and create-command exporters (github, ado, markdown) in a strategy registry.
+  domain/export.mjs  Card and create-command exporters (github, ado, gitea, markdown) in a strategy registry.
   application/   create, update, note, split (a saga), push (a saga), backlog-stats use cases.
 story.mjs        Composition root and CLI boundary. Parsing, wiring, output only.
 ```
