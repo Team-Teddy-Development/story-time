@@ -44,29 +44,30 @@ The **principle-invest** skill holds the quality bar all of them apply.
 
 ## The `story` tool
 
-For `tracker: "gitea"`, use the Rust path in [Gitea Story Time](../../docs/gitea-story-time.md).
-Read `.story-time/settings.json` directly before selecting a CLI. Run
-`gitea-gateway story-push --root <project> --dry-run backlog/ST-001.md`, then
-remove `--dry-run` for an authorized push. Pass explicit Markdown paths, not IDs
-or `--all`. From the Story Time source checkout, install the binary with
-`cargo install --offline --path gitea-gateway`. Copied skill installations
-contain neither the crate nor `docs/`; locate that checkout for the build
-and the linked reference. The skill installer does not install this binary.
-
-For Gitea, edit story Markdown directly using
-[story-format.md](references/story-format.md). Preserve `remote` and
-`remote_url`. Upstream also has a Node Gitea adapter. Its config, init, secret, and push
-commands are separate from this native Rust execution path.
-
-Other trackers retain the zero-dependency Node CLI (Node 20+):
+Use the installed Rust `story` executable for push with GitHub, ADO, or Gitea.
+Read `.story-time/settings.json` before selecting a tracker. Install the native
+command from the repository root:
 
 ```bash
-node <story-time>/scripts/story.mjs <command>
+cargo install --path native/story-push --locked
 ```
 
-`<story-time>` is this skill's directory. Other story-time skills are its
-siblings, so from any of them it is `../story-time`. Below, `story` means
-that full command. Pass `--json` when you need to parse output.
+`story push` runs entirely in Rust. Do not invoke the historical Node push
+handler. Other commands still use Node 20+. Set `STORY_TIME_LEGACY_CLI` to
+this skill's absolute `scripts/story.mjs` path, or configure `legacyCli` in
+`~/.config/story-time/runtime.json`. The dispatcher uses that path only for
+non-push commands. Pass `--json` when you need to parse output.
+
+The separate Rust `gitea-gateway story-push` interface remains available in
+[Gitea Story Time](../../docs/gitea-story-time.md). It takes explicit Markdown
+paths, not IDs or `--all`. Install it from the source checkout with
+`cargo install --offline --path gitea-gateway`. For example, run
+`gitea-gateway story-push --root <project> --dry-run backlog/ST-001.md`, then
+remove `--dry-run` for an authorized push. Copied skill installations contain
+neither crate nor `docs/`; the skill installer does not install either binary.
+For direct Markdown edits, follow [story-format.md](references/story-format.md)
+and preserve `remote` and `remote_url`. Historical Node push adapters are not
+part of either Rust push execution path.
 
 | Command | Does |
 |---|---|
@@ -80,7 +81,7 @@ that full command. Pass `--json` when you need to parse output.
 | `story split <id> --from children.json` | Split into children atomically. A failure rolls everything back |
 | `story stats` | Counts, points, unestimated and stale stories |
 | `story export <id> [--format github\|ado\|markdown] [--command]` | Copy-paste card for the tracker, or the `gh` / `az boards` command that creates it |
-| `story push <id...> \| --all [--dry-run]` | Create or update the items in GitHub / ADO. Refused when `sync` is `off` |
+| `story push <id...> \| --all [--dry-run]` | Create or update items in GitHub, ADO, or Gitea. Native Rust; refuses when `sync` is `off` |
 | `story judge [id...]` | Judgement calls: need vs. solution, real benefit, testable criteria, type, size, split pattern. Jev with a key, code heuristics without |
 | `story secret set\|status\|clear <github\|ado\|jev>` | Store a tracker token or the TypeSafe key in `.story-time/.<name>.env` (mode 600, git-ignored). The user runs `set` themselves |
 | `story machine check\|criteria\|diagram <file>` | Check a state machine (`model/state/<entity>.toml`) for unreachable states, dead ends, transitions without an event, and unknown names; print one criterion per transition and per refused event; or print its Mermaid diagram. Exit 1 on defects |

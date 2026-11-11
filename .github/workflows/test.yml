@@ -37,3 +37,13 @@ jobs:
           /tmp/story-policy-tests
           rustc --edition=2021 --test test/story-policy-contract.rs -o /tmp/story-policy-contract
           /tmp/story-policy-contract
+  native-push:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - run: cargo fmt --manifest-path native/story-push/Cargo.toml --check
+      - run: cargo clippy --manifest-path native/story-push/Cargo.toml --locked --all-targets -- -D warnings
+      - run: cargo test --manifest-path native/story-push/Cargo.toml --locked
