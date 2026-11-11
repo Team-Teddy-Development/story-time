@@ -116,6 +116,36 @@ fn fixture(name: &str) -> Fixture {
     git(&path, &["commit", "-q", "--allow-empty", "-m", "Initial"]);
     Fixture(path)
 }
+#[test]
+fn contract_suite_uses_source_checkout_from_unrelated_directory() {
+    let unrelated = fixture("unrelated-cwd");
+    let result = Command::new(std::env::current_exe().unwrap())
+        .args([
+            "--skip",
+            "contract_suite_uses_source_checkout_from_unrelated_directory",
+            "--test-threads=1",
+        ])
+        .current_dir(&unrelated.0)
+        .output()
+        .unwrap();
+    assert!(
+        result.status.success(),
+        "contract suite selected the caller directory instead of its source checkout:\n{}\n{}",
+        String::from_utf8_lossy(&result.stdout),
+        String::from_utf8_lossy(&result.stderr)
+    );
+    let output = String::from_utf8_lossy(&result.stdout);
+    for name in [
+        "repository_has_github_dogfooding_contract",
+        "setup_defaults_to_explicit_auto_without_changing_existing_configs",
+        "cartographer_preparation_keeps_distinct_story_ids_and_no_runtime_authority",
+        "real_cli_rejects_missing_and_undeclared_stories",
+        "real_cli_rejects_a_story_added_independently_to_the_base_branch",
+    ] {
+        assert!(output.contains(&format!("test {name} ... ok")), "{output}");
+    }
+}
+
 fn ids(dir: &Path) -> std::process::Output {
     let head = git(dir, &["rev-parse", "HEAD"]);
     Command::new(checker())
