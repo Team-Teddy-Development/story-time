@@ -41,7 +41,7 @@ fn actual_cli_reads_repository_configuration() {
     let stdout = String::from_utf8(result.stdout).expect("UTF-8 config");
     for expected in [
         "\"tracker\": \"github\"",
-        "\"sync\": \"ask\"",
+        "\"sync\": \"auto\"",
         "\"repo\": \"Team-Teddy-Development/story-time\"",
         "\"prefix\": \"ST\"",
         "\"wipLimit\": 1",
