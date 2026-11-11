@@ -1,0 +1,68 @@
+# Setup help and GitHub schema verification
+
+## Root causes and source corrections
+
+`es_a8170328dbb7` came from `story init --help`. The installed native dispatcher delegated it to the retained parser, which treats an unknown flag as requiring a value. The native dispatcher now handles the exact two-argument help forms before any legacy lookup, parsing, configuration, or process execution.
+
+`es_fda112102cf8` came from an initial configuration with a separate GitHub owner and bare repository name. The validator correctly rejected it. The setup skill lacked an explicit GitHub JSON example. The skill now shows `github.repo: "acme/shop"` and distinguishes that contract from Gitea's separate fields.
+
+RED test commit: `2c08a7d118bd646f2630a638f089cdda5ac3450b`.
+Source fix commit: `815925598286a4b2184054745686e1d714a1fcc5`.
+Story: ST-012, formerly this PR's ST-005, https://github.com/Team-Teddy-Development/story-time/issues/23. Renumbered only to preserve the unrelated ST-005 on main and ST-006 through ST-011 reserved by PR #32; original task history and evidence remain authoritative.
+
+## Direct verification
+
+The Rust integration test `native/story-push/tests/setup_contract.rs` exercises the compiled executable and reads JSON directly from the skill's Markdown fences. All three tests failed before the source changes. All three pass afterward.
+
+The help test executes both `init --help` and `init -h` with an empty environment and no Node on PATH. It requires exit zero, usage text, empty stderr, and no new files. The positive example test runs `init` and `config --json` in a disposable directory. The negative test changes the example to separate owner and bare repo fields, captures the expected validation diagnostic, and asserts that no settings directory was created.
+
+Final local chain exited zero:
+
+- Rust format and strict Clippy for all native targets.
+- Native Rust tests: 19 unit, 9 existing real-CLI integration, and 3 setup regressions. Zero failures or ignored tests.
+- Existing Node reference suite: 408 passed, zero failed or skipped.
+- Rust repository policy: 12 unit and 8 integration tests passed.
+- Release build succeeded.
+
+The same three setup tests pass against `/home/ejernigan/.local/bin/story` and `/home/ejernigan/.pi/agent/skills/story-setup/SKILL.md`. Installed `story init --help` now prints `Usage: story init` and documents the full GitHub coordinate.
+
+## Scope and Rust conversion gate
+
+| Implementation | Language | Role | Status |
+| --- | --- | --- | --- |
+| Native exact init-help dispatch | Rust | Argument boundary and usage output | Converted, tested, active |
+| Setup contract regressions | Rust | Real CLI and documentation example verification | New, tested, active |
+| Setup skill | Markdown with JSON data | Agent instructions and configuration example | Required documentation format |
+| Retained init/config parser | JavaScript | Unchanged external non-help command dependency | Outside this correction's migration scope |
+| Existing push implementation | Rust | Unchanged installed CLI behavior | Dependency from PR #20 |
+| Existing Node suite and installer | JavaScript | Retained reference tests and tooling | Outside this correction's migration scope |
+
+Rust conversion gate: MET for all new and replacement executable implementations in this task. This is not full-project conversion. Help does not wrap or execute JavaScript. The schema check intentionally tests the unchanged validator through the actual CLI rather than replacing it.
+
+## Installation and recovery
+
+The native release binary was installed after saving the original binary and skill at `~/.pi/agent/release-evidence/story-setup-help-schema-20261111/`.
+
+Installed binary SHA256: `a3af1b6037ab59420fa15f4a466f79ad995c9395c634cf94b095f46c9a4f15e1`, identical to the release build. Runtime configuration was not changed. Only the GitHub example block is retained as the installed skill patch; an unrelated newer Gitea section from upstream was removed from the installation to preserve its prior content.
+
+Recovery uses the saved `story-before` binary and `SKILL-before.md`. Restore only these two named local files if rollback is required. No application repository or production service is changed.
+
+## Sentinel attestation limitation
+
+Both original fingerprints were previously marked cleared by session follow-up tasks. Those tasks are historical tracking, not code fixes.
+
+After the source commit and passing real regressions, `error_sentinel_resolve(kind: fixed)` was attempted separately for each fingerprint with the full fix SHA, test-only parent SHA, exact regression file, root-cause explanation, and changed lines. Both returned `verification test is not present in the original absolute failing command`. The original failing commands invoke `story`, not a test path, so that verifier cannot attach this later regression. Neither fingerprint has a successful tested-fix ledger attestation. This limitation does not invalidate the recorded RED/GREEN or installed CLI results; it must not be reported as a successful sentinel resolution.
+
+## Review and delivery
+
+Jev reviewed the actual source change and observed RED/GREEN evidence. Verdict `supported`, probability 0.83, verdict confidence 0.82. This is a technical review, not an action-approval check.
+
+The attempted different-family delegate returned only follow-up acknowledgments, not a substantive review. It is not counted as an independent code-review pass. Jev remains the accepted third-party evidence reviewer.
+
+The source depends on the pending native-dispatcher PR #20. Correction PR #24 is https://github.com/Team-Teddy-Development/story-time/pull/24, based on that branch. At head `6814b41ef2758c22b58399fb00f1a4327895115a`, remote workflows `test`, `Native Gitea Rust`, `story-ids`, and `story-link` all completed successfully. Dependency PR #20 remains open at `75b4534dc33fc6eed570633ad8c834908f0e7cfe`. Main integration is blocked on that dependency; this task does not merge or take over another run's PR. After #20 lands, retarget #24 to main, rerun required checks, and merge through normal protections.
+
+## Operational corrections during verification
+
+The first gate-check invocation resolved relative commands from `docs/`, not the repository root. Adding explicit `CWD: ..` corrected the cause. G1, G2, and G3 then passed through the real checker; G4 and G5 have direct audit and installed-artifact evidence. G6 remains unmet while main integration is pending. No failed check is relabeled as a pass.
+
+The corresponding command fingerprints are `es_41078f6c463a`, `es_6a757a3ba09e`, `es_caff64e1fda7`, and `es_5cfcc8cd721d`. `es_329ae8f88e79` records the genuinely open G6. `es_c40c6fc8f116` records a manual-audit warning; the source audit and installed tests provide its evidence, not an automatic command claim. `es_3cc67e4ed421` came from a leading-space typo in an exact edit match. The corrected exact match succeeded; the final installed skill retains only the intended GitHub patch. These are operational corrections, not extra application bugs or successful tested-fix sentinel attestations.

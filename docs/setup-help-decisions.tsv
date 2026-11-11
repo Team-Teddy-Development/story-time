@@ -1,0 +1,5 @@
+ts	phase	decision	why	evidence	result
+2026-11-11T22:10:11Z	frame	Fix both listed fingerprints despite follow-up clearance	A queued follow-up is not a tested fix	es_a8170328dbb7; es_fda112102cf8	Source work required
+2026-11-11T22:10:11Z	source	Use the pending native dispatcher as a dependency	The installed story binary comes from that Rust source	PR20; native/story-push/src/main.rs	Own branch based on 75b4534
+2026-11-11T22:10:11Z	red	Commit Rust real-CLI and Markdown-example regressions before source edits	Prove both contracts fail without the fixes	2c08a7d	Three tests failed as expected
+2026-11-11T22:10:11Z	green	Handle exact init help requests before legacy delegation and add a runnable GitHub example	Help must not depend on Node; schema examples must use the actual contract	native/story-push/tests/setup_contract.rs	Three tests passed
