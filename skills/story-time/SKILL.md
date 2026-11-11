@@ -154,7 +154,7 @@ hours. WSJF = (value + time_criticality + risk_reduction) / size.
   propose a number, label it as an assumption in the changelog note, and say so.
 - Show the user what you will write before a batch of writes, splits,
   archives, or merges. Single-story creates and edits can go ahead without asking.
-- For Gitea, finish by running the Rust `story-push --dry-run` with the changed
-  Markdown paths. Report parsing and rendering separately from INVEST readiness;
-  this command does not implement INVEST lint. For other trackers, run
-  `story lint` on what you touched and report the verdict.
+- For every tracker, run `story lint` on what you touched and report the
+  readiness verdict. For Gitea, also run the Rust `story-push --dry-run` with
+  the changed Markdown paths. Report parsing and rendering separately from
+  INVEST readiness; the dry run does not replace local lint.

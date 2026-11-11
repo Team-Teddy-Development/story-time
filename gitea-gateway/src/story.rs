@@ -255,6 +255,19 @@ impl Settings {
     }
 }
 
+fn fence_delimiter(line: &str) -> Option<(u8, usize, &str)> {
+    let content = line.trim_start_matches(' ');
+    if line.len() - content.len() > 3 {
+        return None;
+    }
+    let marker = *content.as_bytes().first()?;
+    if !matches!(marker, b'`' | b'~') {
+        return None;
+    }
+    let width = content.bytes().take_while(|byte| *byte == marker).count();
+    (width >= 3).then(|| (marker, width, &content[width..]))
+}
+
 impl Story {
     pub fn parse(original: String) -> Result<Self, &'static str> {
         let mut lines = original.split_inclusive('\n');
@@ -335,10 +348,31 @@ impl Story {
 
     fn render(&self) -> (String, Vec<String>) {
         let mut sections: Vec<(String, String)> = Vec::new();
+        let mut fence: Option<(u8, usize)> = None;
         for line in self.original[self.body_start..].lines() {
-            if let Some(name) = line.strip_prefix("## ") {
-                sections.push((name.trim().into(), String::new()));
-            } else if let Some((_, content)) = sections.last_mut() {
+            let was_fenced = fence.is_some();
+            if let Some((marker, width, rest)) = fence_delimiter(line) {
+                match fence {
+                    Some((opening, minimum))
+                        if marker == opening
+                            && width >= minimum
+                            && rest.bytes().all(|byte| matches!(byte, b' ' | b'\t')) =>
+                    {
+                        fence = None;
+                    }
+                    None if marker != b'`' || !rest.contains('`') => {
+                        fence = Some((marker, width));
+                    }
+                    _ => {}
+                }
+            }
+            if !was_fenced {
+                if let Some(name) = line.strip_prefix("## ") {
+                    sections.push((name.trim().into(), String::new()));
+                    continue;
+                }
+            }
+            if let Some((_, content)) = sections.last_mut() {
                 content.push_str(line);
                 content.push('\n');
             }
