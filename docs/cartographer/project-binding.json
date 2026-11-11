@@ -17,7 +17,7 @@
     "directory": "backlog",
     "prefix": "ST",
     "configuration": ".story-time/settings.json",
-    "onboardingStory": "ST-001"
+    "onboardingStory": "ST-002"
   },
   "existingVerification": {
     "command": "npm test",

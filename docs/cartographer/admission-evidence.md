@@ -19,7 +19,7 @@ Record the operator, UTC timestamp, deployed authority image digest, source comm
 ## Repository preparation
 
 The source baseline is GitHub `main` at `1cbe7d82eb319ca458b06ba8eb2d603f3a97d69d`.
-The configuration uses local file stories, sync off, prefix `ST`, and the existing `npm test` command.
+The initial preparation used local file stories, sync off, prefix `ST`, and `npm test`. After PR #14 merged, the resolution retains GitHub tracking with sync ask and the combined Node and Rust test command. Cartographer onboarding is ST-002; GitHub dogfooding remains ST-001.
 The project binding is preparation data, not a registry record.
 
 ## Setup investigation correction
