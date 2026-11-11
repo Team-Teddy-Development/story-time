@@ -131,12 +131,13 @@ impl Gateway {
         url: Url,
         payload: &T,
     ) -> Result<R, Error> {
-        let response = self
-            .client
-            .request(method, url)
-            .json(payload)
-            .send()
-            .map_err(|_| Error::Transport)?;
+        let request = self.client.request(method.clone(), url);
+        let request = if method == reqwest::Method::GET {
+            request
+        } else {
+            request.json(payload)
+        };
+        let response = request.send().map_err(|_| Error::Transport)?;
         let status = response.status();
         if !status.is_success() {
             return Err(Error::HttpStatus(status.as_u16()));

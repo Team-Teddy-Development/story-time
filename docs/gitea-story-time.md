@@ -50,7 +50,7 @@ gitea-gateway story-push --root /path/to/project backlog/ST-001.md backlog/ST-00
 
 `--root` defaults to the current directory. Paths are relative to that root and must name `.md` files. Absolute paths, parent traversal, symlinks outside the root, duplicate files, duplicate story IDs, and duplicate remote numbers in the same batch are rejected. There is no ID lookup or `--all` option.
 
-The dry run emits the complete plan, including rendered title, body, state, existing links, and deferred labels. It reads local files only. It does not load credentials, construct an HTTP client, send requests, or write files. The command validates settings and every story before a real push starts. This validation is not INVEST lint or acceptance of story readiness.
+The dry run emits the complete plan, including rendered title, body, state, existing links, and desired label names. It reads local files only. It does not load credentials, construct an HTTP client, send requests, or write files. The command validates settings and every story before a real push starts. This validation is not INVEST lint or acceptance of story readiness.
 
 | Local story | Action | Remote state |
 | --- | --- | --- |
@@ -63,13 +63,17 @@ The dry run emits the complete plan, including rendered title, body, state, exis
 
 Bodies contain the Story section, checkbox acceptance criteria, and extra sections such as Notes, Out of Scope, and bug reproduction details. Spikes use Question, Timebox, and Exit Criteria. Test Plan and Changelog stay local. A footer records the story ID and WSJF score when all inputs exist. Titles remain the local title without an added ID prefix.
 
-Labels are deferred. `labels_deferred` reports the type, size, value, and epic labels that were not sent. Output also warns about this limitation. Existing remote labels remain unchanged. No label permission or provisioning is needed for this flow.
+`labels` reports the desired type, size, value, and epic names. A real push lists repository labels in pages of 50, then creates missing names with color `ededed`. The token needs repository label creation permission when a desired label is missing. Issue creation sends numeric label IDs.
+
+For updates, the command reads current issue labels, including additional pages, and replaces the label set after the content update. Story Time owns the exact labels `story`, `spike`, `bug`, and `chore`, plus names with the prefixes `size:`, `value:`, and `epic:`. Replacement removes stale managed labels and preserves other label IDs. Removed size, value, or epic metadata therefore removes its remote label. Repository labels themselves are never deleted. The command reuses known labels within a batch and lists them again on the next invocation.
+
+`split` and `archived` are the not-planned terminal statuses. Both close linked issues without deleting them. Gitea receives `state: "closed"`; this path does not send GitHub's separate closing reason. `done` also closes the issue. An active story reopens its linked issue.
 
 ## Results and local links
 
 The command writes one JSON object to stdout, writes nothing to stderr during normal operation, and exits `0` on success or `1` on failure. `status` is `ok` or `error`. Plans include `action`, `completed`, `remote`, and `remote_url`. A skipped story has `action: "skip"` and `completed: false` because it performed no mutation.
 
-After each successful response, the command validates `number` and `html_url` against the configured target, then saves:
+After each successful issue response, the command validates `number` and `html_url` against the configured target, then saves:
 
 ```yaml
 remote: 7
@@ -81,6 +85,10 @@ The save preserves other metadata, comments, Markdown sections, newline style, a
 ## Failures and recovery
 
 Batch processing is sequential and per-story, not an all-or-nothing saga. Completed stories retain their links if a later story fails. Error output includes the plan and completed progress. Fix the failed input or server condition, then rerun the explicit files. Already-linked files use PATCH.
+
+A plan is `completed: true` only after all required issue and label requests succeed. Label HTTP failures return `status: "error"`, a failure code, and `completed: false`; no deferred-label warning substitutes for synchronization.
+
+An update saves its validated issue identity before label replacement. If label replacement fails, the local link remains available for retry, while output reports incomplete work. Repository labels created before a later failure remain available for the next push.
 
 If a remote mutation succeeds but the local save fails, output retains the returned `remote` and `remote_url` with `completed: false`. Verify the remote issue and restore those link fields locally before retrying. A concurrent edit returns `story_changed` without overwriting that edit.
 
@@ -95,14 +103,14 @@ CARGO_TARGET_DIR=/tmp/story-gitea-cli-target cargo test --offline --manifest-pat
 CARGO_TARGET_DIR=/tmp/story-gitea-cli-target cargo clippy --offline --manifest-path gitea-gateway/Cargo.toml --all-targets -- -D warnings
 ```
 
-Rust integration tests invoke the compiled binary against a local Rust HTTP listener. They assert POST then PATCH, stored local links, rendered criteria, terminal skips, close/reopen state, dry-run isolation, preflight rejection, HTTP failures, response-target validation, and partial-batch recovery information. Raw create/update/close tests remain in place.
+Rust integration tests invoke the compiled binary against a local Rust HTTP listener. They assert POST then PATCH, stored local links, rendered criteria, terminal skips, close/reopen state, dry-run isolation, preflight rejection, HTTP failures, response-target validation, and partial-batch recovery information. Label tests assert numeric IDs, creation of missing labels, repository and issue pagination, team-label preservation, stale managed removal, removed optional metadata, and truthful failure progress. Raw create/update/close tests remain in place.
 
 The active Gitea conversion gate is **MET** for this bounded story-push and raw-issue path. The entire Story Time conversion gate remains **UNMET**, outside this task.
 
 | Component | Language or format | Role and conversion status |
 | --- | --- | --- |
 | `gitea-gateway/src/main.rs` | Rust | Active CLI dispatch, input parsing, credential redaction, and JSON output. Converted. |
-| `gitea-gateway/src/story.rs` | Rust | Active settings parsing, Markdown/frontmatter, planning, rendering, lifecycle mapping, HTTP orchestration, and atomic local link saves. Converted. |
+| `gitea-gateway/src/story.rs` | Rust | Active settings parsing, Markdown/frontmatter, planning, rendering, lifecycle mapping, typed labels, managed-label reconciliation, paginated HTTP orchestration, and atomic local link saves. Converted. |
 | `gitea-gateway/src/lib.rs` | Rust | Active Gitea HTTP, TLS, target validation, response bounds, and raw issue methods. Rust. |
 | `gitea-gateway/tests/*.rs` | Rust | Active verification through the binary and local HTTP fixtures. Rust. |
 | Cargo manifests and lockfile, Markdown/JSON fixtures | Configuration and data | Required formats, not executable conversion targets. |
@@ -112,4 +120,4 @@ The active Gitea conversion gate is **MET** for this bounded story-push and raw-
 | Root `scripts/`, `test/`, and npm entry points | Existing JavaScript installation and tests | Unchanged and out of scope. Not used as Gitea runtime or verification evidence. Cargo installation is explicit. |
 | Story Time and setup skills, this document | Agent instructions and documentation | Route Gitea directly to Rust; other tracker behavior remains historical. |
 
-No live Gitea endpoint or credentials were used. Server version compatibility, token permissions, and production TLS remain unverified. Labels, discovery/listing, milestones, assignees, comments, pull requests, and repository management are outside this bounded flow. See [the verification record](gitea-story-time-verification.md) for observed results and remaining evidence gaps.
+No live Gitea endpoint or credentials were used. Server version compatibility, token permissions, and production TLS remain unverified. Story discovery, milestones, assignees, comments, pull requests, and general repository management are outside this bounded flow. Concurrent label editors are not locked; label replacement can overwrite changes made after the command reads current labels. Pagination is bounded to 1,000 pages per list. Label creation races return the server error without automatic retries. See [the verification record](gitea-story-time-verification.md) for observed results and remaining evidence gaps.

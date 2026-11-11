@@ -66,7 +66,7 @@ pub struct PushPlan {
     pub state: &'static str,
     pub remote: Option<u64>,
     pub remote_url: Option<String>,
-    pub labels_deferred: Vec<String>,
+    pub labels: Vec<String>,
     pub completed: bool,
     #[serde(skip)]
     story: Option<Story>,
@@ -88,12 +88,118 @@ struct StoryIssue {
     html_url: String,
 }
 
+#[derive(Deserialize)]
+struct Label {
+    id: u64,
+    name: String,
+}
+
+impl Label {
+    fn managed(&self) -> bool {
+        ["story", "spike", "bug", "chore"].contains(&self.name.as_str())
+            || ["size:", "value:", "epic:"]
+                .iter()
+                .any(|prefix| self.name.starts_with(prefix))
+    }
+}
+
+#[derive(Serialize)]
+struct LabelIds {
+    labels: Vec<u64>,
+}
+
+fn labels_url(
+    gateway: &Gateway,
+    settings: &Settings,
+    number: Option<u64>,
+) -> Result<Url, &'static str> {
+    let mut url = gateway
+        .endpoint(&settings.gitea.owner, &settings.gitea.repo, number)
+        .map_err(error_code)?;
+    let mut parts = url
+        .path_segments_mut()
+        .map_err(|_| "invalid_configuration")?;
+    if number.is_none() {
+        parts.pop();
+    }
+    parts.push("labels");
+    drop(parts);
+    Ok(url)
+}
+
+fn list_labels(gateway: &Gateway, url: Url) -> Result<Vec<Label>, &'static str> {
+    let mut labels = Vec::new();
+    for page in 1..=1000 {
+        let mut url = url.clone();
+        url.query_pairs_mut()
+            .append_pair("limit", "50")
+            .append_pair("page", &page.to_string());
+        let batch: Vec<Label> = gateway
+            .send(reqwest::Method::GET, url, &())
+            .map_err(error_code)?;
+        if batch
+            .iter()
+            .any(|label| label.id == 0 || label.name.is_empty())
+        {
+            return Err("invalid_response");
+        }
+        let finished = batch.len() < 50;
+        labels.extend(batch);
+        if finished {
+            return Ok(labels);
+        }
+    }
+    Err("response_too_large")
+}
+
+fn desired_label_ids(
+    gateway: &Gateway,
+    url: &Url,
+    known: &mut Vec<Label>,
+    desired: &[String],
+) -> Result<Vec<u64>, &'static str> {
+    let mut ids = Vec::new();
+    for name in desired {
+        if !known.iter().any(|label| &label.name == name) {
+            #[derive(Serialize)]
+            struct NewLabel<'a> {
+                name: &'a str,
+                color: &'static str,
+            }
+            let label: Label = gateway
+                .send(
+                    reqwest::Method::POST,
+                    url.clone(),
+                    &NewLabel {
+                        name,
+                        color: "ededed",
+                    },
+                )
+                .map_err(error_code)?;
+            if label.id == 0 || &label.name != name {
+                return Err("invalid_response");
+            }
+            known.push(label);
+        }
+        ids.push(
+            known
+                .iter()
+                .find(|label| &label.name == name)
+                .ok_or("invalid_response")?
+                .id,
+        );
+    }
+    Ok(ids)
+}
+
 #[derive(Serialize)]
 struct StoryPayload<'a> {
     title: &'a str,
     body: &'a str,
     #[serde(skip_serializing_if = "Option::is_none")]
     state: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    labels: Option<&'a [u64]>,
 }
 
 fn text<'a>(metadata: &'a Mapping, key: &str) -> Result<&'a str, &'static str> {
@@ -408,7 +514,7 @@ pub fn prepare(root: &Path, paths: &[PathBuf]) -> Result<(Settings, Vec<PushPlan
             state: if story.terminal() { "closed" } else { "open" },
             remote: story.remote,
             remote_url: story.remote_url.clone(),
-            labels_deferred: labels,
+            labels,
             completed: false,
             story: Some(story),
         });
@@ -451,7 +557,13 @@ fn error_code(error: Error) -> &'static str {
 }
 
 pub fn push(settings: Settings, plan: Vec<PushPlan>, dry_run: bool) -> PushOutput {
-    let mut output = PushOutput { status: "ok", dry_run, plan, warnings: vec!["Label synchronization is deferred. labels_deferred lists unsent labels; existing remote labels are unchanged."], code: None };
+    let mut output = PushOutput {
+        status: "ok",
+        dry_run,
+        plan,
+        warnings: vec![],
+        code: None,
+    };
     let execute = |output: &mut PushOutput| -> Result<(), &'static str> {
         if dry_run {
             return Ok(());
@@ -467,6 +579,8 @@ pub fn push(settings: Settings, plan: Vec<PushPlan>, dry_run: bool) -> PushOutpu
             .filter(|s| !s.is_empty())
             .ok_or("missing_token")?;
         let gateway = Gateway::new(&settings.gitea.base_url, &token).map_err(error_code)?;
+        let repository_labels_url = labels_url(&gateway, &settings, None)?;
+        let mut known_labels = list_labels(&gateway, repository_labels_url.clone())?;
         for plan in &mut output.plan {
             if plan.action == Action::Skip {
                 continue;
@@ -475,9 +589,26 @@ pub fn push(settings: Settings, plan: Vec<PushPlan>, dry_run: bool) -> PushOutpu
             if fs::read_to_string(&plan.path).map_err(|_| "input_io")? != story.original {
                 return Err("story_changed");
             }
+            let mut labels = desired_label_ids(
+                &gateway,
+                &repository_labels_url,
+                &mut known_labels,
+                &plan.labels,
+            )?;
+            if plan.action == Action::Update {
+                labels.extend(
+                    list_labels(&gateway, labels_url(&gateway, &settings, plan.remote)?)?
+                        .into_iter()
+                        .filter(|label| !label.managed())
+                        .map(|label| label.id),
+                );
+            }
+            labels.sort_unstable();
+            labels.dedup();
             let payload = StoryPayload {
                 title: &plan.title,
                 body: &plan.body,
+                labels: (plan.action == Action::Create).then_some(labels.as_slice()),
                 state: if plan.action == Action::Update {
                     Some(plan.state)
                 } else {
@@ -507,6 +638,15 @@ pub fn push(settings: Settings, plan: Vec<PushPlan>, dry_run: bool) -> PushOutpu
             plan.remote = Some(issue.number);
             plan.remote_url = Some(issue.html_url.clone());
             save(plan, issue.number, &issue.html_url)?;
+            if plan.action == Action::Update {
+                let _: Vec<Label> = gateway
+                    .send(
+                        reqwest::Method::PUT,
+                        labels_url(&gateway, &settings, plan.remote)?,
+                        &LabelIds { labels },
+                    )
+                    .map_err(error_code)?;
+            }
             plan.completed = true;
         }
         Ok(())
