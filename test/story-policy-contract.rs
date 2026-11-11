@@ -43,6 +43,7 @@ fn repository_has_github_dogfooding_contract() {
         ".story-time/.gitignore",
         ".github/workflows/story-link.yml",
         ".github/workflows/story-ids.yml",
+        ".github/story-mandate-ruleset.json",
         "scripts/story-policy.rs",
         "AGENTS.md",
     ] {

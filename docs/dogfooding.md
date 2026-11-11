@@ -33,9 +33,11 @@ The older PR keeps a contested ID.
 Fetch and recreate the newer story with its next available ID.
 GitHub API failures fail the check; they do not mean the issue or competing story is absent.
 
-After the workflows exist on the default branch, require the exact job contexts `story-link` and `story-ids` in its branch protection or ruleset.
-Workflow files alone run checks; required status checks prevent merging red checks.
-Keep existing required checks when adding these contexts.
+The active [Story-time story mandate ruleset](https://github.com/Team-Teddy-Development/story-time/rules/27056058) requires `story-link`, `story-ids`, and `story-policy-tests` on the default branch.
+Its checked-in payload is `.github/story-mandate-ruleset.json`.
+It allows no bypass and requires checks against the latest base branch.
+The existing owner-review ruleset and Node test requirements remain unchanged.
+The bootstrap PR must land before branches from the default branch inherit the workflows.
 The CI token uses read-only permissions. Fork PRs receive no repository write credentials.
 
 ## Verify locally
