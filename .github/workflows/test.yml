@@ -15,3 +15,15 @@ jobs:
         with:
           node-version: ${{ matrix.node }}
       - run: npm test
+  cartographer-preflight:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - uses: dtolnay/rust-toolchain@stable
+      - run: cargo test --locked --manifest-path tools/cartographer-preflight/Cargo.toml
+      - run: cargo clippy --locked --manifest-path tools/cartographer-preflight/Cargo.toml --all-targets -- -D warnings
+      - run: rustc --edition=2021 -D warnings --test tests/cartographer_setup.rs -o /tmp/story-time-cartographer-setup-tests
+      - run: /tmp/story-time-cartographer-setup-tests --test-threads=1

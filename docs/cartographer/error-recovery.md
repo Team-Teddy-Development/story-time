@@ -61,3 +61,13 @@ The first compile invocation omitted `--edition=2021` and produced format-string
 ## Additional recovered policy condition
 
 `es_f1c8734d4d56` records a policy condition thrown through a codemode call to `cleanup_worktrees`. The cleanup itself did not run in that failed batch. The agent then called the cleanup tool directly, inspected the dry-run target list, backed up worktree metadata as required, completed the actual cleanup, and released both owned worktrees. This was a recovered invocation, not a product-code fix. Keep the same ledger API limitation above explicit.
+
+## Verification-run findings
+
+The first Rust compile omitted its edition. Fingerprints `es_6d3ff9fe6278`, `es_89384d419d1f`, `es_327c3989cf70`, `es_b0e4e82ee354`, `es_77aae6c58579`, `es_42bef1287083`, and `es_edd61f14c974` capture the resulting format-compatibility warnings and compiler suggestions. The maintained command and CI select `--edition=2021 -D warnings`; the final compile emits no warnings. This is a corrected compiler invocation, not a language change or suppressed warning.
+
+The test-first RED run deliberately exposed the missing story scores. Fingerprints `es_395b864c66ad`, `es_b0f11e7f79c0`, `es_e4f0d278e848`, and `es_57e025fda7d8` describe that same expected failing regression before the data repair. The preserved test-only commit and GREEN rerun above prove the repair; these are not independent unresolved product failures.
+
+Clippy then rejected an explicit `if request.get("id").is_none() { return None; }` notification guard in the new MCP dispatcher. Fingerprints `es_2f2858fea169`, `es_eee138ef682e`, `es_95947c43607c`, and `es_6914e3154885` describe that one source issue and its build summaries. The source now uses `request.get("id")?;`. The existing real stdio regression asserts that the notification produces no response. The final Clippy run with all targets and warnings denied passes, and all 14 tool tests pass. No lint rule is disabled.
+
+A later typed `fixed` submission for the historical CLI lint incident was refused because the original absolute command did not name the new regression test. The tested data repair remains valid; the recorder's restricted proof path cannot represent it. This is another instance of the ledger API gap above, not evidence that the story fields are still missing.

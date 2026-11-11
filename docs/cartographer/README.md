@@ -20,11 +20,28 @@ npm test
 
 The test command uses the existing Node.js tests. It does not prove Cartographer admission, UI visibility, or worker execution. New and replacement executable implementations and tests must use Rust. Markdown skills, JSON configuration, and fixture data retain their required formats.
 
+## Measured production prerequisites
+
+The 2026-11-11 live preflight inspected Coffee through the new read-only Rust MCP tool. The raw, sanitized response is [live-preflight.jsonl](live-preflight.jsonl).
+
+| Prerequisite | Observed state | Consequence |
+| --- | --- | --- |
+| Panel workload | `cartographer-callback-probe`, desired 1, ready 1 | The workload is not named `cartographer-ui` |
+| UI ArgoCD application | `cartographer-ui`, Synced and Healthy | The existing panel is deployed |
+| Legacy authority | `cartographer-authority`, desired 1, ready 1 | The panel and bridge currently target v1 |
+| v2 authority | `cartographer-authority-v2`, desired 0, ready 0 | No running v2 authority is available |
+| v2 reader configuration | `CARTOGRAPHER_AUTHORITY_V2_URL` absent in panel and bridge | Neither reader is configured for the v2 registry |
+| Browser entry | `https://cartographer.teamteddy.net` redirects to the owner sign-in page | No authenticated portfolio observation was available |
+
+Backend intake is [CRT-052, Cartographer PR #194](http://192.168.1.56:30003/team-teddy/cartographer/pulls/194). An existing [v2 deployment PR #139](http://192.168.1.56:30003/team-teddy/cartographer/pulls/139) owns that rollout; this feeder run does not duplicate or merge it. Signing and registry publication also have existing PRs #132 and #135. The Cartographer session must reconcile those records before grooming the intake.
+
+The v2 procedure below is a conditional handoff, not an executable production step in the current state. Do not scale up the authority, change reader URLs, or replace production configuration as part of this repository setup. Those changes need their own backend deployment qualification and policy records. The read-only tool contract and Rust tests are in `tools/cartographer-preflight/docs/README.md`.
+
 ## Admission handoff
 
 The operator must use Cartographer's existing signed registry tools. Do not add this project to a hard-coded UI list or insert unsigned Neo4j records.
 
-The inspected core runbooks are `docs/runbooks/persistent-admission-signing.md` and `docs/runbooks/registry-admission.md` in `team-teddy/cartographer`. The UI's Rust portfolio reader uses the v2 owner listing when configured. This session did not inspect production configuration or prove that production has the v2 route enabled.
+The inspected core runbooks are `docs/runbooks/persistent-admission-signing.md` and `docs/runbooks/registry-admission.md` in `team-teddy/cartographer`. The UI's Rust portfolio reader uses the v2 owner listing when configured. The live metadata inspection proves that the current panel and bridge do not set the v2 URL. Private authority configuration, signing keys, and registry contents were not retrieved.
 
 ### Prepare on the operator host
 
@@ -98,10 +115,13 @@ Read admission is not proof of build or maintenance capability. Do not mark onbo
 | `skills/story-time/scripts/story.mjs` and `scripts/*.mjs` | JavaScript | Existing CLI, installer, and test runner | Out-of-scope conversion target |
 | `skills/story-time/scripts/src/**/*.mjs` | JavaScript | Existing application and adapters | Out-of-scope conversion target |
 | `test/` and `skills/story-time/scripts/test/` | JavaScript | Existing tests | Out-of-scope conversion target |
+| `tools/cartographer-preflight/src/main.rs` and `tests/stdio.rs` | Rust | New read-only CLI, MCP, and tests | Active Rust implementation, tested locally and through real cluster reads |
+| `tests/cartographer_setup.rs` | Rust | Real repository CLI integration regression | Active Rust verification |
+| `.github/workflows/test.yml` | YAML | External CI command configuration | Runs Rust and existing Node tests, no embedded implementation |
 | Cartographer signing and authority tools | Rust | External admission services | Existing tools, unchanged |
 | Cartographer UI and bridge | Rust active readers; retained historical JavaScript | External portfolio and graph readers | Unchanged, outside this repository's setup scope |
 
-Rust conversion gate: **UNMET for full-project conversion**. No executable implementation is added or replaced by this configuration change. A later implementation story must inventory its active execution chain and satisfy the Rust gate for its scope. This setup does not claim that the existing JavaScript project is converted.
+Rust conversion gate: **UNMET for full-project conversion**. The new preflight tool and integration regression are Rust. Their scoped Rust gate is MET; this does not convert the pre-existing JavaScript CLI. A later implementation story must inventory its active execution chain and satisfy the Rust gate for its scope. This setup does not claim that the existing JavaScript project is converted.
 
 ## Recovery
 
