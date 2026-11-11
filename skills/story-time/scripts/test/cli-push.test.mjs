@@ -5,7 +5,7 @@ import { execFile, spawn } from 'node:child_process';
 import { mkdtemp, mkdir, writeFile, readFile, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, dirname, delimiter } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { promisify } from 'node:util';
 import { makeFakeBin } from './fake-trackers.mjs';
 import { READY_MD } from './fixtures.mjs';
@@ -15,15 +15,16 @@ const run = promisify(execFile);
 
 function cleanEnv(bin, extra = {}) {
   const env = { ...process.env, PATH: `${bin}${delimiter}${process.env.PATH}`, ...extra };
-  for (const k of ['STORY_TIME_DIR', 'STORY_TIME_PREFIX', 'STORY_TIME_CONFIG', 'GH_TOKEN', 'GITHUB_TOKEN', 'AZURE_DEVOPS_EXT_PAT']) {
+  for (const k of ['STORY_TIME_DIR', 'STORY_TIME_PREFIX', 'STORY_TIME_CONFIG', 'GH_TOKEN', 'GITHUB_TOKEN', 'AZURE_DEVOPS_EXT_PAT', 'GITEA_TOKEN']) {
     if (!(k in extra)) delete env[k];
   }
   return env;
 }
 
-async function story(cwd, bin, args, { input, env } = {}) {
+async function story(cwd, bin, args, { input, env, preload } = {}) {
   return new Promise((resolve) => {
-    const child = spawn(process.execPath, [CLI, ...args], { cwd, env: cleanEnv(bin, env) });
+    const node = preload ? ['--import', pathToFileURL(preload).href] : [];
+    const child = spawn(process.execPath, [...node, CLI, ...args], { cwd, env: cleanEnv(bin, env) });
     let stdout = '';
     let stderr = '';
     child.stdout.on('data', (d) => (stdout += d));
@@ -165,4 +166,61 @@ test('secret clear removes the token file', async () => {
   await story(dir, bin.dir, ['secret', 'set', 'github'], { input: 'x\n' });
   assert.equal((await story(dir, bin.dir, ['secret', 'clear', 'github'])).code, 0);
   assert.match((await story(dir, bin.dir, ['secret', 'status'])).stdout, /github\s+not set/);
+});
+
+// --- gitea (REST through fetch; the simulator is preloaded, no network) ---
+
+const GITEA = { tracker: 'gitea', gitea: { baseUrl: 'https://gitea.example.com', owner: 'acme', repo: 'shop' } };
+const GITEA_PRELOAD = join(dirname(fileURLToPath(import.meta.url)), 'fake-gitea-preload.mjs');
+
+async function giteaRun(dir, bin, args, { input, env = {} } = {}) {
+  const stateFile = join(dir, 'gitea-state.json');
+  const r = await story(dir, bin.dir, args, { input, preload: GITEA_PRELOAD, env: { FAKE_GITEA_STATE: stateFile, FAKE_GITEA_TOKEN: 'gt_tok4321', ...env } });
+  const state = await readFile(stateFile, 'utf8').then(JSON.parse, () => ({ calls: [], issues: {} }));
+  return { ...r, state };
+}
+
+test('push creates the Gitea issue with the stored token and links it in the story file', async () => {
+  const bin = await makeFakeBin();
+  const dir = await project({ ...GITEA, sync: 'ask' });
+  assert.equal((await giteaRun(dir, bin, ['secret', 'set', 'gitea'], { input: 'gt_tok4321\n' })).code, 0);
+  const r = await giteaRun(dir, bin, ['push', 'ST-001', '--json']);
+  assert.equal(r.code, 0, r.stderr);
+  assert.equal(JSON.parse(r.stdout).pushed[0].url, 'https://gitea.example.com/acme/shop/issues/1');
+  const file = await readFile(join(dir, 'backlog', 'ST-001.md'), 'utf8');
+  assert.match(file, /^remote: 1$/m);
+  assert.match(file, /^remote_url: "https:\/\/gitea\.example\.com\/acme\/shop\/issues\/1"$/m);
+  assert.equal(r.state.issues[1].title, 'Reset password via email');
+  assert.ok(r.state.calls.every((c) => c.auth === 'token gt_tok4321' && !c.url.includes('gt_tok4321')));
+  assert.deepEqual((await bin.readState()).calls, [], 'no gh or az call');
+  const again = await giteaRun(dir, bin, ['push', 'ST-001', '--json']);
+  assert.equal(JSON.parse(again.stdout).pushed[0].action, 'update');
+  assert.equal(Object.keys(again.state.issues).length, 1);
+});
+
+test('push to Gitea takes GITEA_TOKEN from the environment when no token file exists', async () => {
+  const bin = await makeFakeBin();
+  const dir = await project({ ...GITEA, sync: 'auto' });
+  const r = await giteaRun(dir, bin, ['push', 'ST-001'], { env: { GITEA_TOKEN: 'gt_tok4321' } });
+  assert.equal(r.code, 0, r.stderr);
+  assert.equal(Object.keys(r.state.issues).length, 1);
+});
+
+test('push to Gitea without a token fails before any request and says how to store one', async () => {
+  const bin = await makeFakeBin();
+  const dir = await project({ ...GITEA, sync: 'auto' });
+  const r = await giteaRun(dir, bin, ['push', 'ST-001']);
+  assert.equal(r.code, 1);
+  assert.match(r.stderr, /story secret set gitea/);
+  assert.deepEqual(r.state.calls, []);
+});
+
+test('secret status lists the gitea token', async () => {
+  const bin = await makeFakeBin();
+  const dir = await project(GITEA);
+  await story(dir, bin.dir, ['secret', 'set', 'gitea'], { input: 'gt_abcdefgh9999\n' });
+  const file = join(dir, '.story-time', '.gitea.env');
+  assert.equal((await stat(file)).mode & 0o777, 0o600);
+  assert.match(await readFile(file, 'utf8'), /^GITEA_TOKEN=gt_abcdefgh9999$/m);
+  assert.match((await story(dir, bin.dir, ['secret', 'status'])).stdout, /gitea\s+set \(…9999\)/);
 });

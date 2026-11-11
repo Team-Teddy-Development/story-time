@@ -2,16 +2,17 @@
 // parseConfig is pure: raw JSON in, validated config with defaults out.
 // Reading the file is the CLI's job (boundary discipline).
 
-export const TRACKERS = ['files', 'github', 'ado', 'jira', 'linear'];
+export const TRACKERS = ['files', 'github', 'ado', 'gitea', 'jira', 'linear'];
 export const ADO_PROCESSES = ['agile', 'scrum', 'basic'];
 export const SYNC_MODES = ['off', 'ask', 'auto'];
-export const PUSHABLE_TRACKERS = ['github', 'ado'];
+export const PUSHABLE_TRACKERS = ['github', 'ado', 'gitea'];
+const PUSHABLE_LIST = `${PUSHABLE_TRACKERS.slice(0, -1).join(', ')}, or ${PUSHABLE_TRACKERS.at(-1)}`;
 export const CONFIG_DIR = '.story-time';
 export const CONFIG_FILE = `${CONFIG_DIR}/settings.json`;
 export const LEGACY_CONFIG_FILE = '.story-time.json';
 
 const KNOWN_KEYS = new Set([
-  '$schema', 'tracker', 'sync', 'backlogDir', 'prefix', 'github', 'ado', 'jira', 'linear',
+  '$schema', 'tracker', 'sync', 'backlogDir', 'prefix', 'github', 'ado', 'gitea', 'jira', 'linear',
   'team', 'project', 'definitionOfDone', 'definitionOfReady', 'jev',
 ]);
 
@@ -30,7 +31,7 @@ export function parseConfig(raw = {}) {
   const sync = raw.sync ?? 'off';
   if (!SYNC_MODES.includes(sync)) throw new Error(`sync must be one of: ${SYNC_MODES.join(', ')}; got "${sync}".`);
   if (sync !== 'off' && !PUSHABLE_TRACKERS.includes(tracker)) {
-    throw new Error(`sync "${sync}" needs tracker github or ado; tracker is "${tracker}". Use sync "off" and story export cards.`);
+    throw new Error(`sync "${sync}" needs tracker ${PUSHABLE_LIST}; tracker is "${tracker}". Use sync "off" and story export cards.`);
   }
 
   const config = {
@@ -46,6 +47,7 @@ export function parseConfig(raw = {}) {
 
   if (raw.github || tracker === 'github') config.github = parseGithub(raw.github ?? {});
   if (raw.ado || tracker === 'ado') config.ado = parseAdo(raw.ado ?? {});
+  if (raw.gitea || tracker === 'gitea') config.gitea = parseGitea(raw.gitea ?? {});
   if (raw.jira) config.jira = { ...raw.jira };
   if (raw.linear) config.linear = { ...raw.linear };
   if (raw.jev) config.jev = parseJev(raw.jev);
@@ -60,11 +62,11 @@ export function pushPolicy(config) {
         'Use story export for a copyable card, or run the story-setup skill to set sync to "ask" or "auto".',
     );
   }
-  if (!PUSHABLE_TRACKERS.includes(config.tracker)) throw new Error(`story push supports github and ado; tracker is "${config.tracker}".`);
+  if (!PUSHABLE_TRACKERS.includes(config.tracker)) throw new Error(`story push supports ${PUSHABLE_LIST}; tracker is "${config.tracker}".`);
 }
 
 export function defaultExportFormat(config) {
-  return config.tracker === 'github' || config.tracker === 'ado' ? config.tracker : 'markdown';
+  return PUSHABLE_TRACKERS.includes(config.tracker) ? config.tracker : 'markdown';
 }
 
 // Jev settings carry no secrets: the key is stored with `story secret set jev`.
@@ -96,6 +98,31 @@ function parseAdo(a) {
     areaPath: str(a.areaPath, 'ado.areaPath'),
     iterationPath: str(a.iterationPath, 'ado.iterationPath'),
   };
+}
+
+// Gitea settings carry no secrets: the token is stored with `story secret set gitea`.
+function parseGitea(g) {
+  for (const key of Object.keys(g)) {
+    if (!['baseUrl', 'owner', 'repo'].includes(key)) {
+      throw new Error(`Unknown gitea key "${key}". Tokens never go in settings; store one with: story secret set gitea`);
+    }
+  }
+  if (!g.baseUrl) throw new Error('tracker "gitea" needs gitea.baseUrl, e.g. "https://gitea.example.com".');
+  let url;
+  try {
+    url = new URL(g.baseUrl);
+  } catch {
+    url = undefined;
+  }
+  if (!url || !['http:', 'https:'].includes(url.protocol)) {
+    throw new Error(`gitea.baseUrl must be an http(s) URL such as "https://gitea.example.com"; got "${g.baseUrl}".`);
+  }
+  if (!g.owner) throw new Error('tracker "gitea" needs gitea.owner (the user or organization).');
+  if (!g.repo) throw new Error('tracker "gitea" needs gitea.repo.');
+  for (const key of ['owner', 'repo']) {
+    if (!/^[\w.-]+$/.test(g[key])) throw new Error(`gitea.${key} must be a single name (letters, digits, _ . -); got "${g[key]}".`);
+  }
+  return { baseUrl: g.baseUrl.replace(/\/+$/, ''), owner: g.owner, repo: g.repo };
 }
 
 function parseTeam(t) {

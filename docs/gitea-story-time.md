@@ -13,7 +13,7 @@ cargo install --offline --path gitea-gateway
 
 Use the build command if you do not want to install it. Replace `gitea-gateway` below with `/tmp/story-gitea-cli-target/debug/gitea-gateway`.
 
-The Gitea path runs directly in Rust. It does not run the historical Node `story` CLI. That CLI's `init`, `config`, `secret`, and `push` commands do not support Gitea. Other tracker implementations remain unchanged and outside this conversion scope.
+This Gitea path runs directly in Rust. It does not run the Node `story` CLI. Upstream also provides a separate Node Gitea adapter; this native path does not call it. Other tracker implementations remain unchanged and outside this conversion scope.
 
 ## Project settings
 
@@ -116,7 +116,7 @@ The active Gitea conversion gate is **MET** for this bounded story-push and raw-
 | Cargo manifests and lockfile, Markdown/JSON fixtures | Configuration and data | Required formats, not executable conversion targets. |
 | serde, serde_yaml, serde_json, reqwest, tempfile, and transitive crates | Third-party Rust dependencies | Parsing, HTTP, temporary files, and test infrastructure. Not agent-authored non-Rust logic. |
 | Gitea REST API | External platform interface | Network protocol. Live-instance behavior is not verified by local fixtures. |
-| `skills/story-time/scripts/` | Historical JavaScript for other trackers and planning | Unchanged and out of scope. Not called by the Gitea path. Other trackers still use it. |
+| `skills/story-time/scripts/` | Existing JavaScript planners and tracker adapters | Upstream includes a separate Node Gitea adapter. This Rust path never calls these implementations; they remain outside its conversion scope. |
 | Root `scripts/`, `test/`, and npm entry points | Existing JavaScript installation and tests | Unchanged and out of scope. Not used as Gitea runtime or verification evidence. Cargo installation is explicit. |
 | Story Time and setup skills, this document | Agent instructions and documentation | Route Gitea directly to Rust; other tracker behavior remains historical. |
 

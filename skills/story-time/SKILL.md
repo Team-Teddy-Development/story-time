@@ -55,8 +55,8 @@ and the linked reference. The skill installer does not install this binary.
 
 For Gitea, edit story Markdown directly using
 [story-format.md](references/story-format.md). Preserve `remote` and
-`remote_url`. The historical Node config, init, secret, and push commands do
-not accept Gitea settings. They are not part of the Gitea execution path.
+`remote_url`. Upstream also has a Node Gitea adapter. Its config, init, secret, and push
+commands are separate from this native Rust execution path.
 
 Other trackers retain the zero-dependency Node CLI (Node 20+):
 
