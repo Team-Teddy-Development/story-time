@@ -1,6 +1,6 @@
 {
   "tracker": "github",
-  "sync": "ask",
+  "sync": "auto",
   "backlogDir": "backlog",
   "prefix": "ST",
   "team": {

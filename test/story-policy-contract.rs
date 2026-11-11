@@ -168,7 +168,7 @@ fn real_cli_rejects_a_story_added_independently_to_the_base_branch() {
 }
 
 #[test]
-fn story_cli_reads_github_configuration() {
+fn story_cli_reads_auto_configuration_without_weakening_verification() {
     let result = Command::new("node")
         .args(["skills/story-time/scripts/story.mjs", "config", "--json"])
         .env_remove("STORY_TIME_CONFIG")
@@ -177,8 +177,128 @@ fn story_cli_reads_github_configuration() {
     assert!(result.status.success());
     let text = String::from_utf8(result.stdout).unwrap();
     assert!(text.contains("\"tracker\": \"github\""));
-    assert!(text.contains("\"sync\": \"ask\""));
-    assert!(text.contains("\"repo\": \"Team-Teddy-Development/story-time\""));
+    assert!(text.contains("\"sync\": \"auto\""));
+    for preserved in [
+        "\"backlogDir\": \"backlog\"",
+        "\"prefix\": \"ST\"",
+        "\"sprintDays\": 10",
+        "\"wipLimit\": 1",
+        "scripts/story-policy.rs",
+        "test/story-policy-contract.rs",
+        "The PR declares its stories on a Stories: line",
+        "Acceptance criteria have test or real CLI evidence",
+        "New and replacement executable implementations and tests use Rust",
+        "Record acceptance evidence and the exact source commit with the story.",
+        "Verify the actual CLI or skill installation path affected by the change.",
+        "Keep signing keys outside the agent session; a local project binding does not grant Cartographer admission.",
+        "Acceptance criteria describe observable outcomes and the test plan names their verification commands",
+        "Name the affected CLI commands or skills and the expected observable result.",
+    ] {
+        assert!(text.contains(preserved), "missing preserved setting: {preserved}");
+    }
+}
+
+#[test]
+fn setup_defaults_to_explicit_auto_without_changing_existing_configs() {
+    let setup = fs::read_to_string("skills/story-setup/SKILL.md").unwrap();
+    assert!(setup.contains("`auto` (the default)"));
+    assert!(setup.contains("For Jira, Linear, or files, sync is always `off`."));
+    assert!(setup.contains("Preserve an existing explicit sync policy"));
+    assert!(setup.contains("Write `sync` explicitly"));
+    assert!(!setup.contains("`off` (the default)"));
+    assert!(!setup.contains("\"sync\": \"ask\""));
+    assert!(!setup.contains("\"sync\":\"ask\""));
+    let gitea = fs::read_to_string("docs/gitea-story-time.md").unwrap();
+    assert!(gitea.contains("\"sync\": \"auto\""));
+    assert!(gitea.contains("Missing `sync` means `off`."));
+}
+
+#[test]
+fn real_init_saves_setup_sync_modes_for_each_tracker() {
+    let script = std::env::current_dir()
+        .unwrap()
+        .join("skills/story-time/scripts/story.mjs");
+    for (name, answers, mode) in [
+        (
+            "github",
+            r#"{"tracker":"github","sync":"auto","github":{"repo":"acme/shop"}}"#,
+            "auto",
+        ),
+        (
+            "gitea",
+            r#"{"tracker":"gitea","sync":"auto","gitea":{"baseUrl":"https://gitea.example.com","owner":"acme","repo":"shop"}}"#,
+            "auto",
+        ),
+        (
+            "ado",
+            r#"{"tracker":"ado","sync":"auto","ado":{"organization":"https://dev.azure.com/acme","project":"Shop"}}"#,
+            "auto",
+        ),
+        ("files", r#"{"tracker":"files","sync":"off"}"#, "off"),
+        ("jira", r#"{"tracker":"jira","sync":"off"}"#, "off"),
+        ("linear", r#"{"tracker":"linear","sync":"off"}"#, "off"),
+        (
+            "explicit-off",
+            r#"{"tracker":"github","sync":"off","github":{"repo":"acme/shop"}}"#,
+            "off",
+        ),
+        (
+            "explicit-ask",
+            r#"{"tracker":"github","sync":"ask","github":{"repo":"acme/shop"}}"#,
+            "ask",
+        ),
+        (
+            "legacy-omitted",
+            r#"{"tracker":"github","github":{"repo":"acme/shop"}}"#,
+            "off",
+        ),
+    ] {
+        let root = Fixture(
+            std::env::temp_dir().join(format!("story-setup-{}-{name}", std::process::id())),
+        );
+        fs::create_dir(&root.0).unwrap();
+        let input = root.0.join("answers.json");
+        let settings = root.0.join(".story-time/settings.json");
+        fs::write(&input, answers).unwrap();
+        let init = Command::new("node")
+            .arg(&script)
+            .args(["init", "--from"])
+            .arg(&input)
+            .arg("--config")
+            .arg(&settings)
+            .current_dir(&root.0)
+            .env_remove("STORY_TIME_CONFIG")
+            .output()
+            .unwrap();
+        assert!(
+            init.status.success(),
+            "{name}: {}",
+            String::from_utf8_lossy(&init.stderr)
+        );
+        let read = Command::new("node")
+            .arg(&script)
+            .args(["config", "--json", "--config"])
+            .arg(&settings)
+            .current_dir(&root.0)
+            .env_remove("STORY_TIME_CONFIG")
+            .output()
+            .unwrap();
+        assert!(
+            read.status.success(),
+            "{name}: {}",
+            String::from_utf8_lossy(&read.stderr)
+        );
+        assert!(
+            String::from_utf8_lossy(&read.stdout).contains(&format!("\"sync\": \"{mode}\"")),
+            "{name}"
+        );
+        assert!(
+            fs::read_to_string(&settings)
+                .unwrap()
+                .contains(&format!("\"sync\": \"{mode}\"")),
+            "{name}"
+        );
+    }
 }
 
 #[test]
@@ -198,7 +318,12 @@ fn cartographer_preparation_keeps_distinct_story_ids_and_no_runtime_authority() 
         assert!(binding.contains(&format!("\"{field}\": false")));
     }
     let result = Command::new("node")
-        .args(["skills/story-time/scripts/story.mjs", "show", "ST-002", "--json"])
+        .args([
+            "skills/story-time/scripts/story.mjs",
+            "show",
+            "ST-002",
+            "--json",
+        ])
         .env_remove("STORY_TIME_CONFIG")
         .output()
         .unwrap();
@@ -207,7 +332,9 @@ fn cartographer_preparation_keeps_distinct_story_ids_and_no_runtime_authority() 
         "{}",
         String::from_utf8_lossy(&result.stderr)
     );
-    assert!(String::from_utf8_lossy(&result.stdout).contains("Manage story-time through Cartographer"));
+    assert!(
+        String::from_utf8_lossy(&result.stdout).contains("Manage story-time through Cartographer")
+    );
     let result = link("Stories: ST-002", false);
     assert!(
         result.status.success(),
