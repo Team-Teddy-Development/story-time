@@ -65,7 +65,7 @@ The Rust conversion gate applies to the active push chain, not the whole reposit
 | Native and retained reference suites pass | 28 Rust tests; 408 existing Node reference tests | PASS locally |
 | Installed binary and independent source review | Installed ARM64 ELF matches release SHA256; original three-test regression passes against it; Jev actual-source review noul 0.90 | PASS locally |
 | Real tracker synchronization | Installed native push creates legitimate tracking issue ST-003 / GitHub #18; independent readback confirms it | PASS |
-| Exact-head remote CI and required repository review/integration | Release handoff and ST-003 record the PR and outcomes; required GitHub code-owner review cannot be replaced by a local score | UNMET until remote results/review are recorded |
+| Exact-head remote CI and required repository review/integration | PR20, exact-head CI, typed Jev source review, and normal protected merge under the owner-approved solo-owner policy in ADR0004 | UNMET until current remote results/review and merge are recorded |
 
 ## Root cause and lesson
 

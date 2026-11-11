@@ -44,7 +44,9 @@ The **principle-invest** skill holds the quality bar all of them apply.
 
 ## The `story` tool
 
-Use the installed Rust `story` executable. Install it from the repository root:
+Use the installed Rust `story` executable for push with GitHub, ADO, or Gitea.
+Read `.story-time/settings.json` before selecting a tracker. Install the native
+command from the repository root:
 
 ```bash
 cargo install --path native/story-push --locked
@@ -55,6 +57,17 @@ handler. Other commands still use Node 20+. Set `STORY_TIME_LEGACY_CLI` to
 this skill's absolute `scripts/story.mjs` path, or configure `legacyCli` in
 `~/.config/story-time/runtime.json`. The dispatcher uses that path only for
 non-push commands. Pass `--json` when you need to parse output.
+
+The separate Rust `gitea-gateway story-push` interface remains available in
+[Gitea Story Time](../../docs/gitea-story-time.md). It takes explicit Markdown
+paths, not IDs or `--all`. Install it from the source checkout with
+`cargo install --offline --path gitea-gateway`. For example, run
+`gitea-gateway story-push --root <project> --dry-run backlog/ST-001.md`, then
+remove `--dry-run` for an authorized push. Copied skill installations contain
+neither crate nor `docs/`; the skill installer does not install either binary.
+For direct Markdown edits, follow [story-format.md](references/story-format.md)
+and preserve `remote` and `remote_url`. Historical Node push adapters are not
+part of either Rust push execution path.
 
 | Command | Does |
 |---|---|
@@ -89,7 +102,7 @@ storage adapter changes.
 ## Project config
 
 `.story-time/settings.json` at the project root (committed) records what
-the project uses: the tracker (`files`, `github`, `ado`, `jira`, `linear`)
+the project uses: the tracker (`files`, `gitea`, `github`, `ado`, `jira`, `linear`)
 and its coordinates, whether to push to it (`sync`: `off`, `ask`, `auto`),
 the id prefix, the backlog folder, the team's sprint length, velocity, and
 WIP limit, the stack and test command, and any extra Definition of Ready
@@ -142,4 +155,7 @@ hours. WSJF = (value + time_criticality + risk_reduction) / size.
   propose a number, label it as an assumption in the changelog note, and say so.
 - Show the user what you will write before a batch of writes, splits,
   archives, or merges. Single-story creates and edits can go ahead without asking.
-- Finish by running `story lint` on what you touched and reporting the verdict.
+- For every tracker, run `story lint` on what you touched and report the
+  readiness verdict. For Gitea, also run the Rust `story-push --dry-run` with
+  the changed Markdown paths. Report parsing and rendering separately from
+  INVEST readiness; the dry run does not replace local lint.

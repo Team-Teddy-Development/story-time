@@ -1,0 +1,36 @@
+{
+  "schemaVersion": 1,
+  "recordKind": "admission-preparation-only",
+  "status": "awaiting-operator-admission",
+  "displayName": "Story Time",
+  "organization": "cartographer:organization:team-teddy",
+  "scope": {
+    "tenant": "cartographer:tenant:team-teddy",
+    "project": "cartographer:project:story-time"
+  },
+  "source": {
+    "url": "https://github.com/team-teddy-development/story-time",
+    "branch": "main",
+    "inspectedCommit": "1cbe7d82eb319ca458b06ba8eb2d603f3a97d69d"
+  },
+  "backlog": {
+    "directory": "backlog",
+    "prefix": "ST",
+    "configuration": ".story-time/settings.json",
+    "onboardingStory": "ST-002"
+  },
+  "existingVerification": {
+    "command": "npm test",
+    "runtime": "Node.js >=20",
+    "requiresDependencyInstall": false
+  },
+  "implementationPolicy": {
+    "newAndReplacementExecutables": "rust",
+    "existingJavaScriptConversion": "separate-work-not-performed-by-this-configuration"
+  },
+  "canonicalRegistryRecord": null,
+  "admissionReceipt": null,
+  "authorizesRuntimeActivation": false,
+  "authorizesDeployment": false,
+  "authorizesPublication": false
+}

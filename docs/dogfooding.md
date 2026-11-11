@@ -36,7 +36,12 @@ GitHub API failures fail the check; they do not mean the issue or competing stor
 The active [Story-time story mandate ruleset](https://github.com/Team-Teddy-Development/story-time/rules/27056058) requires `story-link`, `story-ids`, and `story-policy-tests` on the default branch.
 Its checked-in payload is `.github/story-mandate-ruleset.json`.
 It allows no bypass and requires checks against the latest base branch.
-The existing owner-review ruleset and Node test requirements remain unchanged.
+The separate integration ruleset requires the existing Node test contexts.
+The owner-approved [solo-owner review policy](adr/0004-solo-owner-review.md)
+replaces mandatory human approval with recorded exact-head Jev review.
+Required checks, strict latest-base checks, review-thread resolution, and branch
+protections remain in force. The Jev record is an operational requirement,
+not a GitHub-enforced human approval or status check.
 The bootstrap PR must land before branches from the default branch inherit the workflows.
 The CI token uses read-only permissions. Fork PRs receive no repository write credentials.
 
