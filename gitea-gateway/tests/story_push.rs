@@ -254,6 +254,70 @@ fn dry_run_needs_no_token_network_or_writes_even_when_sync_off() {
 }
 
 #[test]
+fn fenced_headings_do_not_export_local_sections() {
+    for (open, close) in [
+        ("```markdown", "```"),
+        ("~~~markdown", "~~~"),
+        ("````markdown", "`````"),
+        ("  ```markdown", "   ```"),
+        ("~~~~", "~~~~~~"),
+        ("```", ""),
+    ] {
+        let root = project("https://gitea.example");
+        let source = format!("{STORY}\n## Test Plan\n{open}\n## Notes\nLOCAL_ONLY_MARKER\n{close}\n");
+        fs::write(root.path().join("backlog/ST-001.md"), source).unwrap();
+        let output = result(invoke(&root, &["--dry-run", "backlog/ST-001.md"], None), true);
+        let body = output["plan"][0]["body"].as_str().unwrap();
+        assert!(!body.contains("LOCAL_ONLY_MARKER"), "{open}: {body}");
+    }
+}
+
+#[test]
+fn fenced_headings_preserve_public_sections_and_require_valid_closers() {
+    for (open, close, invalid) in [
+        ("```markdown", "```", "``\n~~~\n```not-a-close"),
+        ("~~~markdown", "~~~", "~~\n```\n~~~not-a-close"),
+        ("````markdown", "`````", "```\n~~~~\n````not-a-close"),
+        ("  ```markdown", "   ```", "    ```"),
+        ("~~~~", "~~~~~~", "~~~\n````"),
+        ("```", "", "``"),
+    ] {
+        let root = project("https://gitea.example");
+        let source = format!("{STORY}\n## Public example\n{open}\n{invalid}\n## Test Plan\nPUBLIC_REPRO_MARKER\n{close}\n");
+        fs::write(root.path().join("backlog/ST-001.md"), source).unwrap();
+        let output = result(invoke(&root, &["--dry-run", "backlog/ST-001.md"], None), true);
+        let body = output["plan"][0]["body"].as_str().unwrap();
+        assert!(body.contains("PUBLIC_REPRO_MARKER"), "{open}: {body}");
+        assert!(body.contains("## Test Plan"), "{open}: {body}");
+    }
+}
+
+#[test]
+fn repository_gitea_story_and_skill_keep_distinct_identity_and_local_lint() {
+    let repository = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
+    let story = fs::read_to_string(repository.join("backlog/ST-003.md")).unwrap();
+    assert!(story.contains("id: ST-003\n"));
+    assert!(story.contains("remote: 17\n"));
+    assert!(story.contains("title: Provide a native Rust Gitea story synchronization path"));
+    let skill = fs::read_to_string(repository.join("skills/story-time/SKILL.md")).unwrap();
+    let lint = skill.find("For every tracker, run `story lint`").unwrap();
+    let render = skill[lint..].find("story-push --dry-run").unwrap();
+    assert!(render > 0);
+    let root = project("https://gitea.example");
+    fs::write(root.path().join("backlog/ST-001.md"), "---\nid: ST-001\ntitle: Missing criteria\nstatus: draft\n---\n\n## Story\nAs a maintainer, I want validation, so that missing criteria are rejected.\n").unwrap();
+    let output = result(invoke(&root, &["--dry-run", "backlog/ST-001.md"], None), true);
+    assert_eq!(output["status"], "ok");
+    let lint = Command::new("node")
+        .arg(repository.join("skills/story-time/scripts/story.mjs"))
+        .args(["lint", "ST-001", "--json"])
+        .current_dir(root.path())
+        .env_remove("STORY_TIME_CONFIG")
+        .output().unwrap();
+    assert_eq!(lint.status.code(), Some(1));
+    assert!(String::from_utf8_lossy(&lint.stdout).contains("ac.present"));
+}
+
+#[test]
 fn validates_all_files_configuration_and_links_before_any_request() {
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     listener.set_nonblocking(true).unwrap();
