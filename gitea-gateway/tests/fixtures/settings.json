@@ -1,0 +1,7 @@
+{
+  "tracker": "gitea",
+  "sync": "ask",
+  "gitea": {"baseUrl": "https://gitea.example/prefix", "owner": "owner", "repo": "repo"},
+  "backlogDir": "backlog",
+  "prefix": "ST"
+}

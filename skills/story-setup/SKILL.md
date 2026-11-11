@@ -9,6 +9,38 @@ description: One-time project setup for story-time. Detects the repo, task track
 `.story-time/settings.json` at the project root. Commit it, so the whole team and
 every agent use the same settings.
 
+## Gitea setup branch
+
+Read `.story-time/settings.json` directly before running `story config`.
+If `tracker` is `gitea`, or the selected tracker is Gitea, follow
+[Gitea Story Time](../../docs/gitea-story-time.md) instead of steps 1 through 6.
+That reference owns the settings schema, Rust binary installation, authentication,
+explicit-path dry run, push, and failure recovery. For a copied skill
+installation, locate the Story Time source checkout to read that reference.
+The installer copies skills only. From the checkout, install the binary with
+`cargo install --offline --path gitea-gateway`.
+
+Write `tracker: "gitea"`, `sync`, and `gitea: {baseUrl, owner, repo}` directly
+as JSON. For example:
+
+```json
+{"tracker":"gitea","sync":"ask","gitea":{"baseUrl":"https://gitea.example.com","owner":"acme","repo":"shop"}}
+```
+
+Preserve unrelated settings. Use only `GITEA_TOKEN` in the environment.
+Run `gitea-gateway story-push --root <project> --dry-run backlog/ST-001.md`.
+For an authorized real push, remove `--dry-run`. Repeat pushes use the saved
+issue number. Terminal unlinked stories are skipped; linked terminal stories
+are closed. Preserve `remote` and `remote_url` when editing stories.
+Complete setup when the Rust dry run parses and renders one actual story
+without credentials or file changes. Report that this checks local setup,
+not authentication or live server compatibility. An authorized push verifies
+the issue and local `remote` / `remote_url` links.
+
+Upstream also provides Node Gitea setup and push commands. They are separate
+from this Rust path. The following legacy setup steps remain outside the
+Gitea Rust conversion scope.
+
 ## 1. Check for an existing config
 
 ```bash

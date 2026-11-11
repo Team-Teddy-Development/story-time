@@ -44,7 +44,21 @@ The **principle-invest** skill holds the quality bar all of them apply.
 
 ## The `story` tool
 
-Every skill drives the backlog through one zero-dependency Node CLI (Node 20+):
+For `tracker: "gitea"`, use the Rust path in [Gitea Story Time](../../docs/gitea-story-time.md).
+Read `.story-time/settings.json` directly before selecting a CLI. Run
+`gitea-gateway story-push --root <project> --dry-run backlog/ST-001.md`, then
+remove `--dry-run` for an authorized push. Pass explicit Markdown paths, not IDs
+or `--all`. From the Story Time source checkout, install the binary with
+`cargo install --offline --path gitea-gateway`. Copied skill installations
+contain neither the crate nor `docs/`; locate that checkout for the build
+and the linked reference. The skill installer does not install this binary.
+
+For Gitea, edit story Markdown directly using
+[story-format.md](references/story-format.md). Preserve `remote` and
+`remote_url`. Upstream also has a Node Gitea adapter. Its config, init, secret, and push
+commands are separate from this native Rust execution path.
+
+Other trackers retain the zero-dependency Node CLI (Node 20+):
 
 ```bash
 node <story-time>/scripts/story.mjs <command>
@@ -87,7 +101,7 @@ storage adapter changes.
 ## Project config
 
 `.story-time/settings.json` at the project root (committed) records what
-the project uses: the tracker (`files`, `github`, `ado`, `jira`, `linear`)
+the project uses: the tracker (`files`, `gitea`, `github`, `ado`, `jira`, `linear`)
 and its coordinates, whether to push to it (`sync`: `off`, `ask`, `auto`),
 the id prefix, the backlog folder, the team's sprint length, velocity, and
 WIP limit, the stack and test command, and any extra Definition of Ready
@@ -140,4 +154,7 @@ hours. WSJF = (value + time_criticality + risk_reduction) / size.
   propose a number, label it as an assumption in the changelog note, and say so.
 - Show the user what you will write before a batch of writes, splits,
   archives, or merges. Single-story creates and edits can go ahead without asking.
-- Finish by running `story lint` on what you touched and reporting the verdict.
+- For every tracker, run `story lint` on what you touched and report the
+  readiness verdict. For Gitea, also run the Rust `story-push --dry-run` with
+  the changed Markdown paths. Report parsing and rendering separately from
+  INVEST readiness; the dry run does not replace local lint.
