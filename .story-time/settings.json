@@ -1,0 +1,29 @@
+{
+  "tracker": "github",
+  "sync": "ask",
+  "backlogDir": "backlog",
+  "prefix": "ST",
+  "team": {
+    "sprintDays": 10,
+    "wipLimit": 1
+  },
+  "project": {
+    "stack": [
+      "nodejs",
+      "rust"
+    ],
+    "testFramework": "node:test and rustc --test",
+    "testCommand": "npm test && rustc --edition=2021 --test scripts/story-policy.rs -o /tmp/story-policy-tests && /tmp/story-policy-tests && rustc --edition=2021 --test test/story-policy-contract.rs -o /tmp/story-policy-contract && /tmp/story-policy-contract"
+  },
+  "definitionOfDone": [
+    "The PR declares its stories on a Stories: line",
+    "Acceptance criteria have test or real CLI evidence",
+    "New and replacement executable implementations and tests use Rust"
+  ],
+  "definitionOfReady": [
+    "Acceptance criteria describe observable outcomes and the test plan names their verification commands"
+  ],
+  "github": {
+    "repo": "Team-Teddy-Development/story-time"
+  }
+}
