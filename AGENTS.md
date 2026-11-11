@@ -16,7 +16,7 @@ for non-push commands only.
 5. Declare `Stories: ST-### (#issue)` in the PR body. Run story-accept with evidence before closing the story.
 
 These steps apply to subagents. Keep local stories in `backlog/` and mirror them to the configured GitHub repository.
-Sync is `ask`: publish changes after the applicable approval step, not automatically.
+Follow the configured sync mode. With `auto`, publish story changes after the applicable approval-policy steps without a separate owner confirmation.
 
 ## Delivery
 
