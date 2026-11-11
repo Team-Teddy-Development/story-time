@@ -59,4 +59,10 @@ Jev reviewed the actual source change and observed RED/GREEN evidence. Verdict `
 
 The attempted different-family delegate returned only follow-up acknowledgments, not a substantive review. It is not counted as an independent code-review pass. Jev remains the accepted third-party evidence reviewer.
 
-The source depends on the pending native-dispatcher PR #20. The correction will use a separate PR based on that branch. No permission to modify the dependency's source or bypass its protections is inferred.
+The source depends on the pending native-dispatcher PR #20. Correction PR #24 is https://github.com/Team-Teddy-Development/story-time/pull/24, based on that branch. At head `6814b41ef2758c22b58399fb00f1a4327895115a`, remote workflows `test`, `Native Gitea Rust`, `story-ids`, and `story-link` all completed successfully. Dependency PR #20 remains open at `75b4534dc33fc6eed570633ad8c834908f0e7cfe`. Main integration is blocked on that dependency; this task does not merge or take over another run's PR. After #20 lands, retarget #24 to main, rerun required checks, and merge through normal protections.
+
+## Operational corrections during verification
+
+The first gate-check invocation resolved relative commands from `docs/`, not the repository root. Adding explicit `CWD: ..` corrected the cause. G1, G2, and G3 then passed through the real checker; G4 and G5 have direct audit and installed-artifact evidence. G6 remains unmet while main integration is pending. No failed check is relabeled as a pass.
+
+The corresponding command fingerprints are `es_41078f6c463a`, `es_6a757a3ba09e`, `es_caff64e1fda7`, and `es_5cfcc8cd721d`. `es_329ae8f88e79` records the genuinely open G6. `es_c40c6fc8f116` records a manual-audit warning; the source audit and installed tests provide its evidence, not an automatic command claim. `es_3cc67e4ed421` came from a leading-space typo in an exact edit match. The corrected exact match succeeded; the final installed skill retains only the intended GitHub patch. These are operational corrections, not extra application bugs or successful tested-fix sentinel attestations.
