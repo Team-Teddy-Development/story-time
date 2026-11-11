@@ -8,7 +8,7 @@ Story Time belongs to the `team-teddy` organization in Cartographer. Its source 
 
 ## Repository configuration
 
-`.story-time/settings.json` configures the file backlog in `backlog/`, prefix `ST`, and WIP limit 1. Issue synchronization is off. No external tracker writes or credentials are needed. `ST-001` tracks onboarding and retains the unmet live-registration criterion.
+`.story-time/settings.json` preserves the GitHub dogfooding configuration introduced by PR #14: local stories in `backlog/`, prefix `ST`, WIP limit 1, and GitHub repository `Team-Teddy-Development/story-time`. Synchronization is `ask`; publishing requires the applicable approval step. Read-only configuration and story commands need no tracker writes. `ST-002` tracks Cartographer onboarding and retains the unmet live-registration criterion. `ST-001` remains the separate GitHub dogfooding story.
 
 Run these commands from an owned checkout of this repository:
 
@@ -16,9 +16,13 @@ Run these commands from an owned checkout of this repository:
 story config --json
 story list --json
 npm test
+rustc --edition=2021 -Dwarnings --test scripts/story-policy.rs -o /tmp/story-policy-tests
+/tmp/story-policy-tests
+rustc --edition=2021 -Dwarnings --test test/story-policy-contract.rs -o /tmp/story-policy-contract
+/tmp/story-policy-contract
 ```
 
-The test command uses the existing Node.js tests. It does not prove Cartographer admission, UI visibility, or worker execution. New and replacement executable implementations and tests must use Rust. Markdown skills, JSON configuration, and fixture data retain their required formats.
+The configured test command includes the existing Node.js tests and the Rust story-mandate tests. It does not prove Cartographer admission, UI visibility, or worker execution. New and replacement executable implementations and tests must use Rust. Markdown skills, JSON configuration, and fixture data retain their required formats.
 
 ## Measured production prerequisites
 
@@ -114,10 +118,11 @@ Read admission is not proof of build or maintenance capability. Do not mark onbo
 | `backlog/` and `skills/*/SKILL.md` | Markdown | Stories and agent instructions | Non-executable documentation |
 | `skills/story-time/scripts/story.mjs` and `scripts/*.mjs` | JavaScript | Existing CLI, installer, and test runner | Out-of-scope conversion target |
 | `skills/story-time/scripts/src/**/*.mjs` | JavaScript | Existing application and adapters | Out-of-scope conversion target |
-| `test/` and `skills/story-time/scripts/test/` | JavaScript | Existing tests | Out-of-scope conversion target |
-| `tools/cartographer-preflight/src/main.rs` and `tests/stdio.rs` | Rust | New read-only CLI, MCP, and tests | Active Rust implementation, tested locally and through real cluster reads |
+| Existing `.mjs` files in `test/` and `skills/story-time/scripts/test/` | JavaScript | Existing tests | Out-of-scope conversion target |
+| `scripts/story-policy.rs` and `test/story-policy-contract.rs` | Rust | Story mandate and regression verification inherited from PR #14 and the peer merge | Existing native Rust, preserved |
+| `tools/cartographer-preflight/src/main.rs` and its `tests/stdio.rs` | Rust | New read-only CLI, MCP, and protocol tests | Active Rust implementation, tested locally and through real cluster reads |
 | `tests/cartographer_setup.rs` | Rust | Real repository CLI integration regression | Active Rust verification |
-| `.github/workflows/test.yml` | YAML | External CI command configuration | Runs Rust and existing Node tests, no embedded implementation |
+| `.github/workflows/*.yml` | YAML | External CI command configuration | Runs Rust and existing Node tests, no embedded implementation |
 | Cartographer signing and authority tools | Rust | External admission services | Existing tools, unchanged |
 | Cartographer UI and bridge | Rust active readers; retained historical JavaScript | External portfolio and graph readers | Unchanged, outside this repository's setup scope |
 

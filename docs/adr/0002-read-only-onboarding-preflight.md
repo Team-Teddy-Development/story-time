@@ -1,4 +1,4 @@
-# ADR 0001: Inspect admission prerequisites without granting access
+# ADR 0002: Inspect admission prerequisites without granting access
 
 Status: Accepted for repository onboarding preparation.
 

@@ -18,12 +18,18 @@ fn story(args: &[&str]) -> Output {
 
 #[test]
 fn onboarding_story_has_estimate_and_ranking_inputs() {
-    let result = story(&["lint", "ST-001"]);
+    let result = story(&["lint", "ST-002"]);
     let stdout = String::from_utf8(result.stdout).expect("UTF-8 CLI output");
     let stderr = String::from_utf8(result.stderr).expect("UTF-8 CLI errors");
     assert!(result.status.success(), "lint failed: {stdout}{stderr}");
-    assert!(!stdout.contains("value.scored"), "ranking inputs absent: {stdout}");
-    assert!(!stdout.contains("size.estimated"), "estimate absent: {stdout}");
+    assert!(
+        !stdout.contains("value.scored"),
+        "ranking inputs absent: {stdout}"
+    );
+    assert!(
+        !stdout.contains("size.estimated"),
+        "estimate absent: {stdout}"
+    );
     assert!(stderr.is_empty(), "unexpected stderr: {stderr}");
 }
 
@@ -34,11 +40,14 @@ fn actual_cli_reads_repository_configuration() {
     assert!(result.stderr.is_empty());
     let stdout = String::from_utf8(result.stdout).expect("UTF-8 config");
     for expected in [
-        "\"tracker\": \"files\"",
-        "\"sync\": \"off\"",
+        "\"tracker\": \"github\"",
+        "\"sync\": \"ask\"",
+        "\"repo\": \"Team-Teddy-Development/story-time\"",
         "\"prefix\": \"ST\"",
         "\"wipLimit\": 1",
-        "\"testCommand\": \"npm test\"",
+        "\"testCommand\": \"npm test && rustc --edition=2021",
+        "scripts/story-policy.rs",
+        "test/story-policy-contract.rs",
     ] {
         assert!(stdout.contains(expected), "missing setting {expected}");
     }

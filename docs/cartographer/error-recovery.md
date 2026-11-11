@@ -53,8 +53,10 @@ Run from the repository root:
 ```sh
 rustc --edition=2021 -D warnings --test tests/cartographer_setup.rs -o /tmp/story-time-cartographer-setup-tests
 /tmp/story-time-cartographer-setup-tests --test-threads=1
-node skills/story-time/scripts/story.mjs lint ST-001
+node skills/story-time/scripts/story.mjs lint ST-002
 ```
+
+The maintained command uses the peer-assigned current ID ST-002. The original failed command named ST-001.
 
 The first compile invocation omitted `--edition=2021` and produced format-string compatibility warnings under Rust's default edition. The corrected command explicitly selects Rust 2021 and denies warnings. No warning suppression or assertion weakening is used.
 
@@ -71,3 +73,13 @@ The test-first RED run deliberately exposed the missing story scores. Fingerprin
 Clippy then rejected an explicit `if request.get("id").is_none() { return None; }` notification guard in the new MCP dispatcher. Fingerprints `es_2f2858fea169`, `es_eee138ef682e`, `es_95947c43607c`, and `es_6914e3154885` describe that one source issue and its build summaries. The source now uses `request.get("id")?;`. The existing real stdio regression asserts that the notification produces no response. The final Clippy run with all targets and warnings denied passes, and all 14 tool tests pass. No lint rule is disabled.
 
 A later typed `fixed` submission for the historical CLI lint incident was refused because the original absolute command did not name the new regression test. The tested data repair remains valid; the recorder's restricted proof path cannot represent it. This is another instance of the ledger API gap above, not evidence that the story fields are still missing.
+
+## Concurrent source reconciliation
+
+Before this run pushed, PR #15 moved to `fa0f39f8b47d9ed579de9c6b6d89aea135c3fb68`. It had merged PR #14 from main and separated the conflicting story IDs: GitHub dogfooding is `ST-001`; Cartographer onboarding is `ST-002`. The merge of that exact head into this run found four conflicts in the CI file, ST-001, README, and admission evidence. The resolution preserves incoming ST-001 and GitHub settings byte-for-byte, keeps both Rust CI jobs, and transfers only onboarding notes and proposed scores to ST-002. Historical fingerprints, original names, and RED/GREEN commits remain intact.
+
+The current real CLI regression asserted an expected RED result for unscored ST-002 while the GitHub configuration assertion passed. After transferring the proposed scores, both tests passed. This continues the same onboarding repair; the peer-assigned ID does not erase history.
+
+The mutation experiment found a test gap: aggregate report status did not detect an inverted replica predicate because other prerequisites still failed. The test now asserts the v2 clause and all other clauses independently. The inverted predicate then produced the asserted exit 101, and restored source passes the full Rust suite.
+
+Two exact-edit failures used an old-text typo and a sentence from a different document. Reading and matching the actual target text corrected both operations. A malformed tool-batch object also failed before any tool call; the corrected object executed the edits. These are recovered authoring invocations, not product-code fixes.

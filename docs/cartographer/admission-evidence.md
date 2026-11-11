@@ -40,9 +40,10 @@ Use the conditional operator steps in [README.md](README.md) after the applicabl
 
 ## Repository verification
 
-The inspected source baseline is GitHub `main` at `1cbe7d82eb319ca458b06ba8eb2d603f3a97d69d`.
-The actual repository CLI reads the ST file backlog, sync off, WIP limit 1, and `npm test` command.
-The Rust CLI regression failed at test-only commit `c0e2bb6f7d3fa8ade55bfa2b2d6d867a64b19247` and passed after fix commit `4f70014bf2c28b4dfd963ad4a6f2caa8ee992f75` supplied proposed size and WSJF inputs.
+The inspected original source baseline is GitHub `main` at `1cbe7d82eb319ca458b06ba8eb2d603f3a97d69d`.
+The initial preparation used local file stories, sync off, prefix `ST`, and `npm test`. After PR #14 merged, the reconciliation preserves GitHub tracking with sync ask and the combined Node and Rust mandate test command. Cartographer onboarding is now `ST-002`; the distinct GitHub dogfooding story remains `ST-001`, byte-for-byte unchanged from incoming PR #15 head `fa0f39f8b47d9ed579de9c6b6d89aea135c3fb68`.
+The historical Rust CLI regression failed at test-only commit `c0e2bb6f7d3fa8ade55bfa2b2d6d867a64b19247` and passed after fix commit `4f70014bf2c28b4dfd963ad4a6f2caa8ee992f75` supplied proposed size and WSJF inputs to the then-named onboarding `ST-001`. The current regression targets `ST-002` and the preserved GitHub configuration. Historical failure IDs and commits are retained; the peer rename is not a new identity used to erase them.
+The project binding remains preparation data, not a registry record.
 
 [error-recovery.md](error-recovery.md) names every owner-reported fingerprint, the original cause, actual recovery, and the correction-recorder API limitation. A failed attempt to submit `es_22067bfa3b92` as a typed `fixed` resolution returned `verification test is not present in the original absolute failing command`. The original command was a CLI lint invocation, not a named Rust test. The new regression proves the data repair, but this verifier cannot attach a newly introduced test to that historical lint command. Its older follow-up disposition therefore remains ledger history, not the proof of this repair.
 
