@@ -1,0 +1,25 @@
+name: story-link
+on:
+  pull_request:
+    types: [opened, edited, synchronize, reopened, labeled, unlabeled]
+permissions:
+  contents: read
+  issues: read
+jobs:
+  story-link:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Test and build the story mandate checker
+        run: |
+          rustc --edition=2021 --test scripts/story-policy.rs -o /tmp/story-policy-tests
+          /tmp/story-policy-tests
+          rustc --edition=2021 scripts/story-policy.rs -o /tmp/story-policy
+      - name: Validate declared stories
+        env:
+          PR_BODY: ${{ github.event.pull_request.body }}
+          IS_INCIDENT: ${{ contains(github.event.pull_request.labels.*.name, 'incident') }}
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+        run: /tmp/story-policy story-link
