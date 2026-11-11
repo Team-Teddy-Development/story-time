@@ -9,6 +9,10 @@ description: One-time project setup for story-time. Detects the repo, task track
 `.story-time/settings.json` at the project root. Commit it, so the whole team and
 every agent use the same settings.
 
+For a new GitHub, Gitea, or Azure DevOps setup, use `sync: "auto"` unless the owner selects another mode.
+Preserve an existing explicit sync policy unless the owner requests a change.
+Write `sync` explicitly in setup answers and settings. An omitted field still uses the CLI's compatibility default, `off`.
+
 ## Gitea setup branch
 
 Read `.story-time/settings.json` directly before running `story config`.
@@ -24,7 +28,7 @@ Write `tracker: "gitea"`, `sync`, and `gitea: {baseUrl, owner, repo}` directly
 as JSON. For example:
 
 ```json
-{"tracker":"gitea","sync":"ask","gitea":{"baseUrl":"https://gitea.example.com","owner":"acme","repo":"shop"}}
+{"tracker":"gitea","sync":"auto","gitea":{"baseUrl":"https://gitea.example.com","owner":"acme","repo":"shop"}}
 ```
 
 Preserve unrelated settings. Use only `GITEA_TOKEN` in the environment.
@@ -88,12 +92,12 @@ question so the user can just confirm. In Claude Code, use
    (skip if unknown, since `backlog-groom` asks later), and WIP limit per person.
 5. **Definition of Done / Ready.** Any team rules beyond the defaults in
    the **story-accept** and **story-ready** skills, one line each.
-6. **Sync** (GitHub, Gitea, or ADO only). Should story-time write to the tracker?
-   - `off` (the default): never. Skills hand back copyable cards, and
-     `story push` refuses to run. Pick this when the project must not
-     change the tracker on its own.
-   - `ask`: after each create, edit, or split, ask before pushing.
-   - `auto`: push right after each change.
+6. **Sync** (GitHub, Gitea, or ADO only). Use `auto` for a new setup unless the owner selects another mode.
+   - `auto` (the default): push right after each create, edit, or split through the applicable approval policy.
+   - `ask`: obtain authorization before each push.
+   - `off`: hand back copyable cards; `story push` refuses to run.
+
+   Confirm a different preference only when the owner requests one; do not make routine setup wait for a sync decision.
 
    For Jira, Linear, or files, sync is always `off`.
 7. **Decisions: bring your own TypeSafe key?** (optional) story-time's
@@ -121,7 +125,7 @@ Nothing is written if any value is invalid:
 ```json
 {
   "tracker": "ado",
-  "sync": "ask",
+  "sync": "auto",
   "prefix": "PAY",
   "backlogDir": "backlog",
   "ado": {
@@ -142,7 +146,7 @@ For Gitea the tracker part is:
 ```json
 {
   "tracker": "gitea",
-  "sync": "ask",
+  "sync": "auto",
   "gitea": { "baseUrl": "https://gitea.example.com", "owner": "acme", "repo": "shop" }
 }
 ```

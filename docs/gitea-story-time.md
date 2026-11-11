@@ -22,7 +22,7 @@ Create or edit `<project>/.story-time/settings.json` as JSON. Preserve unrelated
 ```json
 {
   "tracker": "gitea",
-  "sync": "ask",
+  "sync": "auto",
   "prefix": "ST",
   "backlogDir": "backlog",
   "gitea": {
@@ -34,6 +34,8 @@ Create or edit `<project>/.story-time/settings.json` as JSON. Preserve unrelated
 ```
 
 `baseUrl` is the server root, optionally with a deployment path prefix, not an `/api/v1` URL. HTTPS is required except for literal loopback IP addresses. URL credentials, queries, and fragments are rejected. Owner and repository names accept ASCII letters, digits, `.`, `_`, and `-`, except the names `.` and `..`.
+
+Setup writes `sync: "auto"` for a new project unless the owner selects another mode. Preserve an existing explicit policy.
 
 `sync` accepts `off`, `ask`, and `auto`. Missing `sync` means `off`. Real pushes refuse `off`. Dry runs work even with `off`. For `ask`, the caller obtains authorization before running a real push; the binary itself does not prompt. An explicit authorized invocation permits that push. `auto` permits callers to push after local changes. Neither mode starts a background watcher.
 
