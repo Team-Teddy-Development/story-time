@@ -1,0 +1,27 @@
+{
+  "tracker": "files",
+  "sync": "off",
+  "backlogDir": "backlog",
+  "prefix": "ST",
+  "team": {
+    "sprintDays": 10,
+    "wipLimit": 1
+  },
+  "project": {
+    "stack": [
+      "markdown",
+      "javascript"
+    ],
+    "testFramework": "node:test",
+    "testCommand": "npm test"
+  },
+  "definitionOfDone": [
+    "Record acceptance evidence and the exact source commit with the story.",
+    "Use Rust for new and replacement executable implementations and tests; record the scoped language audit.",
+    "Verify the actual CLI or skill installation path affected by the change.",
+    "Keep signing keys outside the agent session; a local project binding does not grant Cartographer admission."
+  ],
+  "definitionOfReady": [
+    "Name the affected CLI commands or skills and the expected observable result."
+  ]
+}
