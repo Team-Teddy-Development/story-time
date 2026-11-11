@@ -180,3 +180,38 @@ fn story_cli_reads_github_configuration() {
     assert!(text.contains("\"sync\": \"ask\""));
     assert!(text.contains("\"repo\": \"Team-Teddy-Development/story-time\""));
 }
+
+#[test]
+fn cartographer_preparation_keeps_distinct_story_ids_and_no_runtime_authority() {
+    let bootstrap = fs::read_to_string("backlog/ST-001.md").unwrap();
+    assert!(bootstrap.contains("title: Track our own feature work through GitHub stories"));
+    let onboarding = fs::read_to_string("backlog/ST-002.md").unwrap();
+    assert!(onboarding.contains("id: ST-002\n"));
+    assert!(onboarding.contains("Given operator-published admission"));
+    let binding = fs::read_to_string("docs/cartographer/project-binding.json").unwrap();
+    assert!(binding.contains("\"onboardingStory\": \"ST-002\""));
+    for field in [
+        "authorizesRuntimeActivation",
+        "authorizesDeployment",
+        "authorizesPublication",
+    ] {
+        assert!(binding.contains(&format!("\"{field}\": false")));
+    }
+    let result = Command::new("node")
+        .args(["skills/story-time/scripts/story.mjs", "show", "ST-002", "--json"])
+        .env_remove("STORY_TIME_CONFIG")
+        .output()
+        .unwrap();
+    assert!(
+        result.status.success(),
+        "{}",
+        String::from_utf8_lossy(&result.stderr)
+    );
+    assert!(String::from_utf8_lossy(&result.stdout).contains("Manage story-time through Cartographer"));
+    let result = link("Stories: ST-002", false);
+    assert!(
+        result.status.success(),
+        "{}",
+        String::from_utf8_lossy(&result.stderr)
+    );
+}
