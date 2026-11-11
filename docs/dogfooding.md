@@ -1,7 +1,7 @@
 # Dogfooding with GitHub Issues
 
 The local backlog is `backlog/ST-###.md`. GitHub Issues mirrors these stories in the repository named by `.story-time/settings.json`.
-The configuration uses `sync: ask`, so publishing remains an explicit action.
+The configuration uses `sync: auto`. Story skills publish changes through the applicable approval policy without a separate owner confirmation. Run `story push` after direct file edits; this setting does not start a watcher.
 
 ## Create a feature story
 
