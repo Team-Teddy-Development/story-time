@@ -43,7 +43,22 @@ of them.
 
 ## Install
 
-Requires Node 20+. No npm install: the CLI has zero dependencies.
+Native `story push` requires Rust and Cargo. Other commands still require
+Node 20+ and use the existing dependency-free Node CLI.
+
+From the repository root, install the native executable and configure the
+retained non-push entry point:
+
+```bash
+cargo install --path native/story-push --locked
+export STORY_TIME_LEGACY_CLI="$PWD/skills/story-time/scripts/story.mjs"
+```
+
+Use `story push`, not `node story.mjs push`. Push planning, tracker operations,
+and local linking run in Rust. An empty `story push --all --dry-run --json`
+returns an empty plan without credentials or network access. Sync off still
+rejects push. See [native push](docs/native-story-push.md) for verification,
+installation recovery, and the migration boundary.
 
 ### Installer (Claude Code, Codex, or both)
 

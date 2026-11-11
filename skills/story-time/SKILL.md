@@ -44,15 +44,17 @@ The **principle-invest** skill holds the quality bar all of them apply.
 
 ## The `story` tool
 
-Every skill drives the backlog through one zero-dependency Node CLI (Node 20+):
+Use the installed Rust `story` executable. Install it from the repository root:
 
 ```bash
-node <story-time>/scripts/story.mjs <command>
+cargo install --path native/story-push --locked
 ```
 
-`<story-time>` is this skill's directory. Other story-time skills are its
-siblings, so from any of them it is `../story-time`. Below, `story` means
-that full command. Pass `--json` when you need to parse output.
+`story push` runs entirely in Rust. Do not invoke the historical Node push
+handler. Other commands still use Node 20+. Set `STORY_TIME_LEGACY_CLI` to
+this skill's absolute `scripts/story.mjs` path, or configure `legacyCli` in
+`~/.config/story-time/runtime.json`. The dispatcher uses that path only for
+non-push commands. Pass `--json` when you need to parse output.
 
 | Command | Does |
 |---|---|
@@ -66,7 +68,7 @@ that full command. Pass `--json` when you need to parse output.
 | `story split <id> --from children.json` | Split into children atomically. A failure rolls everything back |
 | `story stats` | Counts, points, unestimated and stale stories |
 | `story export <id> [--format github\|ado\|markdown] [--command]` | Copy-paste card for the tracker, or the `gh` / `az boards` command that creates it |
-| `story push <id...> \| --all [--dry-run]` | Create or update the items in GitHub / ADO. Refused when `sync` is `off` |
+| `story push <id...> \| --all [--dry-run]` | Create or update items in GitHub, ADO, or Gitea. Native Rust; refuses when `sync` is `off` |
 | `story judge [id...]` | Judgement calls: need vs. solution, real benefit, testable criteria, type, size, split pattern. Jev with a key, code heuristics without |
 | `story secret set\|status\|clear <github\|ado\|jev>` | Store a tracker token or the TypeSafe key in `.story-time/.<name>.env` (mode 600, git-ignored). The user runs `set` themselves |
 | `story machine check\|criteria\|diagram <file>` | Check a state machine (`model/state/<entity>.toml`) for unreachable states, dead ends, transitions without an event, and unknown names; print one criterion per transition and per refused event; or print its Mermaid diagram. Exit 1 on defects |

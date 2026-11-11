@@ -24,12 +24,20 @@ impl Fixture {
     }
 
     fn run(&self, args: &[&str]) -> std::process::Output {
-        Command::new("node")
-            .arg(
+        let binary = std::env::var_os("STORY_TIME_TEST_BIN")
+            .or_else(|| option_env!("CARGO_BIN_EXE_story").map(Into::into));
+        let mut command = if let Some(binary) = binary {
+            Command::new(binary)
+        } else {
+            let mut reference = Command::new("node");
+            reference.arg(
                 std::env::current_dir()
                     .unwrap()
                     .join("skills/story-time/scripts/story.mjs"),
-            )
+            );
+            reference
+        };
+        command
             .args(args)
             .current_dir(&self.0)
             .env_remove("GITEA_TOKEN")
