@@ -59,6 +59,13 @@ const github = {
   },
 };
 
+// Gitea renders issue markdown like GitHub, so the card is the same.
+const gitea = {
+  render(s) {
+    return { ...github.render(s), format: 'gitea' };
+  },
+};
+
 const markdown = {
   render(s) {
     const meta = [
@@ -123,7 +130,7 @@ const ado = {
   },
 };
 
-export const EXPORTERS = { github, ado, markdown };
+export const EXPORTERS = { github, ado, gitea, markdown };
 
 export function renderCard(story, format, { config, exporters = EXPORTERS } = {}) {
   const exporter = exporters[format];

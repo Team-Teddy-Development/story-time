@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  parseConfig, defaultExportFormat, pushPolicy, TRACKERS, CONFIG_DIR, CONFIG_FILE, LEGACY_CONFIG_FILE,
+  parseConfig, defaultExportFormat, pushPolicy, TRACKERS, PUSHABLE_TRACKERS, CONFIG_DIR, CONFIG_FILE, LEGACY_CONFIG_FILE,
 } from '../src/config/config.mjs';
 
 test('an empty config gets file-backed defaults', () => {
@@ -16,7 +16,8 @@ test('an empty config gets file-backed defaults', () => {
 });
 
 test('supported trackers', () => {
-  assert.deepEqual(TRACKERS, ['files', 'github', 'ado', 'jira', 'linear']);
+  assert.deepEqual(TRACKERS, ['files', 'github', 'ado', 'gitea', 'jira', 'linear']);
+  assert.deepEqual(PUSHABLE_TRACKERS, ['github', 'ado', 'gitea']);
 });
 
 test('github tracker requires an owner/repo', () => {
@@ -34,6 +35,25 @@ test('ado tracker requires organization and project, and defaults the process to
     () => parseConfig({ tracker: 'ado', ado: { organization: 'o', project: 'p', process: 'waterfall' } }),
     /process.*agile, scrum, basic/,
   );
+});
+
+test('gitea tracker requires a base url, owner, and repo, and keeps no token', () => {
+  const ok = { baseUrl: 'https://192.168.1.56', owner: 'team-teddy', repo: 'cartographer' };
+  assert.deepEqual(parseConfig({ tracker: 'gitea', gitea: ok }).gitea, ok);
+  assert.equal(parseConfig({ tracker: 'gitea', gitea: { ...ok, baseUrl: 'http://192.168.1.56:3000/' } }).gitea.baseUrl, 'http://192.168.1.56:3000');
+  assert.throws(() => parseConfig({ tracker: 'gitea' }), /gitea\.baseUrl/);
+  assert.throws(() => parseConfig({ tracker: 'gitea', gitea: { ...ok, baseUrl: 'gitea.local' } }), /gitea\.baseUrl must be an http\(s\) URL/);
+  assert.throws(() => parseConfig({ tracker: 'gitea', gitea: { ...ok, baseUrl: 'ssh://git@192.168.1.56:30022' } }), /gitea\.baseUrl must be an http\(s\) URL/);
+  assert.throws(() => parseConfig({ tracker: 'gitea', gitea: { ...ok, owner: undefined } }), /gitea\.owner/);
+  assert.throws(() => parseConfig({ tracker: 'gitea', gitea: { ...ok, repo: undefined } }), /gitea\.repo/);
+  assert.throws(() => parseConfig({ tracker: 'gitea', gitea: { ...ok, repo: 'a/b' } }), /gitea\.repo/);
+  assert.throws(() => parseConfig({ tracker: 'gitea', gitea: { ...ok, token: 'x' } }), /Unknown gitea key "token".*story secret set gitea/s);
+});
+
+test('gitea can sync, and push is allowed for it', () => {
+  const c = parseConfig({ tracker: 'gitea', sync: 'ask', gitea: { baseUrl: 'https://g.example', owner: 'o', repo: 'r' } });
+  assert.equal(c.sync, 'ask');
+  assert.doesNotThrow(() => pushPolicy(c));
 });
 
 test('rejects unknown trackers, bad prefixes, and nonsense team numbers', () => {
@@ -76,8 +96,8 @@ test('sync accepts off, ask, and auto, and needs a pushable tracker', () => {
     assert.equal(parseConfig({ tracker: 'ado', sync, ado: { organization: 'o', project: 'p' } }).sync, sync);
   }
   assert.throws(() => parseConfig({ sync: 'always' }), /sync must be one of: off, ask, auto/);
-  assert.throws(() => parseConfig({ sync: 'auto' }), /sync "auto" needs tracker github or ado/);
-  assert.throws(() => parseConfig({ tracker: 'jira', sync: 'ask' }), /sync "ask" needs tracker github or ado/);
+  assert.throws(() => parseConfig({ sync: 'auto' }), /sync "auto" needs tracker github, ado, or gitea/);
+  assert.throws(() => parseConfig({ tracker: 'jira', sync: 'ask' }), /sync "ask" needs tracker github, ado, or gitea/);
 });
 
 test('pushPolicy explains why pushing is refused', () => {
@@ -102,5 +122,6 @@ test('export format follows the tracker', () => {
   assert.equal(defaultExportFormat(parseConfig({})), 'markdown');
   assert.equal(defaultExportFormat(parseConfig({ tracker: 'github', github: { repo: 'a/b' } })), 'github');
   assert.equal(defaultExportFormat(parseConfig({ tracker: 'ado', ado: { organization: 'o', project: 'p' } })), 'ado');
+  assert.equal(defaultExportFormat(parseConfig({ tracker: 'gitea', gitea: { baseUrl: 'https://g.example', owner: 'o', repo: 'r' } })), 'gitea');
   assert.equal(defaultExportFormat(parseConfig({ tracker: 'jira' })), 'markdown');
 });

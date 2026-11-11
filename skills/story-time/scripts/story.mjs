@@ -21,6 +21,7 @@ import { selectDecisionEngine } from './src/application/select-decision-engine.m
 import { FileSecretStore, ensureGitignore } from './src/adapters/file-secret-store.mjs';
 import { GitHubIssuesGateway } from './src/adapters/github-issues-gateway.mjs';
 import { AdoBoardsGateway } from './src/adapters/ado-boards-gateway.mjs';
+import { GiteaIssuesGateway } from './src/adapters/gitea-issues-gateway.mjs';
 import { processExec } from './src/adapters/process-exec.mjs';
 import { pushStories } from './src/application/push-stories.mjs';
 import { renderCard, renderCommand } from './src/domain/export.mjs';
@@ -45,12 +46,12 @@ Commands:
   note   <id> "what changed and why"       Log a prose edit in the changelog
   split  <id> --from children.json         Split into children (saga: all or nothing)
   stats  [--stale-days 30]                 Backlog health summary
-  export <id> [--format github|ado|markdown] [--command]
+  export <id> [--format github|ado|gitea|markdown] [--command]
                                            Copy-paste card for your tracker, or the gh/az create command
   push   <id...> | --all [--dry-run]       Create/update items in GitHub or ADO (only if sync is not "off")
   judge  [id...]                           Judgement calls: need vs solution, real benefit, testable criteria,
                                            type, size, split pattern. Jev with a key, code heuristics without
-  secret set|status|clear <github|ado|jev> Store a token or API key in .story-time/.<name>.env (0600, git-ignored)
+  secret set|status|clear <github|ado|gitea|jev> Store a token or API key in .story-time/.<name>.env (0600, git-ignored)
   machine check|criteria|diagram <file>    Check a state machine (model/state/<entity>.toml), or print its
                                            Given/When/Then criteria or its Mermaid diagram (exit 1 on defects)
   table  check|criteria <file>             Check a decision table for gaps and overlaps, or print its criteria
@@ -255,7 +256,7 @@ const commands = {
       out(f, Object.fromEntries(rows), () => table(['Tracker', 'Token'], rows));
       return;
     }
-    if (!['set', 'clear'].includes(action) || !tracker) throw new UsageError('Usage: story secret set|clear <github|ado|jev>, or story secret status');
+    if (!['set', 'clear'].includes(action) || !tracker) throw new UsageError('Usage: story secret set|clear <github|ado|gitea|jev>, or story secret status');
     if (!SECRET_SPECS[tracker]) throw new UsageError(`There is no token support for "${tracker}". Use: ${Object.keys(SECRET_SPECS).join(', ')}.`);
     if (action === 'clear') {
       const removed = await store.clear(tracker);
@@ -408,6 +409,11 @@ function reportDefects(flags, name, defects, summary) {
 async function makeGateway(ctx) {
   const { config } = ctx;
   const store = new FileSecretStore(join(ctx.root, CONFIG_DIR));
+  if (config.tracker === 'gitea') {
+    // Like gh/az, an already-set variable (CI, a shell export) wins over the file.
+    const token = process.env[SECRET_SPECS.gitea.variable] || (await store.load('gitea'));
+    return new GiteaIssuesGateway({ gitea: config.gitea, token });
+  }
   const env = tokenEnv(config.tracker, { file: await store.load(config.tracker) });
   if (config.tracker === 'github') return new GitHubIssuesGateway({ repo: config.github.repo, exec: processExec, env });
   return new AdoBoardsGateway({ ado: config.ado, exec: processExec, env });
