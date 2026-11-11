@@ -112,3 +112,14 @@ test('commands need the tracker coordinates from config', () => {
   assert.throws(() => renderCommand(ready(), 'ado', { config: parseConfig({}) }), /ado\.organization/);
   assert.throws(() => renderCommand(ready(), 'markdown', { config: parseConfig({}) }), /no create command/);
 });
+
+test('gitea card reuses the github markdown body and labels', () => {
+  const gh = renderCard(ready(), 'github');
+  const card = renderCard(ready(), 'gitea');
+  assert.equal(card.format, 'gitea');
+  assert.equal(card.title, gh.title);
+  assert.deepEqual(card.labels, gh.labels);
+  assert.equal(card.body, gh.body);
+  assert.equal(card.text, gh.text);
+  assert.ok(Object.keys(EXPORTERS).includes('gitea'));
+});

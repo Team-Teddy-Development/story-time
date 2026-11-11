@@ -12,6 +12,7 @@ const notTracked = async () => false;
 test('secret specs name one env file and variable per tracker', () => {
   assert.deepEqual(SECRET_SPECS.github, { file: '.github.env', variable: 'GH_TOKEN' });
   assert.deepEqual(SECRET_SPECS.ado, { file: '.ado.env', variable: 'AZURE_DEVOPS_EXT_PAT' });
+  assert.deepEqual(SECRET_SPECS.gitea, { file: '.gitea.env', variable: 'GITEA_TOKEN' });
 });
 
 test('parseEnvFile reads KEY=value lines, ignoring comments and quotes', () => {
