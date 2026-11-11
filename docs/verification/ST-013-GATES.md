@@ -26,6 +26,6 @@ Scope: repair runtime checkout selection and give each of the seven owner-named 
   EVIDENCE: ST-013.md names all seven causes and signals. Every named fingerprint now has explicit kind resolve / resolveKind filed evidence. Five have a direct source repair; the unsupported fixed attestation remains a filed gap. The other two retain operational and expected-draft evidence, not fabricated code fixes.
 
 - [ ] G6: Repair is committed, reviewed, and integrated under required CI and repository policy, with owned worktree and background process cleanup.
-  EVIDENCE: pending exact-head PR, CI, Jev evidence review, and cleanup.
+  EVIDENCE: PR35 merged cbe0e82826cbad3bcd2b9a231b4dac256c08e5d7 after nine checks passed at c99ca8356e19aa6115126981d03450034b83263e; independent Jev source review supported. Merged source rebuilt with 11 tests passing from correct checkout and stale anchor. This committed snapshot precedes acceptance bookkeeping and owned-worktree cleanup. Final release and real-artifact proof tool records complete this manual gate; do not treat this snapshot as an automatic checker certificate.
 
 Checks are written by this repair run. Rust owns new verification logic. Exact observed commands and results are recorded in ST-013.md; this file does not claim unlazy checker-generated evidence.
