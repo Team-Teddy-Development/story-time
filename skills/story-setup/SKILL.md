@@ -1,6 +1,6 @@
 ---
 name: story-setup
-description: One-time project setup for story-time. Detects the repo, task tracker (GitHub Issues, Azure DevOps, Jira, Linear, or plain files), tech stack, and test tooling, asks only what it cannot detect (velocity, WIP limit, process template, Definition of Done, whether to push to the tracker automatically), sets up tracker auth safely, and writes .story-time/settings.json, which every other story-time skill reads. Use when the user says "set up story time", "configure story-time", starts using story-time in a new repo, or when `story config` shows no config file.
+description: One-time project setup for story-time. Detects the repo, task tracker (Gitea, GitHub Issues, Azure DevOps, Jira, Linear, or plain files), tech stack, and test tooling, asks only what it cannot detect (velocity, WIP limit, process template, Definition of Done, whether to push to the tracker automatically), sets up tracker auth safely, and writes .story-time/settings.json, which every other story-time skill reads. Use when the user says "set up story time", "configure story-time", starts using story-time in a new repo, or when `story config` shows no config file.
 ---
 
 # Story Setup
@@ -8,6 +8,38 @@ description: One-time project setup for story-time. Detects the repo, task track
 `story` means the CLI from the **story-time** skill. Setup writes
 `.story-time/settings.json` at the project root. Commit it, so the whole team and
 every agent use the same settings.
+
+## Gitea setup branch
+
+Read `.story-time/settings.json` directly before running `story config`.
+If `tracker` is `gitea`, or the selected tracker is Gitea, follow
+[Gitea Story Time](../../docs/gitea-story-time.md) instead of steps 1 through 6.
+That reference owns the settings schema, Rust binary installation, authentication,
+explicit-path dry run, push, and failure recovery. For a copied skill
+installation, locate the Story Time source checkout to read that reference.
+The installer copies skills only. From the checkout, install the binary with
+`cargo install --offline --path gitea-gateway`.
+
+Write `tracker: "gitea"`, `sync`, and `gitea: {baseUrl, owner, repo}` directly
+as JSON. For example:
+
+```json
+{"tracker":"gitea","sync":"ask","gitea":{"baseUrl":"https://gitea.example.com","owner":"acme","repo":"shop"}}
+```
+
+Preserve unrelated settings. Use only `GITEA_TOKEN` in the environment.
+Run `gitea-gateway story-push --root <project> --dry-run backlog/ST-001.md`.
+For an authorized real push, remove `--dry-run`. Repeat pushes use the saved
+issue number. Terminal unlinked stories are skipped; linked terminal stories
+are closed. Preserve `remote` and `remote_url` when editing stories.
+Complete setup when the Rust dry run parses and renders one actual story
+without credentials or file changes. Report that this checks local setup,
+not authentication or live server compatibility. An authorized push verifies
+the issue and local `remote` / `remote_url` links.
+
+The historical Node `story init`, `story config`, `story secret`, and
+`story push` commands reject Gitea. The following setup steps apply only to
+other trackers and remain outside the Gitea Rust conversion scope.
 
 ## 1. Check for an existing config
 

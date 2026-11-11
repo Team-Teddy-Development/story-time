@@ -1,6 +1,6 @@
 # Gitea CLI reference
 
-`gitea-gateway` creates, updates, and closes Gitea issues through the recovered Rust library. It is a standalone executable, not a Story Time tracker adapter.
+`gitea-gateway` creates, updates, and closes Gitea issues through Rust. Its `story-push` command also reads Story Time settings and Markdown, pushes issues, and saves local links. Use [Gitea Story Time](gitea-story-time.md) for that active flow. This reference describes the retained raw JSON commands.
 
 ## Build and command interface
 
@@ -11,7 +11,7 @@ CARGO_TARGET_DIR=/tmp/story-gitea-cli-target cargo build --offline --manifest-pa
 /tmp/story-gitea-cli-target/debug/gitea-gateway --help
 ```
 
-The executable accepts exactly one command, `create`, `update`, or `close`. `--help` and `-h` print plain text without credentials or stdin. Other argument lists return `invalid_command` without reading stdin.
+The raw JSON interface accepts one command, `create`, `update`, or `close`. `--help` and `-h` print plain text without credentials or stdin. Other argument lists return `invalid_command` without reading stdin.
 
 Each operation reads one JSON object from stdin through EOF. The maximum input size is 1 MiB, including whitespace. Unknown fields, duplicate fields, invalid UTF-8, multiple JSON values, and incorrect field types return `invalid_input`.
 
@@ -85,7 +85,9 @@ CARGO_TARGET_DIR=/tmp/story-gitea-cli-target cargo test --offline --manifest-pat
 
 The Rust tests launch the actual compiled executable, pipe stdin, and inspect stdout, stderr, exit status, and HTTP requests. A local Rust TCP fixture verifies all three operations, authentication, path prefixes, response parsing, and redaction. This is not a live Gitea compatibility test. The existing library tests also cover unsafe configuration and bounded responses.
 
-## Integration status and Rust audit
+## Historical raw-command integration audit
+
+The following audit records the earlier raw-command foundation. Its missing story rendering, settings, and link integration are now implemented by the direct Rust `story-push` path. See the [current scope audit](gitea-story-time.md#verification-and-rust-conversion-gate) for active status. The older Node entry point still does not support Gitea and is not used for this flow. Preserve the remaining record as historical evidence.
 
 The scoped CLI execution chain is Rust throughout. The broader Story Time Rust conversion gate is **UNMET**.
 

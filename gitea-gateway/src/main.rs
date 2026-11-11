@@ -7,7 +7,7 @@ use std::{
 };
 
 const MAX_INPUT: u64 = 1024 * 1024;
-const HELP: &str = "Gitea issue gateway\n\nUsage: gitea-gateway <create|update|close>\n\nRead one JSON object from stdin. Set credentials only through GITEA_TOKEN.\nAll requests require base_url, owner, and repo.\ncreate: title, optional body (default empty).\nupdate: number, optional title and body (at least one required).\nclose: number.\nResponses: {\"status\":\"ok\",\"issue\":{...}} or {\"status\":\"error\",\"code\":\"...\"}.\nSee docs/gitea-cli.md for examples and error codes.\n";
+const HELP: &str = "Gitea issue gateway\n\nUsage: gitea-gateway <create|update|close>\n       gitea-gateway story-push [--root PATH] [--dry-run] PATH...\n\nStory push reads .story-time/settings.json and explicit Markdown paths relative to root.\nDry runs render plans without credentials, requests, or writes. Explicit push supports sync ask and auto; off blocks writes.\n\nRead one JSON object from stdin. Set credentials only through GITEA_TOKEN.\nAll requests require base_url, owner, and repo.\ncreate: title, optional body (default empty).\nupdate: number, optional title and body (at least one required).\nclose: number.\nResponses: {\"status\":\"ok\",\"issue\":{...}} or {\"status\":\"error\",\"code\":\"...\"}.\nSee docs/gitea-cli.md for examples and error codes.\n";
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -162,8 +162,77 @@ fn run(command: &str) -> Output {
     }
 }
 
+fn story_push(args: &[std::ffi::OsString]) -> ExitCode {
+    let mut root = std::path::PathBuf::from(".");
+    let mut paths = Vec::new();
+    let mut dry_run = false;
+    let mut index = 0;
+    let mut valid = true;
+    while index < args.len() {
+        match args[index].to_str() {
+            Some("--root") if index + 1 < args.len() => {
+                index += 1;
+                root = (&args[index]).into();
+            }
+            Some("--dry-run") => dry_run = true,
+            Some(value) if value.starts_with('-') => {
+                valid = false;
+                break;
+            }
+            _ => paths.push(std::path::PathBuf::from(&args[index])),
+        }
+        index += 1;
+    }
+    let mut output = if valid {
+        match gitea_gateway::story::prepare(&root, &paths) {
+            Ok((settings, plan)) => {
+                serde_json::to_value(gitea_gateway::story::push(settings, plan, dry_run)).unwrap()
+            }
+            Err(code) => serde_json::json!({"status":"error", "code":code}),
+        }
+    } else {
+        serde_json::json!({"status":"error", "code":"invalid_arguments"})
+    };
+    fn redact(value: &mut serde_json::Value, token: &str) {
+        match value {
+            serde_json::Value::String(s) => *s = s.replace(token, "[REDACTED]"),
+            serde_json::Value::Array(items) => {
+                for item in items {
+                    redact(item, token);
+                }
+            }
+            serde_json::Value::Object(items) => {
+                for item in items.values_mut() {
+                    redact(item, token);
+                }
+            }
+            _ => {}
+        }
+    }
+    if !dry_run {
+        if let Ok(token) = env::var("GITEA_TOKEN") {
+            if !token.is_empty() {
+                redact(&mut output, &token);
+            }
+        }
+    }
+    let success = output["status"] == "ok";
+    let mut stdout = io::stdout().lock();
+    if serde_json::to_writer(&mut stdout, &output).is_err() || writeln!(stdout).is_err() {
+        return ExitCode::FAILURE;
+    }
+    if success {
+        ExitCode::SUCCESS
+    } else {
+        ExitCode::FAILURE
+    }
+}
+
 fn main() -> ExitCode {
     let args: Vec<_> = env::args_os().skip(1).collect();
+    if args.first().is_some_and(|s| s == "story-push") {
+        return story_push(&args[1..]);
+    }
     if args.len() == 1 && (args[0] == "--help" || args[0] == "-h") {
         return if io::stdout().lock().write_all(HELP.as_bytes()).is_ok() {
             ExitCode::SUCCESS

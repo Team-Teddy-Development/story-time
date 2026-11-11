@@ -7,7 +7,35 @@ use reqwest::{
 use serde::{Deserialize, Serialize};
 use std::{fmt, io::Read, net::IpAddr, time::Duration};
 
+pub mod story;
+
 const MAX_RESPONSE: u64 = 1024 * 1024;
+
+pub(crate) fn validate_base(base: &str) -> Result<Url, Error> {
+    let mut base = Url::parse(base).map_err(|_| Error::InvalidConfiguration)?;
+    if !base.username().is_empty()
+        || base.password().is_some()
+        || base.query().is_some()
+        || base.fragment().is_some()
+    {
+        return Err(Error::InvalidConfiguration);
+    }
+    let host = base.host_str().ok_or(Error::InvalidConfiguration)?;
+    let loopback = host
+        .trim_start_matches('[')
+        .trim_end_matches(']')
+        .parse::<IpAddr>()
+        .map(|ip| ip.is_loopback())
+        .unwrap_or(false);
+    if base.scheme() != "https" && !(base.scheme() == "http" && loopback) {
+        return Err(Error::InvalidConfiguration);
+    }
+    if !base.path().ends_with('/') {
+        let path = format!("{}/", base.path());
+        base.set_path(&path);
+    }
+    Ok(base)
+}
 
 #[derive(Debug, Clone, Serialize)]
 pub struct CreateIssue {
@@ -57,24 +85,7 @@ impl fmt::Debug for Gateway {
 }
 impl Gateway {
     pub fn new(base: &str, token: &str) -> Result<Self, Error> {
-        let mut base = Url::parse(base).map_err(|_| Error::InvalidConfiguration)?;
-        if !base.username().is_empty()
-            || base.password().is_some()
-            || base.query().is_some()
-            || base.fragment().is_some()
-        {
-            return Err(Error::InvalidConfiguration);
-        }
-        let host = base.host_str().ok_or(Error::InvalidConfiguration)?;
-        let loopback = host
-            .trim_start_matches('[')
-            .trim_end_matches(']')
-            .parse::<IpAddr>()
-            .map(|ip| ip.is_loopback())
-            .unwrap_or(false);
-        if base.scheme() != "https" && !(base.scheme() == "http" && loopback) {
-            return Err(Error::InvalidConfiguration);
-        }
+        let base = validate_base(base)?;
         if token.is_empty() {
             return Err(Error::InvalidConfiguration);
         }
@@ -90,10 +101,6 @@ impl Gateway {
             .timeout(Duration::from_secs(15))
             .build()
             .map_err(|_| Error::InvalidConfiguration)?;
-        if !base.path().ends_with('/') {
-            let path = format!("{}/", base.path());
-            base.set_path(&path);
-        }
         Ok(Self { client, base })
     }
     fn endpoint(&self, owner: &str, repo: &str, number: Option<u64>) -> Result<Url, Error> {
@@ -118,12 +125,12 @@ impl Gateway {
         }
         Ok(url)
     }
-    fn send<T: Serialize>(
+    fn send<T: Serialize, R: serde::de::DeserializeOwned>(
         &self,
         method: reqwest::Method,
         url: Url,
         payload: &T,
-    ) -> Result<Issue, Error> {
+    ) -> Result<R, Error> {
         let response = self
             .client
             .request(method, url)
