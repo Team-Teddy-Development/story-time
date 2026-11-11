@@ -6,6 +6,11 @@ use std::{
 
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
+    if matches!(args.as_slice(), [command, flag] if command == "init" && (flag == "--help" || flag == "-h"))
+    {
+        println!("Usage: story init [--from answers.json] [--force] [--config path] [--json]\n\nWrite validated project settings to .story-time/settings.json.\n\n  --from FILE    Read settings from a JSON file; defaults apply when omitted.\n  --force        Replace an existing settings file after validation.\n  --config PATH  Write settings to an explicit path.\n  --json         Print the effective settings as JSON.\n  -h, --help     Show this help without reading or writing project files.\n\nGitHub settings use github.repo as owner/repo, for example acme/shop.\nGitea settings use separate gitea.baseUrl, gitea.owner, and gitea.repo fields.\nHelp is native Rust. Other init operations use the configured retained CLI.");
+        return ExitCode::SUCCESS;
+    }
     if args.first().is_some_and(|s| s == "push") {
         return match story_time_native::push(&args[1..]) {
             Ok(output) => {
