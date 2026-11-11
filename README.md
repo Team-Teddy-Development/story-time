@@ -283,6 +283,13 @@ story init --from answers.json   # usually done for you by story-setup
 story config
 ```
 
+## Running a whole project on it
+
+[docs/playbook.md](docs/playbook.md) shows how to run a repository so that every change, by a
+person or an agent, starts as a story and ends with evidence. It covers the mandates to paste into
+`CLAUDE.md` or `AGENTS.md`, the CI checks that enforce them (`story-link`, `story-ids`), intake
+stories from feeder repositories, and how agents run batches against the backlog.
+
 ## Design
 
 The CLI under `skills/story-time/scripts/` is a small hexagonal codebase:
