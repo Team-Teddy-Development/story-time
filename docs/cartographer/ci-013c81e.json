@@ -1,0 +1,77 @@
+{
+  "headRefOid": "013c81efc2a730899baeaae5a52331eef06db656",
+  "mergeStateStatus": "BLOCKED",
+  "reviewDecision": "",
+  "statusCheckRollup": [
+    {
+      "__typename": "CheckRun",
+      "completedAt": "2026-11-11T19:42:39Z",
+      "conclusion": "SUCCESS",
+      "detailsUrl": "https://github.com/Team-Teddy-Development/story-time/actions/runs/43089701569/job/130763192663",
+      "name": "story-ids",
+      "startedAt": "2026-11-11T19:42:33Z",
+      "status": "COMPLETED",
+      "workflowName": "story-ids"
+    },
+    {
+      "__typename": "CheckRun",
+      "completedAt": "2026-11-11T19:42:45Z",
+      "conclusion": "SUCCESS",
+      "detailsUrl": "https://github.com/Team-Teddy-Development/story-time/actions/runs/43089701582/job/130763193231",
+      "name": "story-link",
+      "startedAt": "2026-11-11T19:42:33Z",
+      "status": "COMPLETED",
+      "workflowName": "story-link"
+    },
+    {
+      "__typename": "CheckRun",
+      "completedAt": "2026-11-11T19:44:38Z",
+      "conclusion": "SUCCESS",
+      "detailsUrl": "https://github.com/Team-Teddy-Development/story-time/actions/runs/43089975540/job/130764143994",
+      "name": "story-link",
+      "startedAt": "2026-11-11T19:44:21Z",
+      "status": "COMPLETED",
+      "workflowName": "story-link"
+    },
+    {
+      "__typename": "CheckRun",
+      "completedAt": "2026-11-11T19:42:45Z",
+      "conclusion": "SUCCESS",
+      "detailsUrl": "https://github.com/Team-Teddy-Development/story-time/actions/runs/43089701568/job/130763192649",
+      "name": "test (20)",
+      "startedAt": "2026-11-11T19:42:33Z",
+      "status": "COMPLETED",
+      "workflowName": "test"
+    },
+    {
+      "__typename": "CheckRun",
+      "completedAt": "2026-11-11T19:42:41Z",
+      "conclusion": "SUCCESS",
+      "detailsUrl": "https://github.com/Team-Teddy-Development/story-time/actions/runs/43089701568/job/130763192703",
+      "name": "test (22)",
+      "startedAt": "2026-11-11T19:42:33Z",
+      "status": "COMPLETED",
+      "workflowName": "test"
+    },
+    {
+      "__typename": "CheckRun",
+      "completedAt": "2026-11-11T19:42:49Z",
+      "conclusion": "SUCCESS",
+      "detailsUrl": "https://github.com/Team-Teddy-Development/story-time/actions/runs/43089701568/job/130763192270",
+      "name": "cartographer-preflight",
+      "startedAt": "2026-11-11T19:42:33Z",
+      "status": "COMPLETED",
+      "workflowName": "test"
+    },
+    {
+      "__typename": "CheckRun",
+      "completedAt": "2026-11-11T19:42:38Z",
+      "conclusion": "SUCCESS",
+      "detailsUrl": "https://github.com/Team-Teddy-Development/story-time/actions/runs/43089701568/job/130763192770",
+      "name": "story-policy-tests",
+      "startedAt": "2026-11-11T19:42:33Z",
+      "status": "COMPLETED",
+      "workflowName": "test"
+    }
+  ]
+}

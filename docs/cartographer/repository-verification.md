@@ -28,6 +28,10 @@ The predicate mutation experiment initially exposed a missing per-clause asserti
 
 The unlazy gate checker re-ran G1 and G4 against the reconciled tree. It recorded five met gates and one unmet gate, G5, for live authenticated portfolio and worker execution. Exit 1 was expected and asserted; it was not changed to a pass. The real stdio MCP response is [live-preflight.jsonl](live-preflight.jsonl), which reports measured production blockers as data.
 
+## Remote CI readback
+
+At implementation merge `013c81efc2a730899baeaae5a52331eef06db656`, all six check contexts passed: `test (20)`, `test (22)`, `story-policy-tests`, `cartographer-preflight`, `story-ids`, and `story-link`. The PR-body edit triggered a second successful story-link run. The actual metadata is `ci-013c81e.json`. The main test run is https://github.com/Team-Teddy-Development/story-time/actions/runs/43089701568. GitHub reports merge state BLOCKED because the required code-owner/team review is still absent. Final documentation updates require their own normal CI and do not change the tested implementations.
+
 ## Required GitHub integration handoff
 
 The repository's server-side rules require one code-owner/team review, a last-push approval, resolved review threads, and successful required checks. This run does not alter those rules or use an administrator bypass. Jev's bounded implementation review is recorded in GATES.md, but Jev cannot supply a separate GitHub account.
