@@ -23,7 +23,7 @@ pub struct UpdateIssue {
     pub body: Option<String>,
 }
 
-#[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
 pub struct Issue {
     pub number: u64,
     pub title: String,
