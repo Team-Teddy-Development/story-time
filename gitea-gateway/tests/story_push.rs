@@ -542,12 +542,10 @@ fn paginated_labels_preserve_team_ids_and_remove_all_stale_managed_labels() {
         json!({"id":205,"name":"spike"}),
         json!({"id":206,"name":"chore"}),
     ]);
-    let current_second = current.split_off(50);
     let responses = vec![
         (200, json!(repository)),
         (200, repository_labels()),
         (200, json!(current)),
-        (200, json!(current_second)),
         (200, issue()),
         (200, json!([])),
     ];
@@ -557,12 +555,7 @@ fn paginated_labels_preserve_team_ids_and_remove_all_stale_managed_labels() {
     let output = result(invoke(&root, &["backlog/ST-001.md"], Some(TOKEN)), true);
     assert_eq!(output["plan"][0]["completed"], true);
     let requests = server.join().unwrap();
-    for (index, resource, page) in [
-        (0, "labels", 1),
-        (1, "labels", 2),
-        (2, "issues/7/labels", 1),
-        (3, "issues/7/labels", 2),
-    ] {
+    for (index, resource, page) in [(0, "labels", 1), (1, "labels", 2)] {
         assert_eq!(
             requests[index].0,
             format!("GET /prefix/api/v1/repos/owner/repo/{resource}?limit=50&page={page} HTTP/1.1")
@@ -571,11 +564,15 @@ fn paginated_labels_preserve_team_ids_and_remove_all_stale_managed_labels() {
     let mut expected = vec![11, 12, 13, 14];
     expected.extend(100..150);
     assert_eq!(
-        requests[5].0,
+        requests[2].0,
+        "GET /prefix/api/v1/repos/owner/repo/issues/7/labels HTTP/1.1"
+    );
+    assert_eq!(
+        requests[4].0,
         "PUT /prefix/api/v1/repos/owner/repo/issues/7/labels HTTP/1.1"
     );
-    assert_eq!(requests[5].1, json!({"labels":expected}));
-    assert!(requests[4].1.get("labels").is_none());
+    assert_eq!(requests[4].1, json!({"labels":expected}));
+    assert!(requests[3].1.get("labels").is_none());
 }
 
 #[test]

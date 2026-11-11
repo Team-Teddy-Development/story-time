@@ -127,6 +127,19 @@ fn labels_url(
     Ok(url)
 }
 
+fn read_labels(gateway: &Gateway, url: Url) -> Result<Vec<Label>, &'static str> {
+    let labels: Vec<Label> = gateway
+        .send(reqwest::Method::GET, url, &())
+        .map_err(error_code)?;
+    if labels
+        .iter()
+        .any(|label| label.id == 0 || label.name.is_empty())
+    {
+        return Err("invalid_response");
+    }
+    Ok(labels)
+}
+
 fn list_labels(gateway: &Gateway, url: Url) -> Result<Vec<Label>, &'static str> {
     let mut labels = Vec::new();
     for page in 1..=1000 {
@@ -134,15 +147,7 @@ fn list_labels(gateway: &Gateway, url: Url) -> Result<Vec<Label>, &'static str> 
         url.query_pairs_mut()
             .append_pair("limit", "50")
             .append_pair("page", &page.to_string());
-        let batch: Vec<Label> = gateway
-            .send(reqwest::Method::GET, url, &())
-            .map_err(error_code)?;
-        if batch
-            .iter()
-            .any(|label| label.id == 0 || label.name.is_empty())
-        {
-            return Err("invalid_response");
-        }
+        let batch = read_labels(gateway, url)?;
         let finished = batch.len() < 50;
         labels.extend(batch);
         if finished {
@@ -597,7 +602,7 @@ pub fn push(settings: Settings, plan: Vec<PushPlan>, dry_run: bool) -> PushOutpu
             )?;
             if plan.action == Action::Update {
                 labels.extend(
-                    list_labels(&gateway, labels_url(&gateway, &settings, plan.remote)?)?
+                    read_labels(&gateway, labels_url(&gateway, &settings, plan.remote)?)?
                         .into_iter()
                         .filter(|label| !label.managed())
                         .map(|label| label.id),
