@@ -2,6 +2,10 @@ include!("../../../tests/empty-push.rs");
 
 use serde_json::{json, Value};
 
+fn native_bin() -> std::ffi::OsString {
+    std::env::var_os("STORY_TIME_TEST_BIN").unwrap_or_else(|| env!("CARGO_BIN_EXE_story").into())
+}
+
 fn set_config(fixture: &Fixture, value: Value) {
     fs::write(
         fixture.0.join(".story-time/settings.json"),
@@ -23,7 +27,7 @@ fn put_story(fixture: &Fixture, id: &str, status: &str, remote: Option<u64>) {
 #[test]
 fn native_empty_push_runs_without_node_on_path() {
     let f = Fixture::new("ask");
-    let output = Command::new(env!("CARGO_BIN_EXE_story"))
+    let output = Command::new(native_bin())
         .args(["push", "--all", "--dry-run", "--json"])
         .current_dir(&f.0)
         .env_clear()
@@ -173,7 +177,7 @@ fn gitea_cli_create_links_then_update_reuses_issue_without_node() {
         requests
     });
     let run = || {
-        Command::new(env!("CARGO_BIN_EXE_story"))
+        Command::new(native_bin())
             .args(["push", "ST-001", "--json"])
             .current_dir(&f.0)
             .env_clear()

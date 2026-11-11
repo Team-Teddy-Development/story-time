@@ -63,12 +63,16 @@ The Rust conversion gate applies to the active push chain, not the whole reposit
 | Failure rollback preserves local files and reports compensation failures | Rust saga regression with create failure and concurrent edits | PASS locally |
 | Rust conversion audit has no active in-scope non-Rust implementation | Scope audit above; Node-free CLI tests | PASS locally |
 | Native and retained reference suites pass | 28 Rust tests; 408 existing Node reference tests | PASS locally |
-| Installed binary, source review, remote CI, and integration | Release handoff records exact commit, installation, PR, and outcomes | UNMET until release handoff records them |
+| Installed binary and independent source review | Installed ARM64 ELF matches release SHA256; original three-test regression passes against it; Jev actual-source review noul 0.90 | PASS locally |
+| Real tracker synchronization | Installed native push creates legitimate tracking issue ST-003 / GitHub #18; independent readback confirms it | PASS |
+| Exact-head remote CI and required repository review/integration | Release handoff and ST-003 record the PR and outcomes; required GitHub code-owner review cannot be replaced by a local score | UNMET until remote results/review are recorded |
 
 ## Root cause and lesson
 
 `es_9c55035c0ff8` is a selector-validation error, not a tracker-authentication error. The old handler treats all empty target arrays as missing arguments. The replacement validates whether a selector exists separately from the number of selected stories. It completes the plan before constructing a gateway.
 
-The regression was committed red before the replacement. Its assertions remain unchanged; its invocation now selects the compiled native executable when Cargo supplies it or `STORY_TIME_TEST_BIN` is set. Without either, the standalone regression can still reproduce the historical Node defect. Do not mark a session follow-up as a source fix. Attach the implementation commit and actual native CLI evidence when resolving the fingerprint.
+The regression was committed red before the replacement. Native source correction is `cb9f9eeaa4e122ee7da566a7bfa040b3e24e220f`. The installed release SHA256 is `7982eca493c90611588a51c155cbd5ee8adf70ae73e78d56f432754e53e87f46`. Its assertions remain unchanged; its invocation now selects the compiled native executable when Cargo supplies it or `STORY_TIME_TEST_BIN` is set. Without either, the standalone regression can still reproduce the historical Node defect. Do not mark a session follow-up as a source fix. Attach the implementation commit and actual native CLI evidence when resolving the fingerprint.
+
+The sentinel `fixed` resolver does not currently accept the original CLI or Rust RED evidence: it returns `verification test is not present in the original absolute failing command`. Do not claim a successful ledger resolution. The implementation and installed behavior have separate direct evidence in ST-003; previous session-task clearances remain history, not fix attestations.
 
 Remote updates retain the previous contract: they are not automatically reversible. New remote creates and local links are compensated in reverse order. Report failed compensations instead of hiding them or treating a partial remote update as a successful transaction.
