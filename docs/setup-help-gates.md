@@ -1,6 +1,6 @@
 # Setup help and schema gates
 
-Scope: ST-005, es_a8170328dbb7, and es_fda112102cf8.
+Scope: ST-012 (formerly this PR's ST-005, issue #23), es_a8170328dbb7, and es_fda112102cf8.
 
 ## Contract
 

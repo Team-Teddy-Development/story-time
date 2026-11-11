@@ -8,7 +8,7 @@
 
 RED test commit: `2c08a7d118bd646f2630a638f089cdda5ac3450b`.
 Source fix commit: `815925598286a4b2184054745686e1d714a1fcc5`.
-Story: ST-005, https://github.com/Team-Teddy-Development/story-time/issues/23.
+Story: ST-012, formerly this PR's ST-005, https://github.com/Team-Teddy-Development/story-time/issues/23. Renumbered only to preserve the unrelated ST-005 on main and ST-006 through ST-011 reserved by PR #32; original task history and evidence remain authoritative.
 
 ## Direct verification
 
