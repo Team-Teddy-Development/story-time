@@ -1,5 +1,25 @@
 use std::{fs, path::Path, process::Command, sync::OnceLock};
 
+fn repository_root() -> &'static Path {
+    static ROOT: OnceLock<std::path::PathBuf> = OnceLock::new();
+    ROOT.get_or_init(|| {
+        let source = Path::new(file!());
+        let source = if source.is_absolute() {
+            source.to_path_buf()
+        } else {
+            Path::new(env!("PWD")).join(source)
+        };
+        source
+            .parent()
+            .unwrap()
+            .parent()
+            .unwrap()
+            .canonicalize()
+            .expect("compiled source checkout must still exist")
+    })
+    .as_path()
+}
+
 fn checker() -> &'static Path {
     static BINARY: OnceLock<std::path::PathBuf> = OnceLock::new();
     BINARY
@@ -14,6 +34,7 @@ fn checker() -> &'static Path {
                     "-o",
                 ])
                 .arg(&binary)
+                .current_dir(repository_root())
                 .output()
                 .unwrap();
             assert!(
@@ -32,6 +53,7 @@ fn link(body: &str, incident: bool) -> std::process::Output {
         .env("REPO", "Team-Teddy-Development/story-time")
         .env("PR_BODY", body)
         .env("IS_INCIDENT", incident.to_string())
+        .current_dir(repository_root())
         .output()
         .unwrap()
 }
@@ -48,12 +70,12 @@ fn repository_has_github_dogfooding_contract() {
         "AGENTS.md",
     ] {
         assert!(
-            Path::new(path).is_file(),
+            repository_root().join(path).is_file(),
             "missing dogfooding artifact: {}",
             path
         );
     }
-    let ignore = fs::read_to_string(".story-time/.gitignore").unwrap();
+    let ignore = fs::read_to_string(repository_root().join(".story-time/.gitignore")).unwrap();
     assert!(ignore.lines().any(|line| line == "*.env"));
 }
 
@@ -116,6 +138,36 @@ fn fixture(name: &str) -> Fixture {
     git(&path, &["commit", "-q", "--allow-empty", "-m", "Initial"]);
     Fixture(path)
 }
+#[test]
+fn contract_suite_uses_source_checkout_from_unrelated_directory() {
+    let unrelated = fixture("unrelated-cwd");
+    let result = Command::new(std::env::current_exe().unwrap())
+        .args([
+            "--skip",
+            "contract_suite_uses_source_checkout_from_unrelated_directory",
+            "--test-threads=1",
+        ])
+        .current_dir(&unrelated.0)
+        .output()
+        .unwrap();
+    assert!(
+        result.status.success(),
+        "contract suite selected the caller directory instead of its source checkout:\n{}\n{}",
+        String::from_utf8_lossy(&result.stdout),
+        String::from_utf8_lossy(&result.stderr)
+    );
+    let output = String::from_utf8_lossy(&result.stdout);
+    for name in [
+        "repository_has_github_dogfooding_contract",
+        "setup_defaults_to_explicit_auto_without_changing_existing_configs",
+        "cartographer_preparation_keeps_distinct_story_ids_and_no_runtime_authority",
+        "real_cli_rejects_missing_and_undeclared_stories",
+        "real_cli_rejects_a_story_added_independently_to_the_base_branch",
+    ] {
+        assert!(output.contains(&format!("test {name} ... ok")), "{output}");
+    }
+}
+
 fn ids(dir: &Path) -> std::process::Output {
     let head = git(dir, &["rev-parse", "HEAD"]);
     Command::new(checker())
@@ -171,6 +223,7 @@ fn real_cli_rejects_a_story_added_independently_to_the_base_branch() {
 fn story_cli_reads_auto_configuration_without_weakening_verification() {
     let result = Command::new("node")
         .args(["skills/story-time/scripts/story.mjs", "config", "--json"])
+        .current_dir(repository_root())
         .env_remove("STORY_TIME_CONFIG")
         .output()
         .unwrap();
@@ -200,7 +253,7 @@ fn story_cli_reads_auto_configuration_without_weakening_verification() {
 
 #[test]
 fn setup_defaults_to_explicit_auto_without_changing_existing_configs() {
-    let setup = fs::read_to_string("skills/story-setup/SKILL.md").unwrap();
+    let setup = fs::read_to_string(repository_root().join("skills/story-setup/SKILL.md")).unwrap();
     assert!(setup.contains("`auto` (the default)"));
     assert!(setup.contains("For Jira, Linear, or files, sync is always `off`."));
     assert!(setup.contains("Preserve an existing explicit sync policy"));
@@ -208,16 +261,14 @@ fn setup_defaults_to_explicit_auto_without_changing_existing_configs() {
     assert!(!setup.contains("`off` (the default)"));
     assert!(!setup.contains("\"sync\": \"ask\""));
     assert!(!setup.contains("\"sync\":\"ask\""));
-    let gitea = fs::read_to_string("docs/gitea-story-time.md").unwrap();
+    let gitea = fs::read_to_string(repository_root().join("docs/gitea-story-time.md")).unwrap();
     assert!(gitea.contains("\"sync\": \"auto\""));
     assert!(gitea.contains("Missing `sync` means `off`."));
 }
 
 #[test]
 fn real_init_saves_setup_sync_modes_for_each_tracker() {
-    let script = std::env::current_dir()
-        .unwrap()
-        .join("skills/story-time/scripts/story.mjs");
+    let script = repository_root().join("skills/story-time/scripts/story.mjs");
     for (name, answers, mode) in [
         (
             "github",
@@ -303,12 +354,14 @@ fn real_init_saves_setup_sync_modes_for_each_tracker() {
 
 #[test]
 fn cartographer_preparation_keeps_distinct_story_ids_and_no_runtime_authority() {
-    let bootstrap = fs::read_to_string("backlog/ST-001.md").unwrap();
+    let bootstrap = fs::read_to_string(repository_root().join("backlog/ST-001.md")).unwrap();
     assert!(bootstrap.contains("title: Track our own feature work through GitHub stories"));
-    let onboarding = fs::read_to_string("backlog/ST-002.md").unwrap();
+    let onboarding = fs::read_to_string(repository_root().join("backlog/ST-002.md")).unwrap();
     assert!(onboarding.contains("id: ST-002\n"));
     assert!(onboarding.contains("Given operator-published admission"));
-    let binding = fs::read_to_string("docs/cartographer/project-binding.json").unwrap();
+    let binding =
+        fs::read_to_string(repository_root().join("docs/cartographer/project-binding.json"))
+            .unwrap();
     assert!(binding.contains("\"onboardingStory\": \"ST-002\""));
     for field in [
         "authorizesRuntimeActivation",
@@ -324,6 +377,7 @@ fn cartographer_preparation_keeps_distinct_story_ids_and_no_runtime_authority() 
             "ST-002",
             "--json",
         ])
+        .current_dir(repository_root())
         .env_remove("STORY_TIME_CONFIG")
         .output()
         .unwrap();

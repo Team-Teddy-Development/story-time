@@ -33,7 +33,7 @@ Create or edit `<project>/.story-time/settings.json` as JSON. Preserve unrelated
 }
 ```
 
-`baseUrl` is the server root, optionally with a deployment path prefix, not an `/api/v1` URL. HTTPS is required except for literal loopback IP addresses. URL credentials, queries, and fragments are rejected. Owner and repository names accept ASCII letters, digits, `.`, `_`, and `-`, except the names `.` and `..`.
+`baseUrl` is the server root, optionally with a deployment path prefix, not an `/api/v1` URL. HTTPS is required except for literal loopback, RFC1918 IPv4 private, or IPv6 unique-local (`fc00::/7`) addresses. HTTP sends credentials and story content in plaintext; use it only on a trusted LAN. Hostnames, public IP addresses, link-local addresses, and IPv4-mapped IPv6 addresses do not qualify for HTTP. URL credentials, queries, and fragments are rejected. Owner and repository names accept ASCII letters, digits, `.`, `_`, and `-`, except the names `.` and `..`.
 
 Setup writes `sync: "auto"` for a new project unless the owner selects another mode. Preserve an existing explicit policy.
 

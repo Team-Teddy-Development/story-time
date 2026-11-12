@@ -131,6 +131,81 @@ fn rejects_unsafe_configuration_and_redacts_debug() {
 }
 
 #[test]
+fn http_private_literal_boundaries_are_accepted() {
+    let bases = [
+        "http://10.0.0.0",
+        "http://10.255.255.255",
+        "http://172.16.0.0",
+        "http://172.31.255.255",
+        "http://192.168.0.0",
+        "http://192.168.255.255",
+        "http://192.168.1.56:30003/prefix",
+        "http://[fc00::]",
+        "http://[fdff:ffff:ffff:ffff:ffff:ffff:ffff:ffff]",
+        "http://[fd12:3456:789a::56]:30003/prefix",
+        "http://127.0.0.1",
+        "http://127.255.255.255",
+        "http://[::1]",
+        "https://example.com/prefix",
+    ];
+    let rejected: Vec<_> = bases
+        .into_iter()
+        .filter(|base| Gateway::new(base, "secret").is_err())
+        .collect();
+    assert!(rejected.is_empty(), "rejected allowed bases: {rejected:?}");
+}
+
+#[test]
+fn http_nonprivate_literal_boundaries_and_hostnames_are_rejected() {
+    for base in [
+        "http://9.255.255.255",
+        "http://11.0.0.0",
+        "http://172.15.255.255",
+        "http://172.32.0.0",
+        "http://192.167.255.255",
+        "http://192.169.0.0",
+        "http://8.8.8.8",
+        "http://100.64.0.1",
+        "http://169.254.1.1",
+        "http://0.0.0.0",
+        "http://224.0.0.1",
+        "http://255.255.255.255",
+        "http://[fbff:ffff:ffff:ffff:ffff:ffff:ffff:ffff]",
+        "http://[fe00::]",
+        "http://[fe80::1]",
+        "http://[::]",
+        "http://[ff02::1]",
+        "http://[2001:4860:4860::8888]",
+        "http://[::ffff:192.168.1.56]",
+        "http://localhost",
+        "http://gitea.internal",
+    ] {
+        assert_eq!(
+            Gateway::new(base, "secret").unwrap_err(),
+            Error::InvalidConfiguration,
+            "{base}"
+        );
+    }
+}
+
+#[test]
+fn private_bases_still_reject_userinfo_queries_and_fragments() {
+    for base in [
+        "http://user:password@192.168.1.56:30003",
+        "http://user@[fd12:3456:789a::56]:30003",
+        "http://192.168.1.56:30003/?token=secret",
+        "http://[fd12:3456:789a::56]:30003/#fragment",
+        "https://example.com/#fragment",
+    ] {
+        assert_eq!(
+            Gateway::new(base, "secret").unwrap_err(),
+            Error::InvalidConfiguration,
+            "{base}"
+        );
+    }
+}
+
+#[test]
 fn bounded_response_and_sanitized_status() {
     let (base, handle) = server("200 OK", "x".repeat(1024 * 1024 + 1));
     assert_eq!(

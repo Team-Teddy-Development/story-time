@@ -21,13 +21,16 @@ pub(crate) fn validate_base(base: &str) -> Result<Url, Error> {
         return Err(Error::InvalidConfiguration);
     }
     let host = base.host_str().ok_or(Error::InvalidConfiguration)?;
-    let loopback = host
+    let private_or_loopback = host
         .trim_start_matches('[')
         .trim_end_matches(']')
         .parse::<IpAddr>()
-        .map(|ip| ip.is_loopback())
+        .map(|ip| match ip {
+            IpAddr::V4(ip) => ip.is_loopback() || ip.is_private(),
+            IpAddr::V6(ip) => ip.is_loopback() || ip.is_unique_local(),
+        })
         .unwrap_or(false);
-    if base.scheme() != "https" && !(base.scheme() == "http" && loopback) {
+    if base.scheme() != "https" && !(base.scheme() == "http" && private_or_loopback) {
         return Err(Error::InvalidConfiguration);
     }
     if !base.path().ends_with('/') {

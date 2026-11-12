@@ -254,6 +254,36 @@ fn dry_run_needs_no_token_network_or_writes_even_when_sync_off() {
 }
 
 #[test]
+fn private_lan_dry_runs_need_no_token_and_preserve_settings_and_story() {
+    let mut outcomes = Vec::new();
+    for base in [
+        "http://192.168.1.56:30003",
+        "http://[fd12:3456:789a::56]:30003/prefix",
+    ] {
+        let root = project(base);
+        let settings_path = root.path().join(".story-time/settings.json");
+        let story_path = root.path().join("backlog/ST-001.md");
+        let settings_before = fs::read(&settings_path).unwrap();
+        let story_before = fs::read(&story_path).unwrap();
+        let output = invoke(&root, &["--dry-run", "backlog/ST-001.md"], None);
+        assert!(output.stderr.is_empty(), "{base}: {output:?}");
+        let value: Value = serde_json::from_slice(&output.stdout).unwrap();
+        assert_eq!(fs::read(settings_path).unwrap(), settings_before, "{base}");
+        assert_eq!(fs::read(story_path).unwrap(), story_before, "{base}");
+        outcomes.push((base, output.status.success(), value));
+    }
+    for (base, success, output) in outcomes {
+        assert!(success, "{base}: {output}");
+        assert_eq!(output["status"], "ok", "{base}");
+        assert_eq!(output["plan"][0]["action"], "create", "{base}");
+        assert!(output["plan"][0]["body"]
+            .as_str()
+            .unwrap()
+            .contains("Acceptance Criteria"));
+    }
+}
+
+#[test]
 fn fenced_headings_do_not_export_local_sections() {
     for (open, close) in [
         ("```markdown", "```"),

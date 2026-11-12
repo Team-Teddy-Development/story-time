@@ -2,9 +2,13 @@
 
 ## Find the story before editing
 
-Use this repository's story-time CLI:
-
-`node skills/story-time/scripts/story.mjs <command>`
+Use this repository's installed native `story` executable for `init` and `push`.
+Build it with `cargo install --path native/story-push --locked`.
+Other commands remain in the Node CLI; set `STORY_TIME_LEGACY_CLI` to its
+absolute `skills/story-time/scripts/story.mjs` path for retained dispatch.
+Direct `node skills/story-time/scripts/story.mjs <command>` remains valid
+for commands other than `init` and `push`. Retain the old init source as
+history; exercise setup through native `story init`.
 
 1. Read `.story-time/settings.json` with `story config --json`.
 2. Read the requested story with `story show ST-###`. Otherwise, search `story list --json` for the requested outcome.

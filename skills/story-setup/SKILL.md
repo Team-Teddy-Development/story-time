@@ -141,6 +141,20 @@ Nothing is written if any value is invalid:
 }
 ```
 
+For GitHub, use this tracker configuration:
+
+```json
+{
+  "tracker": "github",
+  "sync": "off",
+  "github": { "repo": "acme/shop" }
+}
+```
+
+Set `github.repo` to the complete `owner/repo` coordinate. Separate `owner`
+and bare `repo` fields apply to Gitea, not GitHub.
+Use `story init --help` for the installed command's setup options.
+
 For Gitea the tracker part is:
 
 ```json
