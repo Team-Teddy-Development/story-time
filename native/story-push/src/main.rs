@@ -6,6 +6,16 @@ use std::{
 
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
+    if args.len() == 2 && args[0] == "new" && matches!(args[1].as_str(), "--help" | "-h") {
+        println!(
+            "Usage: story new --title TITLE [--statement TEXT] [--ac CRITERION]...\n\
+            [--type story|spike|bug|chore] [--epic ID] [--json]\n\n\
+            Creates a draft story and returns its allocated ID. Use the returned ID\n\
+            for subsequent commands; do not assume the next number.\n\
+            Creation requires the retained Node CLI. This help command is native and read-only."
+        );
+        return ExitCode::SUCCESS;
+    }
     if args.first().is_some_and(|s| s == "init") {
         return match story_time_native::init::run(&args[1..]) {
             Ok(output) => {
