@@ -32,6 +32,12 @@ Each fingerprint then received a confirmed filed-gap resolution from `error_sent
 Project: `project:Team-Teddy-Development/story-time`.
 All six signals attach to the existing prerequisite `goal_bacc9b7c-255d-4008-b0b8-b561b47fb6e1:task:historical-evidence`, which remains Blocked. The accepted typed resolution for each has `resolveKind: filed` and that exact task reference. Source corrections and passing tests are linked in each signal excerpt.
 
+## Delivered source and installed path
+
+PR #42 merged at `6dfbd92a85b546824342b75435a562d926f51db4` after all nine observed CI checks passed. `cargo install --path native/story-push --locked --root /home/ejernigan/.local --force` exited zero and replaced the installed native CLI. Both `env -i PATH=/nonexistent /home/ejernigan/.local/bin/story new --help` and `new -h` print usage and exit zero. The 3 Rust recovery tests pass after installation. The previous executable and Cargo install metadata are preserved in `/tmp/story-native-before-ST016.tar.gz`.
+
+Gate results: G1 through G5 met; G6 unmet; no abandoned gates. Runtime gates carry the unlazy checker's output digests and definition-bound evidence in ST-016-gates.md. G4 and G5 are manual evidence reviews; they do not imply the blocked G6 passed.
+
 ## Remaining verifier limitation and handoff
 
 A source-fix disposition is NOT established by these filings. The existing prerequisite requires reviewed Rust evidence support and permitted installed-host integration. Its records explicitly leave original-source preimage equivalence, relatedness receipts, and authenticated receipt persistence unmet. Changing that verifier or weakening its policy is outside this story.

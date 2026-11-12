@@ -29,8 +29,8 @@ Scope: Repair native command help, prove returned-ID selection, preserve all six
 - [x] G4: Each requested fingerprint has an accepted typed disposition with its exact correction or recovery evidence.
   EVIDENCE: error_sentinel_resolve returned resolveKind filed for all six, sequences 185 through 190. Each confirmed signal binds the original fingerprint and correction commit to the existing historical-evidence prerequisite. These are confirmed gap filings, not tested-source-fix verdicts. See ST-016-sentinel-recovery.md.
 
-- [ ] G5: The source corrections are merged and the installed native CLI exercises the repaired path.
-  EVIDENCE: PR #40 merged at 01d56defc7ff102dc52069ed50a11c6fd91005a9. ST-016 delivery and installation pending. New executable source and tests are Rust; retained Node creation is an unchanged product interface under test. The installed unlazy checker is existing external orchestration, not new implementation.
+- [x] G5: The source corrections are merged and the installed native CLI exercises the repaired path.
+  EVIDENCE: PR #40 merged at 01d56defc7ff102dc52069ed50a11c6fd91005a9. PR #42 merged at 6dfbd92a85b546824342b75435a562d926f51db4 after all nine checks passed. cargo install --path native/story-push --locked --root /home/ejernigan/.local --force exited 0. Both env -i PATH=/nonexistent /home/ejernigan/.local/bin/story new --help and new -h printed usage and exited 0. Restore archive: /tmp/story-native-before-ST016.tar.gz. New executable source and tests are Rust; retained Node creation is an unchanged product interface under test. The installed unlazy checker is existing external orchestration, not new implementation.
 
 - [ ] G6: The installed resolver accepts the correct tested-source or operational-recovery classifications for the original evidence.
   EVIDENCE: UNMET. All six direct submissions were rejected because the original Cargo and CLI invocation families are unsupported. The existing historical-evidence prerequisite remains Blocked; see the exact signal IDs and handoff in ST-016-sentinel-recovery.md. No ledger edit or substitute Node proxy is permitted.
