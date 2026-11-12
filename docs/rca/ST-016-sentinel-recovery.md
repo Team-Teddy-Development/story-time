@@ -30,16 +30,33 @@ Each fingerprint then received a confirmed filed-gap resolution from `error_sent
 | `es_d5c94fdf2b7b` | 19-pass/1-fail summary from the same Gitea run; corrected suite passes. | `signal_4411d630-38f5-48c3-90f9-e98c8afa16b2` |
 
 Project: `project:Team-Teddy-Development/story-time`.
-All six signals attach to the existing prerequisite `goal_bacc9b7c-255d-4008-b0b8-b561b47fb6e1:task:historical-evidence`, which remains Blocked. The accepted typed resolution for each has `resolveKind: filed` and that exact task reference. Source corrections and passing tests are linked in each signal excerpt.
+All six signals attach to the existing prerequisite `goal_bacc9b7c-255d-4008-b0b8-b561b47fb6e1:task:historical-evidence`, which remains Blocked. Those earlier typed gap filings have `resolveKind: filed` and that exact task reference. The later original-host bounded acceptances below preserve them. Source corrections and passing tests are linked in each signal excerpt.
 
 ## Delivered source and installed path
 
 PR #42 merged at `6dfbd92a85b546824342b75435a562d926f51db4` after all nine observed CI checks passed. `cargo install --path native/story-push --locked --root /home/ejernigan/.local --force` exited zero and replaced the installed native CLI. Both `env -i PATH=/nonexistent /home/ejernigan/.local/bin/story new --help` and `new -h` print usage and exit zero. The 3 Rust recovery tests pass after installation. The previous executable and Cargo install metadata are preserved in `/tmp/story-native-before-ST016.tar.gz`.
 
-Gate results: G1 through G5 met; G6 unmet; no abandoned gates. Runtime gates carry the unlazy checker's output digests and definition-bound evidence in ST-016-gates.md. G4 and G5 are manual evidence reviews; they do not imply the blocked G6 passed.
+Initial delivery recorded G1 through G5 met and G6 unmet. Original-host persistence now satisfies G6; all six gates have evidence. Runtime gates carry the unlazy checker's output digests and definition-bound evidence in ST-016-gates.md. The initial G4/G5 reviews did not establish the then-unmet G6. Current G6 acceptance has separate original-journal evidence.
 
-## Remaining verifier limitation and handoff
+## Original-host bounded acceptance
 
-A source-fix disposition is NOT established by these filings. The existing prerequisite requires reviewed Rust evidence support and permitted installed-host integration. Its records explicitly leave original-source preimage equivalence, relatedness receipts, and authenticated receipt persistence unmet. Changing that verifier or weakening its policy is outside this story.
+Dotfiles PR101 delivered the Rust verifier and preserved installed cursor/ST-002 behavior. The current original host executes that installed implementation. Its registered resolver accepts each exact request with `kind=historical_regression` and pinned ref `3c50bc1feeed68a69572f6239fdf2ee8be8fb001`. Enforced status confirms the same persisted records.
 
-When that prerequisite lands, run `error_sentinel_status`, then resubmit the matching source-only fix and test-only parent for the help defect. Preserve the four changed-contract messages as contract updates and the guessed-ID record as invocation recovery. Do not classify either as a product source fix. Use the exact original command and captured session evidence; do not fabricate numeric exits for historical captures.
+| Fingerprint | Verification kind and outcome | Original sequence | Independent confidence |
+| --- | --- | --- | --- |
+| `es_20de177785ff` | superseded_test; contract-correction | 636 | .96 |
+| `es_21f28dc6f4ac` | operational_disposition; invocation-recovery | 638 | .90 |
+| `es_4f19cee7e7f7` | superseded_test; contract-correction | 639 | .94 |
+| `es_972e3c265700` | superseded_test; contract-correction | 640 | .96 |
+| `es_a8170328dbb7` | historical_regression; help-source-repair-revalidated | 641 | .88 |
+| `es_d5c94fdf2b7b` | superseded_test; contract-correction | 642 | .94 |
+
+`docs/rca/ST016-original-host-persistence.json` contains the bounded receipt. Four Rust tests read the original journal without writing it. They verify all six current dispositions, prior filing sequences 185–190, and the unchanged sealed-prefix SHA-256 `3875c96d2f5861a95b5bc94154f8bddfbc94bee78c42d7a54a8d7b8c57d4e309`. Negative controls reject filed-only context, a missing latest disposition, confidence .79, and a false source-fix claim. The independent floor remains .80.
+
+G6's independent Jev citation is supported with probability .85 and verdict confidence .80. This accepts the named bounded classifications, not historical source-fix identity. No tool-driven reload execution or second journal writer is claimed. No unchanged semantic refusal was retried.
+
+## Historical source-fix limit
+
+All six new `sourceFixAccepted` and `historicalPreimageProved` fields remain false. Historical dirty source, binary identity, HEAD, and missing numeric exits remain unknown. Original mutating pushes were not replayed. The obsolete title expectations and guessed-ID invocation remain invalid.
+
+The older five-fingerprint Taskgraph prerequisite remains Blocked with AC0 and AC2 unmet. Its original-source and completion-contract obligations are not replaced by these six ST-016 dispositions. Preserve its history and the separate ST-002 criteria and state. Do not retry these six accepted requests or infer historical source identity to close that separate prerequisite.
