@@ -94,13 +94,20 @@ fn normalize(raw: Value) -> Result<Value, String> {
     let team = input["team"].as_object().ok_or("team must be an object.")?;
     let mut normalized_team = Map::new();
     for (key, default) in [("sprintDays", 10), ("wipLimit", 1)] {
-        normalized_team.insert(
-            key.into(),
-            team.get(key)
-                .filter(|v| !v.is_null())
-                .cloned()
-                .unwrap_or(json!(default)),
-        );
+        let mut value = team
+            .get(key)
+            .filter(|v| !v.is_null())
+            .cloned()
+            .unwrap_or(json!(default));
+        if value.as_u64().is_none() {
+            if let Some(n) = value
+                .as_f64()
+                .filter(|n| n.is_finite() && *n > 0.0 && n.fract() == 0.0 && *n < u64::MAX as f64)
+            {
+                value = json!(n as u64);
+            }
+        }
+        normalized_team.insert(key.into(), value);
     }
     if let Some(v) = team.get("velocity") {
         normalized_team.insert("velocity".into(), v.clone());
@@ -155,6 +162,14 @@ fn normalize(raw: Value) -> Result<Value, String> {
                 }
             }
         }
+    }
+    if input
+        .get("jev")
+        .and_then(|jev| jev.get("model"))
+        .and_then(Value::as_str)
+        == Some("jev-")
+    {
+        return Err("jev.model must be a Jev model id with a nonempty suffix.".into());
     }
     let mut config = validate_config(Value::Object(input))?;
     if let Some(url) = config.get_mut("gitea").and_then(|v| v.get_mut("baseUrl")) {
