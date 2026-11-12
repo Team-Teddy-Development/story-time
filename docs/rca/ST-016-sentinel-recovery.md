@@ -1,0 +1,39 @@
+# Six-fingerprint recovery
+
+## Scope and decisions
+
+The owner requested corrections for six specific error-sentinel records. These records contain three causes: a real command-help defect, an operator-selected nonexistent ID, and four messages from one stale title assertion.
+
+Fix Root Causes led to intercepting native help before legacy parsing, rather than suppressing its failure. Model the Domain kept the help request as the exact argument pair `new --help` or `new -h`; ordinary creation remains unchanged. Laziness Protocol ruled out rewriting story allocation for an operator mistake. Prove It Works required real binary execution and actual returned-ID selection.
+
+## Source and runtime evidence
+
+ST-015 source commit `17ccee6` corrected the intended tracker-title contract and Gitea payload assertions. Evidence commit `ff397a7addc311e068c09ca3d9c4c1cf2d957085` passed all observed CI checks. PR #40 merged as `01d56defc7ff102dc52069ed50a11c6fd91005a9`.
+
+ST-016 test-only commit `709dc5696aad59cf48952f119609280df7650d03` reproduces `Flag --help needs a value.` through the actual native binary with a valid retained runtime. The separate source-only commit `3c50bc1feeed68a69572f6239fdf2ee8be8fb001` prints native help before any legacy lookup. All three Rust recovery tests pass after that fix. The full native suite passes 44 tests, including the changed-title contract tests.
+
+The returned-ID test creates a story after fixture `REC-067`, parses the actual JSON `id`, and passes that value to native `push --dry-run`. It confirms lookup succeeds and writes no remote linkage. The original guessed-ID invocation remains invalid; this is operational recovery, not a lookup implementation fix.
+
+## Exact fingerprint dispositions
+
+All six `fixed` submissions were rejected with `verification test is not present in the original absolute failing command`. The installed replay code recognizes selected Node/Vitest/compiler invocations, not these original Cargo and CLI commands. No ledger was edited, no Node proxy was added, and no historical evidence was replaced.
+
+Each fingerprint then received a confirmed filed-gap resolution from `error_sentinel_resolve`. These replace the session follow-up-task clearances. They are not verified-source-fix dispositions.
+
+| Fingerprint | Cause and correction | Verified gap signal |
+| --- | --- | --- |
+| `es_20de177785ff` | Old-title assertion; intended-title contract corrected in `17ccee6`. | `signal_39d75dd8-2476-4e46-a241-47671d54f823` |
+| `es_21f28dc6f4ac` | Assumed ST-018; corrected invocation uses returned ST-015. Rust integration coverage is in `709dc56`. | `signal_0fb5eec9-1a7b-4e55-bb6a-3013c3546794` |
+| `es_4f19cee7e7f7` | Named Gitea test from the same old-title assertion; corrected create/update checks in `17ccee6`. | `signal_af18f58c-b5bb-4d0d-82b0-4ff49885a8dc` |
+| `es_972e3c265700` | Cargo failure footer from that same run; corrected native suite passes. | `signal_5124be92-1e47-4943-8734-3e7d9fac4ce6` |
+| `es_a8170328dbb7` | Native new-help dispatch defect; exact RED at `709dc56`, source GREEN at `3c50bc1`. | `signal_3546d28f-3a8d-45fa-b3c7-6e117de4e063` |
+| `es_d5c94fdf2b7b` | 19-pass/1-fail summary from the same Gitea run; corrected suite passes. | `signal_4411d630-38f5-48c3-90f9-e98c8afa16b2` |
+
+Project: `project:Team-Teddy-Development/story-time`.
+All six signals attach to the existing prerequisite `goal_bacc9b7c-255d-4008-b0b8-b561b47fb6e1:task:historical-evidence`, which remains Blocked. The accepted typed resolution for each has `resolveKind: filed` and that exact task reference. Source corrections and passing tests are linked in each signal excerpt.
+
+## Remaining verifier limitation and handoff
+
+A source-fix disposition is NOT established by these filings. The existing prerequisite requires reviewed Rust evidence support and permitted installed-host integration. Its records explicitly leave original-source preimage equivalence, relatedness receipts, and authenticated receipt persistence unmet. Changing that verifier or weakening its policy is outside this story.
+
+When that prerequisite lands, run `error_sentinel_status`, then resubmit the matching source-only fix and test-only parent for the help defect. Preserve the four changed-contract messages as contract updates and the guessed-ID record as invocation recovery. Do not classify either as a product source fix. Use the exact original command and captured session evidence; do not fabricate numeric exits for historical captures.
