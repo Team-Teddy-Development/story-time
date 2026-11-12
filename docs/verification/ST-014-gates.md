@@ -40,6 +40,14 @@ Final language audit: `main.rs`, `init.rs`, shared validation in `lib.rs`, and n
 
 An intermediate GREEN run exposed a test assertion that tried to stat an unnormalized `custom/../settings.json` through a nonexistent `custom` directory. The test now checks the lexically resolved settings file and its JSON contents, matching retained path resolution. A subsequent fmt check detected that test edit before formatting. Both were corrected, and the full Cargo suite, fmt, and clippy passed afterward. The original RED evidence remains unchanged above.
 
+## Completion-check limitations
+
+Source commits are RED `90b8140c77892b4477ded7a5cd434df83c975b29` and GREEN `feb1e060deb05f34ff1683db13fc1f1a0e702091`. The later evidence-only commit records this handoff.
+
+The deterministic `confidence_check` returned 0, reporting no paired recognized test run, no paired error status, and no matched constrained Git commit. Actual Cargo and standalone Rust test output and normal Git commits are recorded above; constrained Pi Git commits are excluded by the delegated GitHub workflow. This result is not a pass. Jev completeness returned 37/100 with 0.90 confidence and done probability 0.10 for the explicitly incomplete story/delivery handoff. No story completion is claimed and these scores do not replace the actual suite results.
+
+All four owned build watches ended with numeric exit codes and `termination.cleanup: succeeded`. Original RED and intermediate formatting failures remain historical evidence. There are no active owned build processes. Cleanup preview found no eligible merged worktrees. The mutating cleanup call requested a backup and did not execute; no worktree was removed.
+
 ## Handoff boundary
 
-Do not install, open a PR, accept ST-014, close issue 37, or remove this root-owned worktree. Root reviews and delivers the two commits, then exercises installed-binary contracts and accepts the story.
+Do not install, open a PR, accept ST-014, close issue 37, or remove this root-owned worktree. Root reviews and delivers the implementation commits, then exercises installed-binary contracts and accepts the story.
