@@ -86,4 +86,26 @@ The owned `st014-normalization-npm` watch ended with exit 0 and `termination.cle
 
 ## Handoff boundary
 
-Do not install, open a PR, accept ST-014, close issue 37, or remove this root-owned worktree. Root reviews and delivers the implementation commits, then exercises installed-binary contracts and accepts the story.
+The delegate was not authorized to install, open a PR, accept ST-014, close issue 37, or remove this root-owned worktree. Root owns those delivery steps.
+
+## Root installed acceptance, 2026-11-12
+
+This checkpoint supersedes the pending installed-verification states above, not the preserved RED results. Reviewed source is `7912e0efc806800b3e5b0447c732afc65e111e17`, including final implementation `e997473ecc54ea159b51cb0f0c2d278ab0a7bb82`. PR [38](https://github.com/Team-Teddy-Development/story-time/pull/38) targets protected main at `b3c38128c061c6a765f0a33b635be4fdc9b7765b`. All nine observed checks succeeded at this source head. Active repository rulesets require strict latest-base tests, story checks, a PR, resolved threads, and deletion/non-fast-forward protections; no bypass was used.
+
+Root reran `cargo test --offline --locked --manifest-path native/story-push/Cargo.toml --target-dir /home/ejernigan/.cache/story-issue37-target`: 40 passed, zero failed. Formatting, strict Clippy, and release build exited zero. Retained Node and Rust policy results above remain unchanged. The independent review's two normalization findings were corrected with separate RED/GREEN commits. Jev citation review supported those corrections with support 0.83 and verdict confidence 0.82.
+
+Root installed with `cargo install --offline --locked --force --path native/story-push --root /home/ejernigan/.local --target-dir /home/ejernigan/.cache/story-issue37-target`. Installation exited zero. Installed `/home/ejernigan/.local/bin/story` and the verified release both have SHA256 `692a74c6e87c1e3ab6f2d951f5f19aaaf60231452ef4adddaf95de23e66b92e7`.
+
+`STORY_TIME_TEST_BIN=/home/ejernigan/.local/bin/story STORY_TIME_TEST_SETUP_SKILL=/home/ejernigan/.pi/agent/skills/story-setup/SKILL.md cargo test --offline --locked --manifest-path native/story-push/Cargo.toml --target-dir /home/ejernigan/.cache/story-issue37-target --test init_contract --test setup_contract` passed all 12 installed-artifact contracts: nine init and three setup. Node-free cases remove runtime configuration and use `PATH=/nonexistent`; retained config is exercised separately as the excluded compatibility reader.
+
+Root also ran installed init with `env -i PATH=/nonexistent`, valid GitHub answers, and an absolute external `settings.json` in the owned release-evidence fixture. It exited zero without HOME, Node, or runtime configuration. The actual installed config command, with overrides unset, read back matching tracker `github`, repo `acme/shop`, sync `off`, prefix `ST`, backlog `backlog`, sprintDays `10`, wipLimit `1`, and stack `[]`. Readback confirmed the settings file and `.story-time/.gitignore` containing `*.env`. `prove_it_works` recorded the real installed path, method, and output.
+
+| Acceptance gate | Evidence | Verdict |
+| --- | --- | --- |
+| AC1 | Installed external-path reproduction, saved JSON, secret-ignore readback, retained config parity | MET |
+| AC2 | Installed defaults, canonical/custom paths, flag/precedence, refusal/force, and normalization contracts | MET |
+| AC3 | Installed invalid JSON/settings contracts assert diagnostics, absent fresh targets, and unchanged forced-existing settings/metadata | MET |
+| AC4 | Installed nine init plus three setup contracts; clean-environment direct init; existing push and retained suites | MET |
+| Rust conversion | `main.rs`, `init.rs`, shared Rust validation, and Rust process contracts; no active Node init dispatch | MET |
+
+The backup is `/home/ejernigan/.pi/agent/release-evidence/story-ST014-20261112/story.before-ST014`, SHA256 `a3af1b6037ab59420fa15f4a466f79ad995c9395c634cf94b095f46c9a4f15e1`. Recovery: `install -m 755 /home/ejernigan/.pi/agent/release-evidence/story-ST014-20261112/story.before-ST014 /home/ejernigan/.local/bin/story`. Fixture files are outside source roots. No signing key entered the session. This proves the approved init scope, not conversion of other commands or generalized filesystem transaction safety.
