@@ -1134,7 +1134,8 @@ mod tests {
         let bodies = handle.join().unwrap();
         assert_eq!(bodies[3]["labels"], json!([1, 2, 3]));
         assert_eq!(bodies[4], json!({"state":"closed"}));
-        assert_eq!(bodies[5]["title"], "Native tracker");
+        assert_eq!(bodies[3]["title"], "ST-001: Native tracker");
+        assert_eq!(bodies[5]["title"], "ST-001: Native tracker");
     }
 
     #[test]
@@ -1171,6 +1172,7 @@ mod tests {
         gateway.update(&s).unwrap();
         let bodies = handle.join().unwrap();
         assert_eq!(bodies[3]["state"], "open");
+        assert_eq!(bodies[3]["title"], "ST-001: Native tracker");
         assert_eq!(bodies[4]["labels"], json!([1, 2, 3, 99]));
     }
 
