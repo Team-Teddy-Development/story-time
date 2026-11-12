@@ -48,6 +48,42 @@ The deterministic `confidence_check` returned 0, reporting no paired recognized 
 
 All four owned build watches ended with numeric exit codes and `termination.cleanup: succeeded`. Original RED and intermediate formatting failures remain historical evidence. There are no active owned build processes. Cleanup preview found no eligible merged worktrees. The mutating cleanup call requested a backup and did not execute; no worktree was removed.
 
+## Init normalization follow-up
+
+The independent review at `870f066` found two init-only compatibility defects. Shared validation accepted bare `jev-` because every character of an empty suffix passed the predicate. It rejected float-encoded integral team values because `as_u64` does not accept serde JSON floating-point values. The retained reader requires a nonempty suffix and accepts JavaScript integral numbers.
+
+Test-only RED commit `cdd4e4f4aea38944eb0a6bfb118f296665a43af1` changes `native/story-push/tests/init_contract.rs`. The actual command was `CARGO_TARGET_DIR=/home/ejernigan/.cache/story-issue37-target cargo test --manifest-path native/story-push/Cargo.toml --test init_contract`. It compiled, exited 101, and reported `7 passed; 2 failed`. Full output is `/tmp/story-issue37-normalization-red.log`.
+
+```text
+literal_integral_team_numbers_match_retained_init_and_config
+exit Some(1): team.sprintDays must be a positive integer.
+invalid_input_has_diagnostics_and_no_writes_even_with_force
+assertion `left == right` failed
+  left: Some(0)
+ right: Some(1)
+test result: FAILED. 7 passed; 2 failed
+```
+
+Source GREEN commit `e997473ecc54ea159b51cb0f0c2d278ab0a7bb82` changes only `native/story-push/src/init.rs`. Init checks the empty Jev suffix before filesystem effects. Init converts finite positive integral floating-point team values within the existing u64 validator range to integer JSON values before shared validation. `native/story-push/src/lib.rs`, shared `validate_config`, and push semantics remain unchanged.
+
+The new literal JSON test uses `{"team":{"sprintDays":10.0,"wipLimit":1e0}}` and `{"team":{"sprintDays":1e1,"wipLimit":2.0}}`. It checks native init without Node on PATH, saved canonical integers, retained config output, and retained init output parity. The invalid-input matrix checks bare `jev-`, fractional, zero, and negative team values on fresh and forced-existing targets. It asserts field diagnostics, absent fresh settings/metadata, and byte-preserved existing settings/metadata.
+
+| Verification after source fix | Observed result |
+| --- | --- |
+| Full Cargo suite with existing external target directory | 40 passed, 0 failed: 19 library, 9 push CLI, 9 init, 3 setup |
+| `cargo fmt --manifest-path native/story-push/Cargo.toml --check` | Exit 0 |
+| `CARGO_TARGET_DIR=/home/ejernigan/.cache/story-issue37-target cargo clippy --manifest-path native/story-push/Cargo.toml --all-targets -- -D warnings` | Exit 0 |
+| `npm test` | 408 passed, 0 failed; `/tmp/story-issue37-normalization-npm.log` |
+| Rust `scripts/story-policy.rs` test binary | 12 passed, 0 failed |
+| Rust `test/story-policy-contract.rs` test binary | 11 passed, 0 failed |
+| `story lint ST-014` | 0 errors; existing missing-WSJF warning remains, with no re-estimate |
+
+`prove_it_works` records the built native CLI process tests and observed persistence/parity/no-write results. All new executable changes are Rust. The prior language audit and conversion gate remain valid. Prior RED/GREEN history above remains unchanged. AC1, AC2, AC3, and the init Rust conversion gate remain MET; installed AC4 remains UNMET. ST-014 remains in-progress. Both story updates were noted, previewed as updates to issue 37, pushed, and confirmed at `https://github.com/Team-Teddy-Development/story-time/issues/37`.
+
+The follow-up deterministic completion check reports 0, with no paired recognized tests/commit and unresolved sentinel records. It does not recognize the captured successful Cargo/Rust commands and ordinary Git commits as paired evidence. The sentinel fix-resolution tool rejected the replay selection as `selected test is not the original failing test command`; actual source fixes and green reruns are recorded above. Jev completeness for the delegated handoff reports 82/100, confidence 0.48, and done probability 0.78. Neither completion check is a pass; no full story completion is claimed. The earlier wrong-path config search was corrected to the discovered `scripts/src/config/config.mjs` and its sentinel record resolved as an invocation correction.
+
+The owned `st014-normalization-npm` watch ended with exit 0 and `termination.cleanup: succeeded`. Its stop check confirms no active owned process. No new worktree was created. No installation, PR, acceptance, issue closure, or worktree removal occurred.
+
 ## Handoff boundary
 
 Do not install, open a PR, accept ST-014, close issue 37, or remove this root-owned worktree. Root reviews and delivers the implementation commits, then exercises installed-binary contracts and accepts the story.
