@@ -1,4 +1,5 @@
 pub mod gateway;
+pub mod init;
 pub mod story;
 
 use chrono::Utc;

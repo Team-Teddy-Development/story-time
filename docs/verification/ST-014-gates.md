@@ -30,6 +30,16 @@ Throughput checkpoint: one delegate owns this scope. No implementation fan-out o
 
 The canonical control passed. External settings with Node available failed with `exit Some(1): ENOENT: no such file or directory, open '/tmp/story-init-3556283-6/.story-time/.gitignore'`. Node-free tests separately failed with `Non-push commands require STORY_TIME_LEGACY_CLI or ~/.config/story-time/runtime.json with legacyCli.` These are the intended RED assertions, not compilation failures.
 
+## GREEN verification
+
+The current source passes all 39 Cargo tests: 19 library tests, 9 existing push CLI tests, 8 init CLI contracts, and 3 existing setup contracts. `cargo fmt --check` and `cargo clippy --all-targets -- -D warnings` pass with the same manifest and external target directory. `npm test` passes all 408 tests. The Rust policy and policy-contract binaries pass 12 and 11 tests respectively. No Node source or tests changed.
+
+Current gate states are AC1 MET, AC2 MET, AC3 MET, AC4 UNMET pending installed-command verification, and Rust conversion MET for the approved init implementation scope. Acceptance criteria remain unticked pending root acceptance. All init arguments, including help, route through Rust before legacy discovery. `normalize` fills setup defaults and removes unused nested fields before shared validation. Only after valid settings exist does init create both the settings parent and root metadata directory.
+
+Final language audit: `main.rs`, `init.rs`, shared validation in `lib.rs`, and new process-level regressions in `init_contract.rs` are Rust. Legacy init remains untouched history and a normalization oracle in compatibility tests only, not an active product dispatch. Config is the expressly excluded Node compatibility reader. Push is unchanged Rust. Other Node commands, existing Node tests, and shell command invocations are unchanged external verification interfaces, not replacement init implementations. No in-scope implementation remains unclassified or non-Rust.
+
+An intermediate GREEN run exposed a test assertion that tried to stat an unnormalized `custom/../settings.json` through a nonexistent `custom` directory. The test now checks the lexically resolved settings file and its JSON contents, matching retained path resolution. A subsequent fmt check detected that test edit before formatting. Both were corrected, and the full Cargo suite, fmt, and clippy passed afterward. The original RED evidence remains unchanged above.
+
 ## Handoff boundary
 
 Do not install, open a PR, accept ST-014, close issue 37, or remove this root-owned worktree. Root reviews and delivers the two commits, then exercises installed-binary contracts and accepts the story.

@@ -166,7 +166,17 @@ fn explicit_path_beats_environment_and_custom_roots_are_relative_to_cwd() {
             .unwrap();
         settings(&out);
         assert!(!s.0.join("wrong").exists());
-        assert!(s.0.join(target).exists());
+        let expected = if target.contains("..") {
+            "settings.json"
+        } else {
+            target
+        };
+        assert!(s.0.join(expected).exists());
+        assert_eq!(
+            serde_json::from_slice::<Value>(&fs::read(s.0.join(expected)).unwrap()).unwrap()
+                ["tracker"],
+            "files"
+        );
         let root = if target.contains("..") { "" } else { "custom" };
         assert!(ignored(&s, root).contains("*.env"));
     }
@@ -184,16 +194,19 @@ fn explicit_path_beats_environment_and_custom_roots_are_relative_to_cwd() {
 
 #[test]
 fn invalid_input_has_diagnostics_and_no_writes_even_with_force() {
-    for input in [
-        "{",
-        "[]",
-        "null",
-        r#"{"unknown":true}"#,
-        r#"{"team":{"wipLimit":0}}"#,
-        r#"{"github":{"repo":"shop"}}"#,
-        r#"{"tracker":"github"}"#,
-        r#"{"sync":"auto"}"#,
-        r#"{"project":{"stack":false}}"#,
+    for (input, expected) in [
+        ("{", "invalid JSON"),
+        ("[]", "Config must be a JSON object"),
+        ("null", "Config must be a JSON object"),
+        (r#"{"unknown":true}"#, "Unknown config key"),
+        (r#"{"team":{"wipLimit":0}}"#, "team.wipLimit"),
+        (
+            r#"{"github":{"repo":"shop"}}"#,
+            "github.repo must be owner/repo",
+        ),
+        (r#"{"tracker":"github"}"#, "github settings"),
+        (r#"{"sync":"auto"}"#, "needs tracker"),
+        (r#"{"project":{"stack":false}}"#, "project.stack"),
     ] {
         for existing in [false, true] {
             let s = Sandbox::new();
@@ -215,10 +228,10 @@ fn invalid_input_has_diagnostics_and_no_writes_even_with_force() {
             );
             assert_eq!(out.status.code(), Some(1));
             let diagnostic = String::from_utf8_lossy(&out.stderr);
-            assert!(!diagnostic.is_empty());
-            assert!(
-                !diagnostic.contains("require STORY_TIME_LEGACY_CLI"),
-                "{diagnostic}"
+            assert!(diagnostic.contains(expected), "{input}: {diagnostic}");
+            assert_eq!(
+                fs::read_dir(&s.0).unwrap().count(),
+                if existing { 3 } else { 1 }
             );
             if existing {
                 assert_eq!(
@@ -237,6 +250,7 @@ fn invalid_input_has_diagnostics_and_no_writes_even_with_force() {
 #[test]
 fn tracker_and_nested_normalization_matches_retained_config_interface() {
     for input in [
+        json!({"team":{"sprintDays":null,"wipLimit":null},"project":null,"tracker":null,"sync":null,"prefix":null}),
         json!({"$schema":"ignored","tracker":"files","backlogDir":"","team":{"velocity":3,"other":true},"project":{"testCommand":"","testFramework":null,"other":1}}),
         json!({"tracker":"github","sync":"ask","github":{"repo":"acme/shop","owner":"discard"}}),
         json!({"tracker":"ado","sync":"auto","ado":{"organization":"https://dev.azure.com/acme","project":"shop","areaPath":"","iterationPath":"iteration"}}),
