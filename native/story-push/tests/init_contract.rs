@@ -199,7 +199,14 @@ fn invalid_input_has_diagnostics_and_no_writes_even_with_force() {
         ("[]", "Config must be a JSON object"),
         ("null", "Config must be a JSON object"),
         (r#"{"unknown":true}"#, "Unknown config key"),
+        (r#"{"jev":{"model":"jev-"}}"#, "jev.model"),
         (r#"{"team":{"wipLimit":0}}"#, "team.wipLimit"),
+        (r#"{"team":{"wipLimit":0.0}}"#, "team.wipLimit"),
+        (r#"{"team":{"wipLimit":-1e0}}"#, "team.wipLimit"),
+        (r#"{"team":{"wipLimit":1.5}}"#, "team.wipLimit"),
+        (r#"{"team":{"sprintDays":0e0}}"#, "team.sprintDays"),
+        (r#"{"team":{"sprintDays":-10.0}}"#, "team.sprintDays"),
+        (r#"{"team":{"sprintDays":10.5}}"#, "team.sprintDays"),
         (
             r#"{"github":{"repo":"shop"}}"#,
             "github.repo must be owner/repo",
@@ -244,6 +251,40 @@ fn invalid_input_has_diagnostics_and_no_writes_even_with_force() {
                 assert!(!s.0.join(".story-time").exists());
             }
         }
+    }
+}
+
+#[test]
+fn literal_integral_team_numbers_match_retained_init_and_config() {
+    for input in [
+        r#"{"team":{"sprintDays":10.0,"wipLimit":1e0}}"#,
+        r#"{"team":{"sprintDays":1e1,"wipLimit":2.0}}"#,
+    ] {
+        let s = Sandbox::new();
+        fs::write(s.0.join("answers.json"), input).unwrap();
+        let native = settings(&s.init(&["--from", "answers.json", "--json"], true));
+        assert!(native["team"]["sprintDays"].as_u64().is_some());
+        assert!(native["team"]["wipLimit"].as_u64().is_some());
+        let saved: Value =
+            serde_json::from_slice(&fs::read(s.0.join(".story-time/settings.json")).unwrap())
+                .unwrap();
+        assert_eq!(saved, native);
+        let retained = s
+            .command(false)
+            .args(["config", "--json"])
+            .output()
+            .unwrap();
+        assert_eq!(settings(&retained), native, "retained reader {input}");
+        let original = Sandbox::new();
+        fs::write(original.0.join("answers.json"), input).unwrap();
+        let retained_init = Command::new("node")
+            .arg(legacy())
+            .args(["init", "--from", "answers.json", "--json"])
+            .current_dir(&original.0)
+            .env_remove("STORY_TIME_CONFIG")
+            .output()
+            .unwrap();
+        assert_eq!(settings(&retained_init), native, "retained init {input}");
     }
 }
 
