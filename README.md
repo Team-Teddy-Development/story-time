@@ -43,11 +43,11 @@ of them.
 
 ## Install
 
-Native `story push` requires Rust and Cargo. Other commands still require
-Node 20+ and use the existing dependency-free Node CLI.
+Native `story init` and `story push` require Rust and Cargo. Other commands
+still require Node 20+ and use the existing dependency-free Node CLI.
 
 From the repository root, install the native executable and configure the
-retained non-push entry point:
+retained entry point for other commands:
 
 ```bash
 cargo install --path native/story-push --locked
@@ -59,6 +59,16 @@ and local linking run in Rust. An empty `story push --all --dry-run --json`
 returns an empty plan without credentials or network access. Sync off still
 rejects push. See [native push](docs/native-story-push.md) for verification,
 installation recovery, and the migration boundary.
+
+`story init --from answers.json --config settings.json --json` validates
+answers before writing settings or secret-ignore metadata. Omit `--from` to
+use defaults. Use `--force` to replace existing settings, including malformed
+settings. The target is `--config`, then `STORY_TIME_CONFIG`, then
+`.story-time/settings.json`. Relative paths start at the current directory.
+A target directly inside `.story-time` uses that directory's parent as the
+project root. Other targets use the settings directory. Init creates `.story-time/.gitignore`
+at that root and preserves existing ignore rules. Init and its help work
+without Node or retained-runtime configuration.
 
 ### Installer (Claude Code, Codex, or both)
 
