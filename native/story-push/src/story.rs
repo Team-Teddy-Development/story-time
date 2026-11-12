@@ -500,6 +500,16 @@ fn footer(s: &Value) -> String {
     )
 }
 
+fn tracker_title(story: &Value) -> String {
+    let title = string(story, "title");
+    let prefix = format!("{}: ", string(story, "id"));
+    if title.starts_with(&prefix) {
+        title.to_owned()
+    } else {
+        format!("{prefix}{title}")
+    }
+}
+
 pub fn render_card(story: &Value, tracker: &str, config: &Value) -> Result<Value, String> {
     object(story)?;
     sections(story)?;
@@ -508,7 +518,11 @@ pub fn render_card(story: &Value, tracker: &str, config: &Value) -> Result<Value
             return Err(format!("Story {key} must be a string"));
         }
     }
-    let title = string(story, "title");
+    let title = if tracker == "markdown" {
+        string(story, "title").to_owned()
+    } else {
+        tracker_title(story)
+    };
     match tracker {
         "github" | "gitea" => {
             let mut labels = vec![story
@@ -626,7 +640,7 @@ fn ado_fields(s: &Value, config: &Value) -> Result<Vec<Value>, String> {
     }
     let mut fields = vec![
         json!({"name":"Work Item Type","value":if bug {bug_type} else {story_type}}),
-        json!({"name":"Title","value":s["title"]}),
+        json!({"name":"Title","value":tracker_title(s)}),
     ];
     if bug && bug_type == "Bug" {
         let mut parts = vec![description];
@@ -714,7 +728,7 @@ pub fn ado_args(story: &Value, ado: &Value) -> Result<Value, String> {
             .find(|f| string(f, "name") == name)
             .map(|f| f["value"].clone())
     };
-    let mut out = json!({"type":get("Work Item Type"),"title":story["title"],"fields":[]});
+    let mut out = json!({"type":get("Work Item Type"),"title":card["title"],"fields":[]});
     for (name, key) in [
         ("Description", "description"),
         ("Area Path", "area"),
@@ -840,6 +854,31 @@ mod tests {
             .unwrap()
             .ends_with("- 2026-11-06 updated tracker item ABC-1"));
         assert_eq!(parse(&serialize(&linked).unwrap()).unwrap(), linked);
+    }
+    #[test]
+    fn tracker_titles_include_one_story_id_without_mutating_local_titles() {
+        for id in ["ST-067", "CRT-1024"] {
+            for title in ["Build a bridge".to_owned(), format!("{id}: Build a bridge")] {
+                let mut s = story();
+                s["id"] = json!(id);
+                s["title"] = json!(title);
+                let original = s.clone();
+                let expected = format!("{id}: Build a bridge");
+                for tracker in ["github", "gitea", "ado"] {
+                    let card = render_card(&s, tracker, &json!({})).unwrap();
+                    assert_eq!(card["title"], expected, "{tracker}");
+                    if tracker == "ado" {
+                        assert_eq!(field(&card, "Title"), expected);
+                        assert_eq!(ado_args(&s, &json!({})).unwrap()["title"], expected);
+                    }
+                }
+                assert_eq!(s, original);
+                assert_eq!(
+                    render_card(&s, "markdown", &json!({})).unwrap()["title"],
+                    title
+                );
+            }
+        }
     }
     #[test]
     fn github_gitea_and_markdown_cards_match_contract() {
