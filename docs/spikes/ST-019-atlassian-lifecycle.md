@@ -72,7 +72,7 @@ Reviewed `skills/*/SKILL.md` from source base `2cd39f6`, not merely the skill na
 | Existing skill | Current ownership | Lifecycle disposition |
 |---|---|---|
 | `story-time` | CLI, file conventions, lifecycle router | Extend to route the whole lifecycle, including sprint/release/feedback boundaries. |
-| `story-setup` | Tracker, team settings, Ready/Done rules, authentication setup | Extend with Scrumban working agreement and capability discovery; preserve existing sync policy. |
+| `story-setup` | Tracker, team settings, Ready/Done rules, authentication setup | Extend with Scrumban working agreement, capability discovery, and brownfield adoption/upgrade (ST-021); preserve existing sync policy and backlog identities. |
 | `principle-invest` | Story quality and vertical slicing | Reuse. Explain local sizing rules as conventions, not universal Agile thresholds. |
 | `story-create` | Persona, benefit, criteria, bugs, scope, initial intake | Reuse; add links to goals, evidence, and epic selection where applicable. |
 | `story-edit` | Safe clarification, scope, scoring, dependency changes | Reuse as the single-story mutation owner; preserve estimates and historical acceptance. |
@@ -171,6 +171,22 @@ Add `project-discovery` for initiatives that lack goals, and `release-planning` 
 Instrument event history from the first implementation slice, then add `agile-metrics` and `project-status` once observed history exists. Do not fabricate historical data to demonstrate charts. Reporting can initially show explicit unavailable fields.
 
 These are dependency-aware release slices, not numbered promised sprints. No story points or dates are assigned to the missing-skill programme by this research. Detailed estimates require the implementation contracts and adapter decisions; keep ST-018 unestimated until that scope is refined.
+
+## Brownfield adoption and upgrade
+
+**Owner requirement added after the research; local proposal, not an Atlassian claim.** ST-021 (#52) tracks projects that already have stories and a backlog. A new-project-only setup is insufficient for the planned lifecycle version.
+
+Extend the existing `story-setup` entry point with three distinct paths: new project, adopt an existing project, and upgrade an existing story-time project. Do not create a parallel setup owner. `project-discovery` still owns evidence about goals; `story-map` still owns epic relationships; existing story editing and readiness skills keep their responsibilities.
+
+1. Inspect the source format, installed version, project settings, story files, tracker records, and capabilities without mutation. Record missing or unrecognized data explicitly.
+2. Produce a source-to-target migration plan and conflict report. Preserve IDs, remote identities, custom fields, dependencies, estimates, statuses, closed records, acceptance criteria, evidence, and configured sync policy.
+3. Apply a reviewed plan with a verified backup, exact preimage checks, and an ordered migration journal. Do not duplicate issues or renumber stories. Keep credentials and signing keys outside migration evidence.
+4. Verify the migrated backlog and tracker mappings. Repeat runs must produce no duplicate records or changes. Retain missing sprint goals, capacity, relationships, and event history as explicit gaps rather than fabricated data.
+5. On a conflict or partial failure, retain recovery evidence and provide rollback or a precise handoff. Report which local changes are reversible and which external tracker actions require compensation; do not promise an atomic cross-tracker rollback.
+
+The target schema/version contract and supported legacy formats are implementation prerequisites. Define their compatibility rules before coding; no migration CLI command is claimed to exist yet. Test uninitialized repositories, older configurations, tracker-only and files-only backlogs, custom prefixes/fields, local-versus-tracker conflicts, interrupted application, rollback, and repeat runs in Rust. Preserve historical and completed work without forcing it through newly introduced workflow gates.
+
+ST-021 is a separate draft capability linked to the ST-018 planning loop. Include it in delivery planning for the lifecycle version, not as an optional post-launch cleanup. Its existence does not mean migration is implemented, estimated, or accepted.
 
 ## Data and adapter gaps that skills alone cannot solve
 
