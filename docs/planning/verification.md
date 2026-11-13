@@ -128,6 +128,14 @@ The final-source gate run passed G1-G3 but G4 failed. A captured full-chain repr
 
 After main integration, `ST018-main-integrated-gates` reran the actual native/install/fmt/Clippy/Node/policy chain: G1-G4 passed, Node421/421, native73, policy12+11. G5 retains installed artifact proof. Its exit1 names only pending integration G6; this is not a test failure. The captured Node log is `ST018-final-node.log`. No assertions or test thresholds were weakened.
 
+## Protected integration and story acceptance
+
+PR62 merged at `cbbd97655e4881756d31be51e8e8c5b2a4843187`; exact reviewed head was `0a6935f04390b0fb9c03555df51ed3100323f76e`. Readback confirms state MERGED, actor jejernig, and nine successful check runs. Active rules26702417/27056058 retained strict Node20/22 plus story-link/story-ids/story-policy-tests; review threads were empty. Backup refs preserve pre-merge main and the PR head. No administrator or force bypass was used. The merge retry reported already merged; readback, not that retry, establishes integration.
+
+Story-accept records all seven original criteria in ST-018 with exact test and CLI evidence, then marks done and mirrors issue48. ST-027 stays draft/open. The post-main installed proof retained all27 story bytes and settings unchanged. The CLI metadata read initially used two unsupported old-gh fields (`pr checks --json`, `pr view baseRefOid`); corrected read-only calls use `pr view statusCheckRollup` and `baseRefName`. Those are invocation recoveries, not source fixes.
+
+Overall semantic assessment before merge was71/confidence0.75/done0.59 with integration, acceptance and cleanup explicitly pending. Preserve it; final semantic assessment must use the completed integration state rather than relabel that result.
+
 ## Remaining boundaries and next commands
 
 The final main-integrated test and compiler run passes. The separately filed intermittent legacy failure remains open in ST-027; this is not a claim that its cause is fixed. Multi-file publication is not crash-atomic; after a process kill, inspect both output files and the PID-bearing lock before recovery. No tracker sprint service, adoption apply, or authoritative history is implemented. These are preserved scope limits, not successful remote operations.
