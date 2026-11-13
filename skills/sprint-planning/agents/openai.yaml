@@ -1,0 +1,4 @@
+interface:
+  display_name: "Sprint planning"
+  short_description: "Plan a sprint goal within explicit point capacity"
+  default_prompt: "Use $sprint-planning to propose a local goal-based sprint plan without tracker assignments."

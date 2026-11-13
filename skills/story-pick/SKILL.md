@@ -7,6 +7,11 @@ description: Choose the single highest-value story to work on next — WSJF rank
 
 `story` means the CLI from the **story-time** skill.
 
+A **sprint-planning** skill artifact is a proposal, not permission to start work.
+Recheck source freshness, readiness, dependencies, and WIP before pulling a selected
+story. WIP limits concurrent work per person, not total planned stories. A missing
+capacity is unknown; do not derive available points or dates from `sprintDays`.
+
 ## 1. Stop starting, start finishing
 
 ```bash
@@ -31,7 +36,7 @@ blocked by one small story usually means the blocker is the real pick.
 
 If nothing ranks, say why (nothing ready, everything blocked, nothing
 scored) and offer the **story-ready**, **story-estimate**, or
-**backlog-groom** skill.
+**refinement** skill.
 
 ## 3. Sanity-check the top candidates
 

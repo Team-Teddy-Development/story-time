@@ -1,6 +1,7 @@
 pub mod adoption;
 pub mod gateway;
 pub mod init;
+pub mod planning;
 pub mod story;
 
 use chrono::Utc;

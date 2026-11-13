@@ -1,0 +1,93 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Story Time planning request version 1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "plan_id", "source", "candidate_order"],
+  "properties": {
+    "schema_version": { "const": 1 },
+    "plan_id": { "type": "string", "pattern": "\\S" },
+    "source": { "$ref": "#/$defs/source" },
+    "candidate_order": { "type": "array", "items": { "type": "string" }, "uniqueItems": true },
+    "goal": { "type": ["string", "null"] },
+    "calendar": {
+      "type": ["object", "null"],
+      "additionalProperties": false,
+      "properties": {
+        "start": { "type": ["string", "null"], "format": "date" },
+        "end": { "type": ["string", "null"], "format": "date" },
+        "time_zone": { "type": ["string", "null"], "pattern": "\\S" }
+      }
+    },
+    "capacity": {
+      "type": ["object", "null"],
+      "additionalProperties": false,
+      "required": ["budget", "reserve", "unit", "source"],
+      "properties": {
+        "budget": { "type": "number", "minimum": 0, "maximum": 1000000000, "multipleOf": 0.000001 },
+        "reserve": { "type": "number", "minimum": 0, "maximum": 1000000000, "multipleOf": 0.000001, "description": "Native validation also requires reserve <= budget." },
+        "unit": { "const": "points" },
+        "source": { "type": "string", "pattern": "\\S" }
+      }
+    },
+    "epic_evidence": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["disposition", "evidence"],
+        "properties": {
+          "disposition": { "enum": ["mapped", "justified-standalone", "unresolved-epic"] },
+          "epic": { "type": ["string", "null"] },
+          "evidence": { "type": "string", "pattern": "\\S" }
+        }
+      }
+    },
+    "exclusions": { "type": "object", "additionalProperties": { "type": "string", "pattern": "\\S" } },
+    "forecasts": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["label", "ids"],
+        "properties": {
+          "label": { "type": "string", "pattern": "\\S" },
+          "ids": { "type": "array", "items": { "type": "string" }, "uniqueItems": true }
+        }
+      }
+    },
+    "output_preimages": { "type": "object", "additionalProperties": { "type": ["string", "null"], "pattern": "^[0-9a-f]{64}$" } }
+  },
+  "$defs": {
+    "image": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "sha256"],
+      "properties": {
+        "path": { "type": "string", "minLength": 1 },
+        "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" }
+      }
+    },
+    "source": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["repository", "captured_at", "backlog_dir", "files"],
+      "properties": {
+        "repository": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["root"],
+          "properties": {
+            "root": { "type": "string", "minLength": 1 },
+            "head": { "type": ["string", "null"] },
+            "origin": { "type": ["string", "null"] }
+          }
+        },
+        "captured_at": { "type": "string", "format": "date-time" },
+        "config": { "anyOf": [{ "$ref": "#/$defs/image" }, { "type": "null" }] },
+        "backlog_dir": { "type": "string", "minLength": 1 },
+        "files": { "type": "array", "items": { "$ref": "#/$defs/image" } }
+      }
+    }
+  }
+}
