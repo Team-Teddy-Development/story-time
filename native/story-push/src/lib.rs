@@ -1,3 +1,4 @@
+pub mod adoption;
 pub mod gateway;
 pub mod init;
 pub mod story;

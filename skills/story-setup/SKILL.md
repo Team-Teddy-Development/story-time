@@ -13,6 +13,19 @@ For a new GitHub, Gitea, or Azure DevOps setup, use `sync: "auto"` unless the ow
 Preserve an existing explicit sync policy unless the owner requests a change.
 Write `sync` explicitly in setup answers and settings. An omitted field still uses the CLI's compatibility default, `off`.
 
+## New, adopt, or upgrade
+
+Before the Gitea branch or any write, inspect current `.story-time/settings.json`, legacy `.story-time.json`, `.story-time/lifecycle.json`, and the configured backlog, including custom and terminal records.
+
+| Project state | Route |
+| --- | --- |
+| No settings, lifecycle metadata, or existing backlog | New setup. Continue below and use native `story init --from <answers.json>`. |
+| Existing settings or local/tracker backlog | Adopt. Run native `story adopt preview` from the project root, then stop setup and report its JSON. |
+| Lifecycle metadata, including unknown versions | Upgrade review. Run the same native `story adopt preview` owner, then stop setup and report its JSON. |
+
+Preview writes nothing and needs no credentials. Exit 0 `preview` is a plan, not adoption; `already_adopted` requires verified preimages and membership. Exit 2 `conflict` has recovery diagnostics and empty `allowed_writes`.
+For either existing-project route, read `docs/adoption-preview/README.md` in the source checkout for preservation and export/import handoffs. Missing settings do not establish tracker or prefix identity. Preserve originals and sync; no adoption apply, verify, or rollback command exists. The installer copies skills only; install the native CLI separately.
+
 ## Gitea setup branch
 
 Read `.story-time/settings.json` directly before running `story config`.
@@ -50,9 +63,6 @@ Gitea Rust conversion scope.
 ```bash
 story config --json
 ```
-
-If the first line says a config file was found, show the user the current
-values and ask what to change. Otherwise, start from scratch.
 
 ## 2. Detect before asking
 
