@@ -10,6 +10,10 @@ description: Start work on a picked story by turning its acceptance criteria int
 The criteria are the spec. Kickoff turns them into a plan where every step
 starts with a failing test. Do not write production code during kickoff.
 
+A local sprint-planning artifact does not start a story or a sprint. Recheck
+current readiness, completed dependencies, and the pull decision from **story-pick**
+before implementation. Return stale planning inputs to **sprint-planning** skill.
+
 ## 1. Confirm the story
 
 Run `story show <id>`. It should be `in-progress` (set by the **story-pick**

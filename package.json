@@ -2,7 +2,7 @@
   "name": "story-time",
   "version": "0.1.0",
   "private": true,
-  "description": "Agent skills for agile story planning: create, edit, split, groom, estimate, and pick high-value user stories.",
+  "description": "Agent skills for story refinement, goal-based sprint planning, and the story delivery lifecycle.",
   "type": "module",
   "license": "MIT",
   "engines": { "node": ">=20" },

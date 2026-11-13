@@ -21,7 +21,9 @@ script. Here the subject is the story lifecycle, from idea to accepted.
 | `acceptance-criteria` | "write the ACs" | Testable Given/When/Then criteria covering happy, failure, boundary, permission, and non-functional cases. |
 | `story-estimate` | "planning poker" | Three independent estimators anchored on done stories, converged on one size; WSJF value scoring. |
 | `story-ready` | "is this ready?" | Definition of Ready gate: automated INVEST lint plus judgment checks. The only way into `ready`. |
-| `backlog-groom` | "groom the backlog" | Health stats, stale, duplicate, oversized, unscored, and blocked stories, and re-ordering. Proposes, then applies on approval. |
+| `refinement` | "refine ST-012", "refine the backlog" | One workflow for single-story depth or complete open-story inventory, epic questions, preserved estimates, and ordered ready candidates. |
+| `backlog-groom` | "groom the backlog" | Compatibility alias to refinement in backlog mode. |
+| `sprint-planning` | "plan a sprint" | Goal-based local JSON and Markdown proposals with explicit capacity, completed dependencies, deferred work, and forecast limits. |
 | `story-pick` | "what's next?" | WSJF-ranked pick, checked against WIP, capacity, dependencies, and risk, with alternatives. |
 | `story-map` | "map this epic" | User story map (backbone → steps → stories) sliced into a walking skeleton and outcome-named releases. |
 | `spike` | "we need to investigate" | A time-boxed, single-question spike with exit criteria, which ends in estimated follow-up stories. |
@@ -35,7 +37,8 @@ script. Here the subject is the story lifecycle, from idea to accepted.
 story-setup (once) → idea → story-create → acceptance-criteria → story-estimate → story-ready → story-pick → story-kickoff → build → story-accept
           ├─ too big → story-split      ├─ epic → story-map      └─ unknown → spike
           ├─ a lifecycle → state-machine      └─ a multi-input rule → decision-table   (both feed acceptance-criteria)
-backlog-groom runs on a cadence; story-edit applies anywhere.
+refinement runs in single-story or backlog mode; backlog-groom is its alias.
+sprint-planning consumes ordered ready stories; story-edit applies anywhere.
 ```
 
 Every skill depends on `story-time`, which holds the CLI. Install it with any
@@ -43,8 +46,9 @@ of them.
 
 ## Install
 
-Native `story init` and `story push` require Rust and Cargo. Other commands
-still require Node 20+ and use the existing dependency-free Node CLI.
+Native `story init`, `story push`, `story adopt preview`, and `story plan`
+require Rust and Cargo. Other commands still require Node 20+ and use the
+existing dependency-free Node CLI.
 
 From the repository root, install the native executable and configure the
 retained entry point for other commands:
@@ -88,7 +92,8 @@ node scripts/install.mjs --agent all         # both
 | `--force` | Replace story-time skills that are already installed. Without it, the installer refuses and writes nothing |
 | `--uninstall` | Remove the story-time skills, and nothing else |
 
-The installer copies the skills without the test suite.
+The installer copies the skills without the test suite. It does not install the
+native executable. Install native `story` separately before using planning skills.
 
 ### Codex
 
@@ -159,9 +164,30 @@ validated `.story-time/settings.json`. Commit it.
 ```
 
 Every skill reads it: cards come out in your tracker's format, `story-pick`
-respects your WIP limit, `backlog-groom` sizes the ready buffer from your
-velocity, `story-kickoff` writes tests for your framework, and
+respects your WIP limit, `refinement` records the ready-buffer evidence or its
+missing inputs, `story-kickoff` writes tests for your framework, and
 `story-ready` / `story-accept` add your team's rules.
+
+## Refinement and sprint proposals
+
+Use `refinement` for a named story or the backlog. `backlog-groom` reaches the
+same workflow. `story-map` owns epic definitions; `story-ready` owns readiness.
+Use `sprint-planning` for a supplied goal, calendar, point budget, and reserve.
+
+```bash
+story plan --snapshot > request.json
+story plan --from request.json
+story plan --from request.json --output docs/planning/sprint.json
+```
+
+Snapshot emits a complete runnable request with current repository/config/backlog
+hashes. Review its planning fields before selection. Missing capacity produces a
+provisional plan with no commitments. WIP limits concurrent pull, not total plan
+size. Later groups remain forecasts. Output is local-only; no sprint starts or
+tracker writes occur. Replacing an artifact requires exact reviewed hashes of both
+JSON and Markdown outputs. Source freshness and safe-path checks fail before
+replacement. See [generate a local proposal](docs/planning/README.md) for the JSON
+schema, runnable request example, arithmetic, overwrite usage, and recovery limits.
 
 ## Decisions: code-driven, or Jev with your own key
 

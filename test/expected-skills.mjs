@@ -10,6 +10,8 @@ export const EXPECTED = [
   'story-estimate',
   'story-ready',
   'backlog-groom',
+  'refinement',
+  'sprint-planning',
   'story-pick',
   'story-map',
   'spike',

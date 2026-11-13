@@ -1,0 +1,4 @@
+interface:
+  display_name: "Refinement"
+  short_description: "Refine a story or prepare an ordered ready backlog"
+  default_prompt: "Use $refinement to inventory the backlog or refine a named story while preserving estimates."

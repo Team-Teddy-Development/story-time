@@ -7,6 +7,12 @@ description: Break an epic, feature, or product idea into a user story map — b
 
 `story` means the CLI from the **story-time** skill.
 
+This skill owns epic outcomes, definitions, and story links. The **refinement**
+skill inventories existing stories and brings evidence or unresolved epic questions
+here. Return a defined outcome and its source path, a justified standalone reason,
+or an explicit unresolved question. Sprint plans consume those decisions; they do
+not create a parallel epic service.
+
 A backlog is a flat list that hides the shape of the product. A story map
 shows the shape: what users do from left to right, and how much of each
 step we build from top to bottom.

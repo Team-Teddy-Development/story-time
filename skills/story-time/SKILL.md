@@ -18,7 +18,9 @@ idea ──► story-create ──► acceptance-criteria ──► story-estima
             ├─ an epic? ──► story-map                                                    ▼
             └─ unknown? ──► spike                             story-pick ──► story-kickoff ──► build ──► story-accept ──► [done]
 
-backlog-groom runs on a cadence over the whole backlog. story-edit changes any story at any stage.
+refinement owns single-story and backlog modes; backlog-groom is its compatibility alias.
+sprint-planning consumes ordered ready candidates and produces local proposals.
+story-edit changes any story at any stage.
 state-machine and decision-table write checked models that acceptance-criteria and story-kickoff build on.
 ```
 
@@ -31,7 +33,9 @@ state-machine and decision-table write checked models that acceptance-criteria a
 | "write the ACs", "what are the edge cases" | **acceptance-criteria** skill |
 | "size this", "planning poker", "score value" | **story-estimate** skill |
 | "is this ready?" | **story-ready** skill |
-| "groom / refine the backlog" | **backlog-groom** skill |
+| "refine ST-012", "groom / refine the backlog" | **refinement** skill |
+| "backlog-groom" | **backlog-groom** skill, alias to refinement |
+| "plan a sprint", goal and capacity planning | **sprint-planning** skill |
 | "what should I work on next?" | **story-pick** skill |
 | "map out this epic / feature" | **story-map** skill |
 | "we don't know enough to estimate" | **spike** skill |
@@ -44,7 +48,8 @@ The **principle-invest** skill holds the quality bar all of them apply.
 
 ## The `story` tool
 
-Use the installed Rust `story` executable for push with GitHub, ADO, or Gitea.
+Use installed Rust `story` for `init`, `push`, `adopt preview`, and `plan`.
+The skill installer copies skills only; install the executable separately.
 Read `.story-time/settings.json` before selecting a tracker. Install the native
 command from the repository root:
 
@@ -53,10 +58,11 @@ cargo install --path native/story-push --locked
 ```
 
 `story push` runs entirely in Rust. Do not invoke the historical Node push
-handler. Other commands still use Node 20+. Set `STORY_TIME_LEGACY_CLI` to
+handler. Planning also runs entirely in Rust. Other commands still use Node 20+.
+Set `STORY_TIME_LEGACY_CLI` to
 this skill's absolute `scripts/story.mjs` path, or configure `legacyCli` in
 `~/.config/story-time/runtime.json`. The dispatcher uses that path only for
-non-push commands. Pass `--json` when you need to parse output.
+retained commands only. Plan JSON is the default output; retained commands use `--json`.
 
 The separate Rust `gitea-gateway story-push` interface remains available in
 [Gitea Story Time](../../docs/gitea-story-time.md). It takes explicit Markdown
@@ -71,6 +77,8 @@ part of either Rust push execution path.
 
 | Command | Does |
 |---|---|
+| `story plan --snapshot` | Capture a complete version-1 request with current source identity and hashes; read-only |
+| `story plan --from request.json [--output docs/planning/name.json]` | Generate a local JSON proposal; explicit output also writes Markdown, with reviewed hashes required for both replacements |
 | `story new --title T [--statement S] [--ac A]... [--type story\|spike\|bug\|chore]` | Create a draft with the next id. In a git repo the id is above every id on all local and remote-tracking branches; `git fetch` first so other branches' ids are seen |
 | `story list [--status S]` | List stories |
 | `story show <id>` | Print one story |
@@ -87,6 +95,10 @@ part of either Rust push execution path.
 | `story machine check\|criteria\|diagram <file>` | Check a state machine (`model/state/<entity>.toml`) for unreachable states, dead ends, transitions without an event, and unknown names; print one criterion per transition and per refused event; or print its Mermaid diagram. Exit 1 on defects |
 | `story table check\|criteria <file>` | Check a decision table for uncovered input combinations and, under `unique`, overlapping rules; or print one criterion with a row per combination for a parameterized test. Exit 1 on defects |
 | `story init --from answers.json` / `story config` | Write / show the project config (`.story-time/settings.json`) |
+
+The [planning request contract](./references/planning.md) defines missing inputs,
+capacity arithmetic, forecasts, freshness, and safe output. Plans never change
+story status or tracker sprint fields. WIP limits pull, not total plan size.
 
 The backlog lives in `./backlog/` (override with `--dir` or `$STORY_TIME_DIR`),
 one markdown file per story. Ids default to `ST-001`; set `--prefix` or

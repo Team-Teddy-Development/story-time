@@ -94,7 +94,7 @@ question so the user can just confirm. In Claude Code, use
      = Issue + Effort), plus an optional area path and iteration path.
 3. **Id prefix**, e.g. `ST`, or the team's key like `PAY`.
 4. **Team.** Sprint length in working days, velocity in points per sprint
-   (skip if unknown, since `backlog-groom` asks later), and WIP limit per person.
+   (skip if unknown; refinement records the gap), and WIP limit per person.
 5. **Definition of Done / Ready.** Any team rules beyond the defaults in
    the **story-accept** and **story-ready** skills, one line each.
 6. **Sync** (GitHub, Gitea, or ADO only). Use `auto` for a new setup unless the owner selects another mode.
@@ -238,12 +238,12 @@ Show the effective config from `story config` and say how it will be used:
 - With sync `ask` or `auto`, `story push <id>` creates or updates the
   tracker item and records `remote` / `remote_url` in the story.
 - **story-pick** uses `team.wipLimit` and `team.sprintDays`.
-  **backlog-groom** uses `team.velocity` for the ready buffer.
+  **refinement** records missing velocity. **sprint-planning** uses supplied goal,
+  calendar, budget, and reserve for local proposals. Install native `story` separately.
 - **story-ready** and **story-accept** add `definitionOfReady` and
   `definitionOfDone` to their checklists.
 - **story-kickoff** writes test names for `project.testFramework` and runs
   `project.testCommand`.
 
-Suggest committing `.story-time/settings.json` and `.story-time/.gitignore` (never the `.env` files). Then offer the next step: the
-**story-create** skill for a new backlog, or the **backlog-groom** skill
-for an existing one.
+Commit settings and `.story-time/.gitignore`, never `.env` files. Hand off to
+**story-create** skill for a new backlog or **refinement** skill after existing-project preview.

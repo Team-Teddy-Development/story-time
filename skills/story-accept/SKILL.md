@@ -8,6 +8,9 @@ description: Verify a finished story against each acceptance criterion and the D
 `story` means the CLI from the **story-time** skill.
 
 Acceptance is binary for each criterion. "Mostly" is not done.
+A refinement or sprint-planning artifact proves a local proposal, not story delivery,
+sprint closure, or tracker assignment. Accept implementation only from criterion
+and Definition of Done evidence. Future forecast groups remain forecasts.
 
 ## 1. Gather evidence
 
