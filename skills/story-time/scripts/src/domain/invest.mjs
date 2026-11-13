@@ -14,6 +14,7 @@ const VAGUE = [
 export const VAGUE_RE = new RegExp(`\\b(${VAGUE.map((w) => w.replace(/[-\s]/g, '[-\\s]')).join('|')})\\b`, 'i');
 
 const isSpike = (s) => s.type === 'spike';
+const isOneCriterionChore = (s) => s.type === 'chore' && acceptanceCriteria(s).length === 1;
 const CLOSED = new Set(['done', 'split', 'archived']);
 const needsStatement = (s) => !s.type || s.type === 'story';
 const isNum = (v) => typeof v === 'number' && Number.isFinite(v);
@@ -70,7 +71,9 @@ export const DEFAULT_RULES = [
     return n > AC_MAX ? [warn(`${n} acceptance criteria (> ${AC_MAX}). The story is probably several stories; consider story-split.`)] : [];
   }),
 
-  rule('size.estimated', 'E', (s) => (isSpike(s) || isNum(s.size) ? [] : [err('Not estimated. Run story-estimate.')])),
+  rule('size.estimated', 'E', (s) =>
+    isSpike(s) || isOneCriterionChore(s) || isNum(s.size) ? [] : [err('Not estimated. Run story-estimate.')],
+  ),
 
   rule('size.small', 'S', (s) => {
     if (!isNum(s.size)) return [];

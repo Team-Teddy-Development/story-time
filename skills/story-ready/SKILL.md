@@ -27,6 +27,7 @@ Every `error` blocks. Route each one to the skill that fixes it:
 | `spike.*` | **spike** skill |
 | `state_machine.exists` | **state-machine** skill |
 
+Spikes and chores with exactly one acceptance criterion need no size.
 Warnings don't block, but report them.
 
 ## 2. Judgment checks

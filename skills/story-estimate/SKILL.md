@@ -12,6 +12,9 @@ Estimate the smallest credible implementation of the written scope. Missing
 detail lowers confidence; it does not add imagined work. Do not size every
 possible interpretation, contingency, or future hardening task.
 
+Spikes and chores with exactly one acceptance criterion need no size.
+Such a chore stays out of `story rank` until it has one.
+
 ## Part A: size (effort, complexity, uncertainty)
 
 ### 1. Find anchors
