@@ -52,6 +52,35 @@ test('unestimated story is not ready', () => {
   assert.equal(r.ready, false);
 });
 
+const chore = (criteria) =>
+  story({
+    type: 'chore',
+    size: undefined,
+    sections: { 'Acceptance Criteria': criteria.map((c) => `- [ ] ${c}`).join('\n') },
+  });
+
+test('a one-criterion chore needs no size and can be ready', () => {
+  const r = lintStory(chore(['Given the pinned version, when CI runs, then it uses version 2.']));
+  assert.deepEqual(r.findings, []);
+  assert.equal(r.ready, true);
+});
+
+test('a chore with two criteria still needs a size', () => {
+  const r = lintStory(chore(['Given a, when b, then c.', 'Given d, when e, then f.']));
+  assert.deepEqual(r.findings.filter((f) => f.rule === 'size.estimated'), [
+    { rule: 'size.estimated', invest: 'E', severity: 'error', message: 'Not estimated. Run story-estimate.' },
+  ]);
+  assert.equal(r.ready, false);
+});
+
+test('a one-criterion story still needs a size', () => {
+  const r = lintStory(story({ size: undefined }));
+  assert.deepEqual(r.findings.filter((f) => f.rule === 'size.estimated'), [
+    { rule: 'size.estimated', invest: 'E', severity: 'error', message: 'Not estimated. Run story-estimate.' },
+  ]);
+  assert.equal(r.ready, false);
+});
+
 test('size of 13 or more is a Small error; 8 is a warning', () => {
   assert.equal(lintStory(story({ size: 13 })).findings.find((f) => f.rule === 'size.small').severity, 'error');
   assert.equal(lintStory(story({ size: 8 })).findings.find((f) => f.rule === 'size.small').severity, 'warning');
