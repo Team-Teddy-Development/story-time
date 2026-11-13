@@ -120,9 +120,17 @@ Cargo installed the actual executable at `/home/ejernigan/.local/state/story-tim
 
 Independent Jev review of B1 and exact arithmetic corrections returned supported0.85, verdict supported with confidence0.85. Preserve the original blocking review; this correction disposition supersedes B1 only with its real RED/GREEN evidence, not model agreement alone.
 
+## Main integration and retained failure follow-up
+
+Implementation commit: `386e85655c9fd73e7acc904b0b182fb49caaff61`. Normal merge of updated origin/main `e03b52a` produced `389f810b1a8922764a8ef8d05ab1863202813d3f`. Upstream ST-026 changed retained lint logic and its tests; those upstream changes are not ST-018 conversion or implementation work. ST-018's retained executable delta against the merged main remains empty.
+
+The final-source gate run passed G1-G3 but G4 failed. A captured full-chain reproduction showed one intermittent retained Node failure: `cli-push.test.mjs:70`, second push, empty JSON at line75. Its child exit/stderr are not asserted before parsing. This remains undiagnosed, not fixed by a retry. Standalone Node passed418, traced CLI push passed16, and traced full Node passed418 without source changes. Follow-up ST-027 (#61) preserves the failure, evidence, diagnostic gap, and Rust-only replacement boundary. Durable logs are under `/home/ejernigan/.local/state/story-time/ST018-planning-skills/docs/`.
+
+After main integration, `ST018-main-integrated-gates` reran the actual native/install/fmt/Clippy/Node/policy chain: G1-G4 passed, Node421/421, native73, policy12+11. G5 retains installed artifact proof. Its exit1 names only pending integration G6; this is not a test failure. The captured Node log is `ST018-final-node.log`. No assertions or test thresholds were weakened.
+
 ## Remaining boundaries and next commands
 
-No test or compiler failure remains. Multi-file publication is not crash-atomic; after a process kill, inspect both output files and the PID-bearing lock before recovery. No tracker sprint service, adoption apply, or authoritative history is implemented. These are preserved scope limits, not successful remote operations.
+The final main-integrated test and compiler run passes. The separately filed intermittent legacy failure remains open in ST-027; this is not a claim that its cause is fixed. Multi-file publication is not crash-atomic; after a process kill, inspect both output files and the PID-bearing lock before recovery. No tracker sprint service, adoption apply, or authoritative history is implemented. These are preserved scope limits, not successful remote operations.
 
 No worktree or pane was created by this delegate. The supplied worktree remains dirty and parent-owned. Cleanup's read-only call encountered an approval condition, then its retry requested a preview of the already-dry-run call. Git worktree inventory and status were inspected. The delegate did not loop approval retries or remove another run's tree. All owned build commands exited with process cleanup succeeded.
 
