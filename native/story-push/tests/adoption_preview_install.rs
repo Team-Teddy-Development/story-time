@@ -26,6 +26,10 @@ fn disposable_skill_install_routes_before_gitea_and_native_commands_need_no_node
         String::from_utf8_lossy(&install.stderr)
     );
     let skill = fs::read_to_string(temp.join(".agents/skills/story-setup/SKILL.md")).unwrap();
+    assert!(
+        skill.split('\n').count() <= 250,
+        "installed setup exceeds its 250-line contract"
+    );
     let routing = skill
         .find("## New, adopt, or upgrade")
         .expect("installed setup must detect existing sources first");

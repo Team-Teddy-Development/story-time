@@ -37,13 +37,8 @@ installation, locate the Story Time source checkout to read that reference.
 The installer copies skills only. From the checkout, install the binary with
 `cargo install --offline --path gitea-gateway`.
 
-Write `tracker: "gitea"`, `sync`, and `gitea: {baseUrl, owner, repo}` directly
-as JSON. For example:
-
-```json
-{"tracker":"gitea","sync":"auto","gitea":{"baseUrl":"https://gitea.example.com","owner":"acme","repo":"shop"}}
-```
-
+Write `tracker: "gitea"`, `sync`, and `gitea: {baseUrl, owner, repo}` as JSON.
+Example: `{"tracker":"gitea","sync":"auto","gitea":{"baseUrl":"https://gitea.example.com","owner":"acme","repo":"shop"}}`.
 Preserve unrelated settings. Use only `GITEA_TOKEN` in the environment.
 Run `gitea-gateway story-push --root <project> --dry-run backlog/ST-001.md`.
 For an authorized real push, remove `--dry-run`. Repeat pushes use the saved
