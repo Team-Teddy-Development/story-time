@@ -11,6 +11,10 @@ path = "src/main.rs"
 name = "story-install"
 path = "src/bin/story_install.rs"
 
+[[bin]]
+name = "story-install-skills"
+path = "src/bin/story_install_skills.rs"
+
 [dependencies]
 serde = { version = "1", features = ["derive"] }
 ring = "0.17.14"
