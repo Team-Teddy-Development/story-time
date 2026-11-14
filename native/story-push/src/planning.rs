@@ -1,3 +1,4 @@
+use crate::js_number::stringify;
 use chrono::{DateTime, NaiveDate, Utc};
 use ring::digest::{digest, SHA256};
 use serde::{Deserialize, Serialize};
@@ -707,21 +708,21 @@ fn plan(request: &PlanRequest, snapshot: &Snapshot) -> PlanArtifact {
     }
 }
 fn markdown(artifact: &PlanArtifact) -> String {
-    let mut text = format!("# Plan {}\n\nAssessment: {}. Local proposal only; no sprint starts or tracker assignments.\n\nGoal: {}\n\n## Capacity and calendar\n\n```json\n{}\n{}\n```\n\n## Dispositions\n\n", artifact.plan_id, artifact.assessment, artifact.goal.as_deref().unwrap_or("Unknown; see missing inputs"), artifact.capacity, artifact.calendar);
+    let mut text = format!("# Plan {}\n\nAssessment: {}. Local proposal only; no sprint starts or tracker assignments.\n\nGoal: {}\n\n## Capacity and calendar\n\n```json\n{}\n{}\n```\n\n## Dispositions\n\n", artifact.plan_id, artifact.assessment, artifact.goal.as_deref().unwrap_or("Unknown; see missing inputs"), stringify(&artifact.capacity, false), stringify(&artifact.calendar, false));
     for row in &artifact.dispositions {
         text.push_str(&format!(
             "- {}: {}. {} Epic: {}\n",
             row.id,
             row.selection,
             row.reasons.join("; "),
-            serde_json::to_string(&row.epic).unwrap()
+            stringify(&row.epic, false)
         ));
     }
     text.push_str("\n## Missing inputs\n\n");
     for item in &artifact.missing_inputs {
         text.push_str(&format!("- {}: {}\n", item.field, item.reason));
     }
-    text.push_str(&format!("\n## Forecasts\n\n{}\n\n## Publication and WIP\n\n{}\n\n{}\n\n## Source\n\n```json\n{}\n```\n",json!(artifact.forecasts),artifact.publication,artifact.wip_policy,serde_json::to_string_pretty(&artifact.source).unwrap()));
+    text.push_str(&format!("\n## Forecasts\n\n{}\n\n## Publication and WIP\n\n{}\n\n{}\n\n## Source\n\n```json\n{}\n```\n",stringify(&artifact.forecasts, false),stringify(&artifact.publication, false),stringify(&artifact.wip_policy, false),stringify(&artifact.source, true)));
     text
 }
 fn output_paths(root: &Path, output: &str) -> Result<[PathBuf; 2]> {
@@ -811,7 +812,7 @@ fn publish(
     protect_sources(root, &request.source, &paths)?;
     let originals = output_preimages(root, &paths, &request.output_preimages)?;
     let content = [
-        format!("{}\n", serde_json::to_string_pretty(artifact).unwrap()).into_bytes(),
+        format!("{}\n", stringify(artifact, true)).into_bytes(),
         markdown(artifact).into_bytes(),
     ];
     let parent = paths[0].parent().unwrap();
@@ -919,10 +920,7 @@ pub fn run(args: &[String]) -> (String, u8) {
                 exclusions: BTreeMap::new(),
                 output_preimages: BTreeMap::new(),
             };
-            return Ok(format!(
-                "{}\n",
-                serde_json::to_string_pretty(&request).unwrap()
-            ));
+            return Ok(format!("{}\n", stringify(&request, true)));
         }
         let (from, output) = match args {
             [flag, from] if flag == "--from" => (from, None),
@@ -949,10 +947,7 @@ pub fn run(args: &[String]) -> (String, u8) {
         } else if !request.output_preimages.is_empty() {
             return Err("unexpected_output_preimage: no --output target".into());
         }
-        Ok(format!(
-            "{}\n",
-            serde_json::to_string_pretty(&artifact).unwrap()
-        ))
+        Ok(format!("{}\n", stringify(&artifact, true)))
     })();
     match result {
         Ok(text) => (text, 0),
