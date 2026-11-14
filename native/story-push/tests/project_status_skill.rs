@@ -170,7 +170,7 @@ fn project_status_defines_and_states_its_scope() {
     let text = skill("project-status");
     position(
         &text,
-        "The default scope is every story in `story list --json` except `archived` ones",
+        "The default scope is every story in `story list --json` except `split` and `archived` ones",
     );
     position(&text, "The report states its scope");
 }
