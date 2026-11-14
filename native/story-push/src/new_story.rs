@@ -6,7 +6,7 @@ use crate::{
     config::{self, Flags},
     js_number,
     lenient_story::{trim, Js},
-    list::{self, backlog_dir},
+    list::{self, backlog_dir, CreateError},
     next_id::{format_id, next_id, number},
     Failure,
 };
@@ -28,12 +28,8 @@ pub fn run(args: &[String]) -> Result<String, Failure> {
             .unwrap_or_else(|_| settings["prefix"].as_str().unwrap_or("ST").to_owned()),
     };
     let _lock = adoption_apply::lock_for_write(&loaded.root)?;
-    let story = create(
-        &flags,
-        &dir,
-        &prefix,
-        &Utc::now().format("%Y-%m-%d").to_string(),
-    )?;
+    let date = Utc::now().format("%Y-%m-%d").to_string();
+    let story = create(&flags, &dir, &prefix, &date, usize::MAX).map_err(String::from)?;
     let id = story.get("id").string();
     Ok(if flags.has("json") {
         format!("{}\n", story.json())
@@ -43,19 +39,26 @@ pub fn run(args: &[String]) -> Result<String, Failure> {
 }
 
 /// `createStory` followed by `FileSystemStoryRepository.save`, except that an id another process
-/// took after `next_id` read the backlog is skipped instead of overwritten.
-fn create(flags: &Flags, dir: &Path, prefix: &str, date: &str) -> Result<Js, String> {
+/// took after `next_id` read the backlog is skipped instead of overwritten, for at most
+/// `attempts` ids; then the last id taken is the error.
+pub(crate) fn create(
+    flags: &Flags,
+    dir: &Path,
+    prefix: &str,
+    date: &str,
+    attempts: usize,
+) -> Result<Js, CreateError> {
     let title = flags
         .value("title")
         .map(trim)
         .filter(|t| !t.is_empty())
-        .ok_or("A story needs a title.")?;
+        .ok_or_else(|| CreateError::Other("A story needs a title.".into()))?;
     let kind = flags.value("type").unwrap_or("story");
     if !TYPES.contains(&kind) {
-        return Err(format!(
+        return Err(CreateError::Other(format!(
             "Unknown type \"{kind}\". Use one of: {}.",
             TYPES.join(", ")
-        ));
+        )));
     }
     let text = |key: &str| Js::Str(key.into());
     let bullets = flags
@@ -86,17 +89,18 @@ fn create(flags: &Flags, dir: &Path, prefix: &str, date: &str) -> Result<Js, Str
     }
     sections.push(("Changelog".into(), text(&format!("- {date} created"))));
 
-    let mut taken = 0.0;
-    loop {
-        let next = number(&next_id(dir, prefix)?, prefix).unwrap_or(0.0);
-        let n = next.max(taken + 1.0);
+    let mut taken = (0.0, String::new());
+    for _ in 0..attempts {
+        let next = next_id(dir, prefix).map_err(CreateError::Other)?;
+        let n = number(&next, prefix).unwrap_or(0.0).max(taken.0 + 1.0);
         let story = draft(flags, &format_id(prefix, n), title, kind, date, &sections);
         match list::create(dir, &story) {
             Ok(()) => return Ok(story),
-            Err(list::CreateError::Taken(_)) => taken = n,
-            Err(error) => return Err(error.into()),
+            Err(CreateError::Taken(message)) => taken = (n, message),
+            Err(error) => return Err(error),
         }
     }
+    Err(CreateError::Taken(taken.1))
 }
 
 fn draft(

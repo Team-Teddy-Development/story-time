@@ -2,7 +2,8 @@
 //! in `docs/spikes/ST-006-mcp-server.md`. Tools take a repository key and story ids, never paths,
 //! and read through the same `config`, `list`, `lenient_story`, and `lint` code as the CLI. With
 //! `--write` it adds `story_update` and `story_note`, which change stories through the code of
-//! `story set` and `story note` under the repository lock and a SHA-256 precondition.
+//! `story set` and `story note` under the repository lock and a SHA-256 precondition, and
+//! `story_create`, which files a story through the code of `story new` under the same lock.
 
 use crate::{
     adoption::sha,
@@ -10,7 +11,7 @@ use crate::{
     config,
     lenient_story::{self, Js},
     lint::{self, Severity},
-    list, note, set, valid_id, Failure,
+    list, new_story, note, set, valid_id, Failure,
 };
 use regex_lite::Regex;
 use serde_json::{json, Map, Value};
@@ -306,7 +307,7 @@ impl Server {
                 json!({"error": {
                     "code": error.code,
                     "message": error.message,
-                    "retryable": matches!(error.code, "io_error" | "conflict" | "lock_held"),
+                    "retryable": matches!(error.code, "io_error" | "conflict" | "lock_held" | "id_taken"),
                     "details": error.details,
                 }}),
                 true,
@@ -345,9 +346,15 @@ impl Server {
                     .into_iter()
                     .flatten(),
             )
+            .chain(outcome.as_ref().ok().map(|v| &v["audit"]["id"]))
             .filter_map(Value::as_str)
             .filter(|id| valid_id(id))
-            .collect();
+            .fold(Vec::new(), |mut ids, id| {
+                if !ids.contains(&id) {
+                    ids.push(id);
+                }
+                ids
+            });
         let line = json!({
             "at": chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true),
             "tool": tool,
@@ -1055,7 +1062,74 @@ fn story_note(server: &Server, args: &Map<String, Value>) -> Result<Value, ToolE
     ))
 }
 
+fn story_create(server: &Server, args: &Map<String, Value>) -> Result<Value, ToolError> {
+    let title = args["title"].as_str().unwrap_or_default();
+    if lenient_story::trim(title).is_empty() {
+        return Err(invalid("/title", "/title is blank.".into()));
+    }
+    let mut argv = Vec::new();
+    let mut fields = Vec::new();
+    for (key, flag) in [
+        ("title", "title"),
+        ("statement", "statement"),
+        ("acceptance_criteria", "ac"),
+        ("type", "type"),
+        ("epic", "epic"),
+    ] {
+        let values = match &args.get(key) {
+            Some(Value::String(value)) => vec![value.as_str()],
+            Some(Value::Array(items)) => items.iter().filter_map(Value::as_str).collect(),
+            _ => continue,
+        };
+        fields.push(key.to_owned());
+        for value in values {
+            argv.extend([format!("--{flag}"), value.to_owned()]);
+        }
+    }
+    let flags = config::Flags::parse(&argv).map_err(|e| invalid("", e.message))?;
+    let (repo, _lock) = server.lock(args)?;
+    if args.get("allow_duplicate_title") != Some(&Value::Bool(true)) {
+        let normalized = |title: &str| lenient_story::trim(title).to_lowercase();
+        let wanted = normalized(title);
+        let ids: Vec<String> = repo
+            .stories()?
+            .0
+            .iter()
+            .filter(|s| !matches!(s.get("title"), Js::Undefined))
+            .filter(|s| normalized(&s.get("title").string()) == wanted)
+            .map(|s| s.get("id").string())
+            .collect();
+        if !ids.is_empty() {
+            let mut error = fail("duplicate_title", "A story with that title exists.");
+            error.details = json!({ "ids": ids });
+            return Err(error);
+        }
+    }
+    let prefix = repo.settings["prefix"].as_str().unwrap_or("ST");
+    let date = chrono::Utc::now().format("%Y-%m-%d").to_string();
+    let story = new_story::create(&flags, &repo.dir, prefix, &date, 2).map_err(|e| match e {
+        list::CreateError::Taken(_) => fail(
+            "id_taken",
+            "Another process took each id this call allocated.",
+        ),
+        list::CreateError::Other(_) => io_error("write story file"),
+    })?;
+    let after = sha(lenient_story::serialize(&story).as_bytes());
+    let mut result = repo.written(
+        "story_create",
+        "created",
+        &story,
+        "",
+        &after,
+        fields,
+        Some("created".into()),
+    );
+    result["sha256_before"] = Value::Null;
+    Ok(result)
+}
+
 enum Kind {
+    Flag,
     Text(usize),
     Choice(&'static [&'static str]),
     List(&'static Kind, usize),
@@ -1067,6 +1141,7 @@ enum Kind {
 impl Kind {
     fn schema(&self) -> Value {
         match self {
+            Kind::Flag => json!({"type": "boolean", "default": false}),
             Kind::Text(max) => json!({"type": "string", "maxLength": max}),
             Kind::Choice(choices) => json!({"type": "string", "enum": choices}),
             Kind::List(item, max) => {
@@ -1090,6 +1165,7 @@ impl Kind {
     }
     fn check(&self, value: &Value, pointer: &str) -> Result<(), ToolError> {
         let ok = match (self, value) {
+            (Kind::Flag, Value::Bool(_)) => true,
             (Kind::Text(max), Value::String(s)) => s.chars().count() <= *max,
             (Kind::Choice(choices), Value::String(s)) => choices.contains(&s.as_str()),
             (Kind::List(item, max), Value::Array(items)) => {
@@ -1167,7 +1243,7 @@ struct Tool {
     run: fn(&Server, &Map<String, Value>) -> Result<Value, ToolError>,
 }
 
-const TOOLS: [Tool; 6] = [
+const TOOLS: [Tool; 7] = [
     Tool {
         name: "story_config",
         hints: READ,
@@ -1281,6 +1357,45 @@ const TOOLS: [Tool; 6] = [
         required: &["id", "expected_sha256", "note"],
         output: write_schema,
         run: story_note,
+    },
+    Tool {
+        name: "story_create",
+        hints: Hints {
+            read_only: false,
+            destructive: false,
+            idempotent: false,
+        },
+        description: "File a draft story as `story new` does and return its new id. Refuses a title an existing story has (trimmed, case-folded) unless allow_duplicate_title is true. Writes the local file only; publish.next names the push step.",
+        fields: &[
+            REPOSITORY,
+            Field {
+                name: "title",
+                kind: Kind::NonEmpty(200),
+            },
+            Field {
+                name: "statement",
+                kind: Kind::Text(100_000),
+            },
+            Field {
+                name: "acceptance_criteria",
+                kind: Kind::List(&Kind::NonEmpty(2_000), 20),
+            },
+            Field {
+                name: "type",
+                kind: Kind::Choice(TYPES),
+            },
+            Field {
+                name: "epic",
+                kind: Kind::Text(64),
+            },
+            Field {
+                name: "allow_duplicate_title",
+                kind: Kind::Flag,
+            },
+        ],
+        required: &["title"],
+        output: write_schema,
+        run: story_create,
     },
 ];
 
@@ -1454,9 +1569,9 @@ fn write_schema() -> Value {
             "publish",
         ],
         json!({
-            "status": {"enum": ["updated", "already_applied"]},
+            "status": {"enum": ["created", "updated", "already_applied"]},
             "story": summary_schema(),
-            "sha256_before": text,
+            "sha256_before": {"type": ["string", "null"]},
             "sha256_after": text,
             "audit": audit,
             "publish": publish,
