@@ -289,6 +289,35 @@ fn literal_integral_team_numbers_match_retained_init_and_config() {
 }
 
 #[test]
+fn settings_numbers_are_written_as_node_writes_them() {
+    let input = r#"{"team":{"velocity":1e400,"sprintDays":9007199254740993,"wipLimit":18446744073709551615},"jira":{"a":[-1e400,1e21,5e-324,-0]}}"#;
+    let (native, node) = (Sandbox::new(), Sandbox::new());
+    for s in [&native, &node] {
+        fs::write(s.0.join("answers.json"), input).unwrap();
+    }
+    let args = ["init", "--from", "answers.json", "--json"];
+    let written = native.init(&args[1..], true);
+    success(&written);
+    let retained = Command::new("node")
+        .arg(legacy())
+        .args(args)
+        .current_dir(&node.0)
+        .env_remove("STORY_TIME_CONFIG")
+        .output()
+        .unwrap();
+    success(&retained);
+    assert_eq!(
+        String::from_utf8_lossy(&written.stdout),
+        String::from_utf8_lossy(&retained.stdout)
+    );
+    let file = ".story-time/settings.json";
+    assert_eq!(
+        fs::read_to_string(native.0.join(file)).unwrap(),
+        fs::read_to_string(node.0.join(file)).unwrap()
+    );
+}
+
+#[test]
 fn tracker_and_nested_normalization_matches_retained_config_interface() {
     for input in [
         json!({"team":{"sprintDays":null,"wipLimit":null},"project":null,"tracker":null,"sync":null,"prefix":null}),
