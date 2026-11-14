@@ -73,20 +73,24 @@ impl Sandbox {
         self.root.join("home")
     }
 
-    fn install(&self, args: &[&str]) -> Output {
+    fn run(&self, args: &[&str]) -> Output {
         let path = format!(
             "{}:{}",
             self.root.join("fake-bin").display(),
             std::env::var("PATH").unwrap()
         );
-        let output = Command::new(env!("CARGO_BIN_EXE_story-install"))
+        Command::new(env!("CARGO_BIN_EXE_story-install"))
             .args(args)
             .arg("--source")
             .arg(self.root.join("source"))
             .env("HOME", self.home())
             .env("PATH", path)
             .output()
-            .unwrap();
+            .unwrap()
+    }
+
+    fn install(&self, args: &[&str]) -> Output {
+        let output = self.run(args);
         assert!(
             output.status.success(),
             "{}",
@@ -200,4 +204,22 @@ fn dry_run_prints_the_plan_and_writes_nothing() {
     assert!(plan.contains("cargo install"), "{plan}");
     assert!(plan.contains(".claude/skills"), "{plan}");
     assert_eq!(tree(&sandbox.home()), before);
+}
+
+#[test]
+fn a_failed_build_changes_nothing_and_leaves_nothing_to_roll_back() {
+    let sandbox = Sandbox::new("failed");
+    write(
+        &sandbox.root.join("fake-bin/cargo"),
+        "#!/bin/sh\necho 'build failed' >&2\nexit 1\n",
+    );
+    let failed = sandbox.run(&["--agent", "all"]);
+    assert!(!failed.status.success());
+    let home = sandbox.home();
+    assert_eq!(read(&home.join(".local/bin/story")), "old binary\n");
+    assert_eq!(legacy_cli(&home), "/old/story.mjs");
+
+    let rollback = sandbox.run(&["--rollback"]);
+    assert!(!rollback.status.success());
+    assert!(String::from_utf8_lossy(&rollback.stderr).contains("No saved install"));
 }

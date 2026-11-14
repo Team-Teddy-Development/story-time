@@ -361,6 +361,7 @@ fn main() -> ExitCode {
             return ExitCode::from(1);
         }
     };
+    let mut unused_backup = None;
     for step in &steps {
         println!("{}", step.describe(&layout));
         if options.dry_run {
@@ -368,7 +369,15 @@ fn main() -> ExitCode {
         }
         if let Err(message) = step.run(&layout) {
             eprintln!("{message}");
+            if let Some(dir) = unused_backup {
+                let _ = fs::remove_dir_all(dir);
+            }
             return ExitCode::from(1);
+        }
+        match step {
+            Step::Backup { dir } => unused_backup = Some(dir),
+            Step::Build { .. } => unused_backup = None,
+            _ => {}
         }
     }
     if !options.dry_run {
