@@ -73,7 +73,7 @@ fn real_installer_ships_both_entry_points_and_executes_their_documented_native_i
         "{}",
         String::from_utf8_lossy(&out.stderr)
     );
-    assert!(String::from_utf8_lossy(&out.stdout).contains("Installed 24 story-time skills"));
+    assert!(String::from_utf8_lossy(&out.stdout).contains("Installed 25 story-time skills"));
     assert!(
         !temp.join(".cargo/bin/story").exists(),
         "skill installer must not pretend to install native story"
