@@ -28,7 +28,10 @@ story metrics --from <YYYY-MM-DD> --to <YYYY-MM-DD> --json
 
 `story metrics` runs only in the native Rust `story` binary;
 `node skills/story-time/scripts/story.mjs` rejects it. Use the metrics window
-the user names; with no answer, use the last 14 days and say so.
+the user names; with no answer, use the 14 days ending on the report date,
+inclusive, and say so: `--from` is 13 days before the report date and `--to`
+is the report date. When `story metrics` fails, write each figure `unknown`
+and name the failing command and its error in Gaps.
 
 `story list --json` is the only story source. The default scope is every
 story in `story list --json` except `archived` ones; use a narrower scope
@@ -77,10 +80,14 @@ Never compute a figure yourself. Copy each figure from `story metrics` with
 its window and units. Copy a count directly from `story list --json` or
 `story metrics` output and cite the command. Never estimate a figure or
 derive a rate or forecast, and do not convert points to hours or days.
+Comparing two copied and cited numbers is allowed, such as the `in-progress`
+count against the WIP limit from `story config --json`; state both numbers.
 
 ## 4. Sort the work
 
-Every story in scope has one state. Keep the four states apart.
+Each story in scope has at most one state. When more than one fits, the first
+wins: `released`, then `accepted`, then `blocked`, then `forecast`. A story
+with none appears only in the `open` counts.
 
 - `accepted`: its status is `done`.
   A story counts as accepted only when its status is `done`.
@@ -92,11 +99,16 @@ Every story in scope has one state. Keep the four states apart.
   or a blocker the story Notes or a flow-review report name.
 - `forecast`: work expected later. A forecast is not a commitment. Label it
   as a forecast and cite a basis that already states a date or scope: a
-  sprint plan, a release manifest, or an epic map order. With no such basis,
-  the forecast is `unknown`. Never compute a forecast.
-- `open`: every open story (`draft`, `refined`, `ready`, `in-progress`), as
-  one `open` count per status from `story list --json`. These counts include
-  blocked stories; the `blocked` rows name them.
+  sprint plan, a release manifest, or an epic map order. An epic map's slice
+  order is a scope basis with no date. With no such basis, the forecast is
+  `unknown`. Never compute a forecast.
+- `open`: one `open` count per status (`draft`, `refined`, `ready`,
+  `in-progress`) from `story list --json`. The `open` counts are a separate
+  summary that overlaps the state rows; say so under the table.
+
+Group `accepted` and `released` stories into one row per epic (or one row for
+stories with no epic), listing every story ID in Work. Write each `blocked`
+and `forecast` story as its own row.
 
 `split` and `archived` stories are excluded, with their counts stated. A state
 with no entries gets one row with `none` in Work and Claim, and the command
@@ -124,8 +136,8 @@ order:
 
 | Work | State | Claim | Record |
 |---|---|---|---|
-| ST-048 | `accepted` | Export to CSV is accepted | `ST-048 status` (`done`), `ST-048 Evidence` |
-| ST-047 | `released` | Health check v1.4.0 reached production | `docs/releases/1.4.0.md` Delivery |
+| ST-044, ST-048 | `accepted` | EP-002 export stories are accepted | `story list --json` (status `done`), `ST-044 Evidence`, `ST-048 Evidence` |
+| ST-047 | `released` | EP-001 health check v1.4.0 reached production | `docs/releases/1.4.0.md` Delivery |
 | ST-052 | `blocked` | Waits for ST-051, which is `in-progress` | `ST-052 depends_on`, `docs/flow/2026-11-12.md` |
 | ST-055 | `forecast` | Forecast, not a commitment: next sprint, basis sprint plan | `docs/planning/sprint.json` |
 | 12 stories | `open` | 9 `draft`, 3 `ready` | `story list --json` |
@@ -139,7 +151,9 @@ figure the command reports as `unknown` stays `unknown`.
 ### Risks, decisions, and next actions
 
 Every risk, decision, and next action names an owner. When the owner is
-`unknown`, the next action is "lead assigns an owner".
+not recorded, write `unknown` in Owner, keep a risk's own next action in its
+Next action cell, and add one Next actions row, "Lead assigns an owner",
+owned by the lead.
 
 | Risk | Owner | Next action | Record |
 |---|---|---|---|
@@ -154,7 +168,8 @@ Every risk, decision, and next action names an owner. When the owner is
 | Finish ST-051 to unblock ST-052 | Dana | `unknown` | `docs/flow/2026-11-12.md` |
 
 A decision with no recorded date has date `unknown`. Do not use the report
-date in its place.
+date in its place. Use a decision log row's date only when the log does not
+disclaim that row's timestamp; otherwise the date is `unknown`.
 
 ### Gaps
 

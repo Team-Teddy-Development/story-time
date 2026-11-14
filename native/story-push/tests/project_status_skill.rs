@@ -262,7 +262,7 @@ fn project_status_records_absence_and_never_cites_itself() {
 fn project_status_gives_each_story_one_state_by_precedence() {
     let text = skill("project-status");
     assert!(!flowed(&text).contains("These counts include blocked stories"));
-    position(&text, "Each story in scope has one state");
+    position(&text, "Each story in scope has at most one state");
     position(
         &text,
         "`released`, then `accepted`, then `blocked`, then `forecast`",
