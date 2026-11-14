@@ -58,13 +58,18 @@ impl Project {
     fn standard(&self) {
         self.config();
         self.story(
-            "work/a.md",
+            "work/PAY-001.md",
             "PAY-001",
             "ready",
             "size: 3\r\ndepends_on: [PAY-002]\r\ncustom: [alpha, '東京']\r\nremote: 7\r\nremote_url: 'https://github.com/acme/shop/issues/7'\r\n",
         );
-        self.story("work/b.md", "PAY-002", "done", "size: 5\r\nremote: 8\r\n");
-        self.story("work/c.md", "PAY-003", "archived", "");
+        self.story(
+            "work/PAY-002.md",
+            "PAY-002",
+            "done",
+            "size: 5\r\nremote: 8\r\n",
+        );
+        self.story("work/PAY-003.md", "PAY-003", "archived", "");
         self.put("README.md", "unrelated\n");
     }
     fn story_cmd(&self, args: &[&str], envs: &[(&str, &str)]) -> (Output, Value) {
@@ -190,9 +195,9 @@ fn assert_backup_matches(p: &Project, before: &BTreeMap<PathBuf, Vec<u8>>) {
     }
     for expected in [
         ".story-time/settings.json",
-        "work/a.md",
-        "work/b.md",
-        "work/c.md",
+        "work/PAY-001.md",
+        "work/PAY-002.md",
+        "work/PAY-003.md",
     ] {
         assert!(paths.contains(&PathBuf::from(expected)), "{manifest}");
     }
@@ -249,7 +254,7 @@ fn apply_backs_up_mode600_inputs_before_mutation_and_preserves_every_source_byte
 fn credential_bearing_inputs_are_refused_before_any_backup_or_write() {
     let p = Project::new();
     p.put(".story-time/settings.json", json!({"tracker":"files","sync":"off","prefix":"PAY","backlogDir":"work","gitea":{"token":"DO-NOT-COPY"}}).to_string());
-    p.story("work/a.md", "PAY-001", "done", "");
+    p.story("work/PAY-001.md", "PAY-001", "done", "");
     let before = snapshot(&p.root);
     let plan = p.plan();
     let (out, r) = p.adopt("apply", &plan);
@@ -266,7 +271,7 @@ fn repeated_apply_and_verify_keep_files_and_receipt_identity_without_tracker_wri
     let base = format!("http://{}", tracker.local_addr().unwrap());
     let p = Project::new();
     p.put(".story-time/settings.json", json!({"tracker":"gitea","sync":"auto","prefix":"PAY","backlogDir":"work","gitea":{"baseUrl":base,"owner":"acme","repo":"shop"}}).to_string());
-    p.story("work/a.md", "PAY-001", "ready", "remote: 3\r\n");
+    p.story("work/PAY-001.md", "PAY-001", "ready", "remote: 3\r\n");
     let plan = p.plan();
     let env = [("GITEA_TOKEN", "recording-only")];
     let (out, r) = p.adopt_env("apply", &plan, &env);
@@ -365,7 +370,7 @@ fn stale_unsafe_unsupported_and_tampered_plans_stop_without_changes() {
     let p = Project::new();
     p.standard();
     let plan = p.plan();
-    p.story("work/b.md", "PAY-002", "done", "size: 8\r\n");
+    p.story("work/PAY-002.md", "PAY-002", "done", "size: 8\r\n");
     let before = snapshot(&p.root);
     let (out, r) = p.adopt("apply", &plan);
     assert_conflict(&out, &r, "stale_plan");
@@ -450,7 +455,7 @@ fn rollback_reverses_only_journaled_writes_and_keeps_unrelated_edits() {
         let p = Project::new();
         if legacy {
             p.legacy_config();
-            p.story("work/a.md", "PAY-001", "done", "");
+            p.story("work/PAY-001.md", "PAY-001", "done", "");
         } else {
             p.standard();
         }
@@ -513,15 +518,79 @@ fn rollback_stops_on_diverged_bytes_and_records_the_failure() {
 }
 
 #[test]
-fn legacy_stories_keep_missing_data_explicit_and_terminal_status_unchanged() {
+fn adopt_refuses_stories_outside_their_id_file_and_list_shows_every_adopted_story() {
     let p = Project::new();
     p.legacy_config();
     p.put("work/old-1.md", "---\nid: PAY-001\nstatus: done\n---\n");
+    p.put("work/PAY-003.md", "---\nid: PAY-002\nstatus: ready\n---\n");
+    p.put("work/PAY-004.md", "---\nid: PAY-004\nstatus: ready\n---\n");
+    let before = snapshot(&p.root);
+    let (out, preview) = p.story_cmd(&["adopt", "preview"], &[]);
+    assert_conflict(&out, &preview, "noncanonical_story_file");
+    let refused: Vec<_> = preview["diagnostics"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|d| d["code"] == "noncanonical_story_file")
+        .map(|d| d["path"].as_str().unwrap())
+        .collect();
+    assert_eq!(refused, ["work/PAY-003.md", "work/old-1.md"]);
+    assert_eq!(preview["allowed_writes"], json!([]));
+    assert_eq!(preview["backlog"]["files"].as_array().unwrap().len(), 3);
+    let plan = p.plan();
+    let (out, r) = p.adopt("apply", &plan);
+    assert_eq!(out.status.code(), Some(2), "{r}");
+    assert_eq!(before, snapshot(&p.root), "refused adoption mutated files");
+
+    fs::rename(p.root.join("work/old-1.md"), p.root.join("work/PAY-001.md")).unwrap();
+    fs::rename(
+        p.root.join("work/PAY-003.md"),
+        p.root.join("work/PAY-002.md"),
+    )
+    .unwrap();
+    let plan = p.plan();
+    let (out, r) = p.adopt("apply", &plan);
+    assert!(out.status.success(), "{r}");
+    let metadata: Value = serde_json::from_slice(&p.read(".story-time/lifecycle.json")).unwrap();
+    let adopted: Vec<_> = metadata["preservation"]["backlog"]["files"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|f| f["id"].as_str().unwrap().to_owned())
+        .collect();
+    assert_eq!(adopted, ["PAY-001", "PAY-002", "PAY-004"]);
+    let list = Command::new(env!("CARGO_BIN_EXE_story"))
+        .args(["list", "--json"])
+        .current_dir(&p.root)
+        .env_clear()
+        .env("PATH", "/nonexistent")
+        .output()
+        .unwrap();
+    assert!(
+        list.status.success(),
+        "{}",
+        String::from_utf8_lossy(&list.stderr)
+    );
+    let listed: Value = serde_json::from_slice(&list.stdout).unwrap();
+    let listed: Vec<_> = listed
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|s| s["id"].as_str().unwrap().to_owned())
+        .collect();
+    assert_eq!(listed, adopted);
+}
+
+#[test]
+fn legacy_stories_keep_missing_data_explicit_and_terminal_status_unchanged() {
+    let p = Project::new();
+    p.legacy_config();
+    p.put("work/PAY-001.md", "---\nid: PAY-001\nstatus: done\n---\n");
     p.put(
-        "work/old-2.md",
+        "work/PAY-002.md",
         "---\nid: PAY-002\nstatus: archived\ntitle: no criteria\n---\n\n## Notes\nfree text\n",
     );
-    p.put("work/old-3.md", "---\nid: PAY-003\nstatus: draft\n---\n");
+    p.put("work/PAY-003.md", "---\nid: PAY-003\nstatus: draft\n---\n");
     let before = snapshot(&p.root);
     let plan = p.plan();
     let (out, r) = p.adopt("apply", &plan);
@@ -569,13 +638,13 @@ fn legacy_story_with_prose_before_its_first_section_is_preserved_byte_for_byte()
     let p = Project::new();
     p.legacy_config();
     let story = "---\nid: PAY-001\nstatus: ready\n---\nWritten before sections existed.\n\nSecond paragraph.\n\n## Story\nRetain prose.\n";
-    p.put("work/legacy.md", story);
+    p.put("work/PAY-001.md", story);
     let (out, preview) = p.story_cmd(&["adopt", "preview"], &[]);
     assert!(out.status.success(), "{preview}");
     assert_eq!(preview["status"], "preview");
     assert!(preview["diagnostics"].as_array().unwrap().is_empty());
     let row = &preview["backlog"]["files"][0];
-    assert_eq!(row["path"], "work/legacy.md");
+    assert_eq!(row["path"], "work/PAY-001.md");
     assert_eq!(
         (&row["id"], &row["status"]),
         (&json!("PAY-001"), &json!("ready"))
@@ -584,7 +653,7 @@ fn legacy_story_with_prose_before_its_first_section_is_preserved_byte_for_byte()
     let plan = p.plan();
     let (out, r) = p.adopt("apply", &plan);
     assert!(out.status.success(), "{r}");
-    assert_eq!(p.read("work/legacy.md"), story.as_bytes());
+    assert_eq!(p.read("work/PAY-001.md"), story.as_bytes());
 }
 
 #[test]

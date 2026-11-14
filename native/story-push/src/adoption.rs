@@ -193,6 +193,9 @@ impl Inventory {
                 let story = read.story.to_value();
                 if let Some(id) = story["id"].as_str().filter(|id| safe_identity(id)) {
                     row["id"] = json!(id);
+                    if crate::story_file_id(&name) != Some(id) {
+                        self.conflict("noncanonical_story_file", &relative, "Rename the file to its story ID (<PREFIX>-<digits>.md) through a reviewed change and rerun preview; list, lint, stats and plan read only story ID files, and adoption does not rename sources.");
+                    }
                     if ids.insert(id.to_owned(), relative.clone()).is_some() {
                         self.conflict("duplicate_id", &relative, "Resolve duplicate local IDs with a reviewed identity mapping; neither record wins automatically.");
                     }

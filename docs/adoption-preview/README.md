@@ -53,6 +53,12 @@ The report excludes raw configuration, story prose, environment contents, and
 credential-bearing remote URLs. Existing remote identities and credential-free
 links remain visible. Duplicate local IDs, duplicate remote identities or links,
 and conflicting supported tracker repository links require a reviewed mapping.
+A story whose file name is not its own ID file (`<PREFIX>-<digits>.md`, for
+example `work/old-1.md` holding `PAY-001`) is a `noncanonical_story_file`
+conflict that names the file. `list`, `lint`, `stats`, and `plan` read only ID
+files, so adoption refuses rather than accept a story they cannot see. Preview
+still inventories the file; it does not rename sources. Rename it, then rerun
+preview.
 
 `unknowns` explicitly records `value: null` and a reason for goal, capacity, epic
 links, and historical events. Existing epic fields remain in source bytes. No
