@@ -169,6 +169,111 @@ impl Gateway {
         })
     }
 
+    pub fn find(&mut self, story: &Value) -> Result<Option<Remote>, String> {
+        let prefix = format!("{}: ", required(story, "id")?);
+        let titled = |title: Option<&str>| title.is_some_and(|t| t.starts_with(&prefix));
+        let mut found = Vec::new();
+        match &mut self.backend {
+            Backend::Github { repo, cli, .. } => {
+                let issues = parse_json(&cli.run(
+                    &strings(&[
+                        "issue",
+                        "list",
+                        "--repo",
+                        repo,
+                        "--state",
+                        "open",
+                        "--limit",
+                        "1000",
+                        "--json",
+                        "number,title",
+                    ]),
+                    None,
+                )?)?;
+                let issues = issues
+                    .as_array()
+                    .ok_or("GitHub returned an invalid issue list.")?;
+                if issues.len() >= 1000 {
+                    return Err("Too many open GitHub issues to search for an earlier create; link the story by hand.".into());
+                }
+                for issue in issues {
+                    if titled(issue["title"].as_str()) {
+                        let id = value_id(&issue["number"])?;
+                        found.push(Remote {
+                            url: format!("https://github.com/{repo}/issues/{id}"),
+                            remote_id: id,
+                        });
+                    }
+                }
+            }
+            Backend::Ado {
+                organization,
+                project,
+                cli,
+                ..
+            } => {
+                let wiql = format!(
+                    "SELECT [System.Id], [System.Title] FROM WorkItems WHERE [System.TeamProject] = '{}' AND [System.Title] CONTAINS '{}'",
+                    project.replace('\'', "''"),
+                    prefix.trim_end()
+                );
+                let items = parse_json(&cli.run(
+                    &strings(&[
+                        "boards",
+                        "query",
+                        "--org",
+                        organization,
+                        "--project",
+                        project,
+                        "--wiql",
+                        &wiql,
+                        "--output",
+                        "json",
+                    ]),
+                    None,
+                )?)?;
+                for item in items
+                    .as_array()
+                    .ok_or("Azure DevOps returned an invalid work item list.")?
+                {
+                    if titled(item["fields"]["System.Title"].as_str()) {
+                        found.push(ado_remote(organization, project, value_id(&item["id"])?));
+                    }
+                }
+            }
+            Backend::Gitea(gitea) => {
+                for page in 1.. {
+                    if page > 10000 {
+                        return Err("Gitea issue pagination exceeded its safety limit.".into());
+                    }
+                    let batch = gitea.api(
+                        Method::GET,
+                        &format!("/issues?state=open&type=issues&page={page}&limit=50"),
+                        None,
+                    )?;
+                    let batch = batch
+                        .as_array()
+                        .ok_or("Gitea returned an invalid issue list.")?;
+                    if batch.is_empty() {
+                        break;
+                    }
+                    for issue in batch {
+                        if titled(issue["title"].as_str()) {
+                            found.push(gitea.remote(value_id(&issue["number"])?));
+                        }
+                    }
+                }
+            }
+        }
+        if found.len() > 1 {
+            return Err(format!(
+                "Found {} open tracker items titled \"{prefix}...\"; link the story to one by hand.",
+                found.len()
+            ));
+        }
+        Ok(found.pop())
+    }
+
     pub fn create(&mut self, story: &Value) -> Result<Remote, String> {
         let tracker = self.tracker();
         let card = crate::story::render_card(story, tracker, &self.config)?;
@@ -1398,9 +1503,11 @@ mod tests {
                     match args[1].as_str() {
                         "create"=>println!("https://github.com/acme/shop/issues/11"),
                         "view"=>println!("{{\"labels\":[{{\"name\":\"team\"}},{{\"name\":\"size:5\"}}],\"state\":\"CLOSED\"}}"),
+                        "list"=>println!("[{{\"number\":11,\"title\":\"ST-001: Native tracker\"}},{{\"number\":13,\"title\":\"ST-0011: Other\"}},{{\"number\":14,\"title\":\"Re: ST-001: x\"}}]"),
                         _=>{}
                     }
                 } else if args.iter().any(|s|s=="create") && args.first().map(String::as_str)==Some("boards") { println!("{{\"id\":12}}"); }
+                else if args.get(1).map(String::as_str)==Some("query") { println!("[{{\"id\":12,\"fields\":{{\"System.Title\":\"ST-001: Native tracker\"}}}},{{\"id\":15,\"fields\":{{\"System.Title\":\"ST-0011: Other\"}}}}]"); }
             }
         "#;
         let mut compiler = Command::new("rustc")
@@ -1454,6 +1561,13 @@ mod tests {
                 labels: HashSet::new(),
             },
         };
+        assert_eq!(
+            gateway.find(&story("ready")).unwrap(),
+            Some(Remote {
+                remote_id: "11".into(),
+                url: "https://github.com/acme/shop/issues/11".into()
+            })
+        );
         assert_eq!(gateway.create(&story("done")).unwrap().remote_id, "11");
         let mut s = story("ready");
         s["remote"] = json!(11);
@@ -1461,6 +1575,7 @@ mod tests {
         gateway.remove("11").unwrap();
         let calls = fs::read_to_string(tmp.0.join("calls")).unwrap();
         assert!(calls.contains("\"--body-file\", \"-\""));
+        assert!(calls.contains("\"list\", \"--repo\", \"acme/shop\", \"--state\", \"open\""));
         assert!(calls.contains("stdin=As a maintainer"));
         assert!(calls.contains("\"--remove-label\", \"size:5\""));
         assert!(!calls.contains("\"--remove-label\", \"team\""));
@@ -1491,6 +1606,10 @@ mod tests {
                 cli,
             },
         };
+        assert_eq!(
+            gateway.find(&story("ready")).unwrap().unwrap().remote_id,
+            "12"
+        );
         assert_eq!(gateway.create(&story("done")).unwrap().remote_id, "12");
         let mut s = story("archived");
         s["remote"] = json!(12);
@@ -1498,6 +1617,9 @@ mod tests {
         gateway.remove("12").unwrap();
         let calls = fs::read_to_string(tmp.0.join("calls")).unwrap();
         assert!(calls.contains("\"--type\", \"User Story\""));
+        assert!(
+            calls.contains("[System.TeamProject] = 'Shop' AND [System.Title] CONTAINS 'ST-001:'")
+        );
         assert!(calls.contains("\"--state\", \"Closed\""));
         assert!(calls.contains("\"--state\", \"Removed\""));
         assert!(calls.contains("\"delete\", \"--id\", \"12\""));

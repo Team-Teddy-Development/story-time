@@ -345,6 +345,7 @@ pub fn link(
     let verb = match action {
         "create" => "pushed to tracker as",
         "update" => "updated tracker item",
+        "link" => "linked existing tracker item",
         _ => return Err(format!("Unsupported link action: {action}")),
     };
     let remote = if !remote_id.is_empty() && remote_id.bytes().all(|c| c.is_ascii_digit()) {
@@ -359,6 +360,9 @@ pub fn link(
         json!(remote_id)
     };
     let mut out = story.clone();
+    out.as_object_mut()
+        .ok_or("Story must be an object")?
+        .remove("pending_create");
     out["remote"] = remote;
     out["remote_url"] = json!(url);
     out["updated"] = json!(date);

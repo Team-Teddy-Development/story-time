@@ -9,6 +9,9 @@ struct Fake {
     change: Option<PathBuf>,
 }
 impl Tracker for Fake {
+    fn find(&mut self, _: &Value) -> Result<Option<Remote>, String> {
+        panic!("unexpected find")
+    }
     fn create(&mut self, s: &Value) -> Result<Remote, String> {
         let id = s["id"].as_str().unwrap();
         self.calls.push(format!("create {id}"));
@@ -76,13 +79,23 @@ fn rollback_and_concurrent_write_contracts() {
         let result = execute(&plan, &mut fake, "2026-11-11");
         let error = result.unwrap_err();
         assert!(error.contains("Push failed"));
-        assert_eq!(fs::read_to_string(&files[0].0).unwrap(), files[0].1);
+        let pending = |i: usize| {
+            fs::read_to_string(&files[i].0).unwrap()
+                == files[i]
+                    .1
+                    .replace("\n---\n", "\npending_create: 2026-11-11\n---\n")
+        };
+        if case == 1 {
+            assert!(pending(0), "an uncompensated create stays pending");
+        } else {
+            assert_eq!(fs::read_to_string(&files[0].0).unwrap(), files[0].1);
+        }
         if case < 2 {
             assert_eq!(
                 fake.calls,
                 vec!["create ST-001", "create ST-002", "remove 1"]
             );
-            assert_eq!(fs::read_to_string(&files[1].0).unwrap(), files[1].1);
+            assert!(pending(1), "a failed create stays pending");
         } else {
             assert_eq!(
                 fake.calls,
