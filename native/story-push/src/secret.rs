@@ -2,8 +2,7 @@
 //! `.story-time/.<name>.env` (mode 0600, git-ignored), as the Node CLI's FileSecretStore keeps it.
 
 use crate::{
-    config,
-    js_space,
+    config, js_space,
     lenient_story::{line_terminator, trim as js_trim},
     table, Failure,
 };
