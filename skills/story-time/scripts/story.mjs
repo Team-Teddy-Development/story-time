@@ -61,6 +61,8 @@ Commands:
                                            Native: generate a local planning proposal (JSON, plus Markdown with --output)
   plan   --snapshot                        Native: capture a planning request with current source hashes; read-only
   adopt  preview                           Native: preview adopting an existing backlog; writes nothing
+  issues --state open [--limit 200] [--json]
+                                           Native: list open Gitea tracker issues (GET only; never prints the token)
   config                                  Show the effective project config
   help                                     This text
 

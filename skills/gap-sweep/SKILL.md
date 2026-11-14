@@ -41,19 +41,16 @@ GitHub issues, when `tracker` is `github`:
 gh issue list --state open --limit 200 --search "-label:story" --json number,title,labels,body
 ```
 
-Gitea issues, when `tracker` is `gitea`, with `baseUrl`, `owner`, and `repo`
-from `story config --json`. The request is a GET only. Send the token from
-`GITEA_TOKEN` on standard input, so it never appears in the command line or
-the output. Without `GITEA_TOKEN`, run the same request with no header line,
-which works for a public repository:
+Gitea issues, when `tracker` is `gitea`. The native `story` command lists
+them with GET requests only, through the project's signed-in Gitea access:
 
 ```bash
-printf 'Authorization: token %s\n' "$GITEA_TOKEN" | curl -fsS -H @- "<baseUrl>/api/v1/repos/<owner>/<repo>/issues?state=open&type=issues&limit=50&page=<p>"
+story issues --state open --limit 200 --json
 ```
 
-Start at page 1 and stop at the first empty page or after page 4. Drop issues
-with a `story` label. On an HTTP 401 or 404, record
-`skipped (no signed-in Gitea access)`.
+Drop issues with a `story` label. If the command fails, for example because
+the project has no signed-in Gitea access, record
+`skipped (no signed-in Gitea access)` with its error message.
 
 Drop issues whose number is any story's `remote`. If the collector returns 200
 items, report the list as truncated. For any other tracker, or none, record

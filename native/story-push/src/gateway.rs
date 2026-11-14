@@ -332,6 +332,48 @@ impl Gateway {
         Ok(found.pop())
     }
 
+    pub fn open_issues(&self, limit: usize) -> Result<Vec<Value>, String> {
+        let Backend::Gitea(gitea) = &self.backend else {
+            return Err("Listing issues is native only for the gitea tracker.".into());
+        };
+        let mut issues = Vec::new();
+        for page in 1.. {
+            if issues.len() >= limit {
+                break;
+            }
+            if page > 10000 {
+                return Err("Gitea issue pagination exceeded its safety limit.".into());
+            }
+            let batch = gitea.api(
+                Method::GET,
+                &format!("/issues?state=open&type=issues&page={page}&limit=50"),
+                None,
+            )?;
+            let batch = batch
+                .as_array()
+                .ok_or("Gitea returned an invalid issue list.")?;
+            if batch.is_empty() {
+                break;
+            }
+            for issue in batch.iter().filter(|i| i["pull_request"].is_null()) {
+                let number = value_id(&issue["number"])?;
+                let labels: Vec<&str> = issue["labels"]
+                    .as_array()
+                    .map(|l| l.iter().filter_map(|l| l["name"].as_str()).collect())
+                    .unwrap_or_default();
+                issues.push(json!({
+                    "number": issue["number"],
+                    "title": issue["title"].as_str().unwrap_or_default(),
+                    "labels": labels,
+                    "body": issue["body"].as_str().unwrap_or_default(),
+                    "url": gitea.remote(number).url,
+                }));
+            }
+        }
+        issues.truncate(limit);
+        Ok(issues)
+    }
+
     pub fn create(&mut self, story: &Value) -> Result<Remote, String> {
         let tracker = self.tracker();
         let card = crate::story::render_card(story, tracker, &self.config)?;
