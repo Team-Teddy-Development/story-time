@@ -15,6 +15,7 @@ export const EXPECTED = [
   'gap-sweep',
   'flow-review',
   'sprint-review',
+  'agile-metrics',
   'project-discovery',
   'retrospective',
   'release-planning',

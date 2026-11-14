@@ -21,6 +21,7 @@ fn story_help_lists_the_native_plan_and_adopt_commands() {
         "plan   --snapshot",
         "adopt  preview",
         "issues --state open",
+        "metrics --from",
     ] {
         let line = help
             .lines()
