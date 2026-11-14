@@ -70,6 +70,10 @@ impl Sandbox {
     }
 
     fn run(&self, args: &[&str]) -> Output {
+        self.run_with(args, &[])
+    }
+
+    fn run_with(&self, args: &[&str], env: &[(&str, &Path)]) -> Output {
         let path = format!(
             "{}:{}",
             self.root.join("fake-bin").display(),
@@ -81,6 +85,7 @@ impl Sandbox {
             .arg(self.root.join("source"))
             .env("HOME", self.home())
             .env("PATH", path)
+            .envs(env.iter().map(|(k, v)| (*k, *v)))
             .output()
             .unwrap()
     }
@@ -236,4 +241,42 @@ fn a_failed_build_changes_nothing_and_leaves_nothing_to_roll_back() {
     let rollback = sandbox.run(&["--rollback"]);
     assert!(!rollback.status.success());
     assert!(String::from_utf8_lossy(&rollback.stderr).contains("No saved install"));
+}
+
+#[test]
+fn each_install_builds_in_a_fresh_target_directory_that_is_removed_afterwards() {
+    let sandbox = Sandbox::new("fresh-target");
+    let shared = sandbox.root.join("shared-target");
+    fs::create_dir_all(shared.join("release")).unwrap();
+    let log = sandbox.root.join("cargo-target.log");
+    write(
+        &sandbox.root.join("fake-bin/cargo"),
+        &format!(
+            "#!/bin/sh\nwhile [ $# -gt 0 ]; do case \"$1\" in --path) p=\"$2\"; shift;; --root) r=\"$2\"; shift;; --target-dir) t=\"$2\"; shift;; esac; shift; done\n\
+             t=\"${{t:-${{CARGO_TARGET_DIR:-}}}}\"\n\
+             if [ -e \"$t\" ]; then state=existed; else state=new; fi\n\
+             echo \"$t $state\" >> {log}\n\
+             mkdir -p \"$t\" \"$r/bin\" && printf 'built from %s\\n' \"$p\" > \"$r/bin/story\"\n",
+            log = log.display()
+        ),
+    );
+    sandbox.run_with(&["--agent", "all"], &[("CARGO_TARGET_DIR", &shared)]);
+    let calls = read(&log);
+    let mut fields = calls.split_whitespace();
+    let (target, state) = (fields.next().unwrap_or(""), fields.next().unwrap_or(""));
+    assert!(
+        !target.is_empty() && Path::new(target) != shared && state == "new",
+        "cargo must build in a target directory that did not exist before the install: {calls}"
+    );
+    assert!(
+        !Path::new(target).exists() && !Path::new(target).parent().unwrap().exists(),
+        "the install removes its target directory and the private directory around it: {target}"
+    );
+    assert_eq!(
+        read(&sandbox.home().join(".local/bin/story")),
+        format!(
+            "built from {}\n",
+            sandbox.release().join("native/story-push").display()
+        )
+    );
 }
