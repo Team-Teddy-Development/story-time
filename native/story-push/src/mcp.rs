@@ -15,6 +15,8 @@ use crate::{
 };
 use regex_lite::Regex;
 use serde_json::{json, Map, Value};
+mod graph;
+
 use std::{
     collections::HashMap,
     fs,
@@ -24,7 +26,6 @@ use std::{
     time::Instant,
 };
 
-const USAGE: &str = "Usage: story mcp [--root DIR]... [--write]";
 const MODERN: &str = "2026-07-28";
 const LEGACY: &str = "2025-11-25";
 const SUPPORTED: [&str; 2] = [MODERN, LEGACY];
@@ -54,12 +55,18 @@ const STATUSES: &[&str] = &[
 const TYPES: &[&str] = &["story", "spike", "bug", "chore"];
 
 pub fn run(args: &[String]) -> Result<(String, u8), Failure> {
-    let (roots, write) = roots(args)?;
+    let (args, graph) = graph::launch(args)?;
+    let (roots, write) = roots(&args)?;
+    let mut redactor = Redactor::from_env();
+    redactor
+        .values
+        .extend(graph.as_ref().map(|g| g.password.clone()));
     let mut server = Server {
         roots,
         write,
         legacy: false,
-        redactor: Redactor::from_env(),
+        redactor,
+        graph,
     };
     server
         .serve(io::stdin().lock(), io::stdout().lock())
@@ -75,7 +82,10 @@ struct Root {
 fn roots(args: &[String]) -> Result<(Vec<Root>, bool), Failure> {
     let usage = || Failure {
         code: 2,
-        message: USAGE.into(),
+        message: format!(
+            "Usage: story mcp [--root DIR]... [--write] {}",
+            graph::USAGE
+        ),
     };
     let mut given = Vec::new();
     let mut write = false;
@@ -145,6 +155,7 @@ struct Server {
     write: bool,
     legacy: bool,
     redactor: Redactor,
+    graph: Option<graph::Neo4j>,
 }
 
 struct RpcError {
@@ -281,7 +292,10 @@ impl Server {
 
     /// The tool set, fixed for the life of the process: write tools only under `--write`.
     fn tools(&self) -> impl Iterator<Item = &'static Tool> + '_ {
-        TOOLS.iter().filter(|t| self.write || t.hints.read_only)
+        TOOLS
+            .iter()
+            .filter(|t| self.write || t.hints.read_only)
+            .chain(graph::TOOLS.iter().filter(|_| self.graph.is_some()))
     }
 
     fn call(&self, params: &Map<String, Value>) -> Result<Value, RpcError> {
@@ -307,7 +321,7 @@ impl Server {
                 json!({"error": {
                     "code": error.code,
                     "message": error.message,
-                    "retryable": matches!(error.code, "io_error" | "conflict" | "lock_held" | "id_taken"),
+                    "retryable": matches!(error.code, "io_error" | "conflict" | "lock_held" | "id_taken" | "graph_unavailable"),
                     "details": error.details,
                 }}),
                 true,

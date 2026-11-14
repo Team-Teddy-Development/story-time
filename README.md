@@ -368,6 +368,12 @@ args = ["mcp", "--root", "<repo>", "--write"]
 default_tools_approval_mode = "writes"
 ```
 
+With `--graph`, the server also offers `story_graph_sync` and `story_graph`. They project the backlog into Neo4j through its HTTP transactional Cypher API and read it back as `Story` and `Epic` nodes with `DEPENDS_ON` and `IN_EPIC` edges. The Markdown stories stay the source of truth; each sync replaces one repository's projection in one transaction, and a missing `depends_on` target becomes a node with `missing: true`. `story_graph` returns the stories within `depth` (1 to 3) links of `id`, or the whole repository, at most `limit` (200) nodes. Pass the password through an environment variable and name it; it never goes on the command line or in a result:
+
+```bash
+NEO4J_PASSWORD=... story mcp --root <repo> --graph --neo4j-url http://127.0.0.1:7474 --neo4j-user neo4j --neo4j-password-env NEO4J_PASSWORD [--neo4j-database neo4j]
+```
+
 ## The backlog
 
 Stories are markdown files in `./backlog/` of the project you're planning,
