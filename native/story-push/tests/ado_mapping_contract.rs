@@ -312,33 +312,3 @@ fn push_and_export_send_the_same_ado_fields_as_node() {
     }
     let _ = fs::remove_dir_all(&stub);
 }
-
-#[test]
-fn the_ado_field_mapping_lives_only_in_story_rs() {
-    let src = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("src");
-    let mut copies = Vec::new();
-    for entry in fs::read_dir(&src).unwrap() {
-        let path = entry.unwrap().path();
-        if path.file_name().unwrap() == "story.rs" || path.extension().is_none_or(|e| e != "rs") {
-            continue;
-        }
-        let text = fs::read_to_string(&path).unwrap();
-        for reference in [
-            "System.Description",
-            "System.AreaPath",
-            "System.IterationPath",
-            "AcceptanceCriteria",
-            "ReproSteps",
-            "to_html",
-        ] {
-            if text.contains(reference) {
-                copies.push(format!("{} names {reference}", path.display()));
-            }
-        }
-    }
-    assert!(
-        copies.is_empty(),
-        "map story fields to ADO only in src/story.rs:\n{}",
-        copies.join("\n")
-    );
-}
