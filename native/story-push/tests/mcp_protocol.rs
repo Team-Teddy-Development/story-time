@@ -171,6 +171,24 @@ impl Server {
         }
         Some(serde_json::from_str(&line).unwrap_or_else(|e| panic!("{e}: {line}")))
     }
+    /// Sends a line the server may stop reading part way through, as its input limit allows, so a
+    /// closed pipe on this write is expected; the response must still arrive.
+    fn oversized(&mut self, bytes: &[u8]) -> Value {
+        let stdin = self.stdin.as_mut().unwrap();
+        let written = stdin
+            .write_all(bytes)
+            .and_then(|()| stdin.write_all(b"\n"))
+            .and_then(|()| stdin.flush());
+        if let Err(e) = written {
+            assert_eq!(e.kind(), std::io::ErrorKind::BrokenPipe, "{e}");
+        }
+        let mut line = String::new();
+        assert!(
+            self.stdout.read_line(&mut line).unwrap() > 0,
+            "server closed stdout"
+        );
+        serde_json::from_str(&line).unwrap_or_else(|e| panic!("{e}: {line}"))
+    }
     fn send(&mut self, message: &Value) -> Value {
         let response = self
             .raw(message.to_string().as_bytes())
@@ -774,7 +792,7 @@ fn refused_reads_carry_their_error_codes_and_change_no_file() {
     let mut huge = br#"{"jsonrpc":"2.0","id":1,"method":"ping","params":{"pad":""#.to_vec();
     huge.extend(std::iter::repeat_n(b'a', 1024 * 1024));
     huge.extend(br#""}}"#);
-    let limit = server.raw(&huge).unwrap();
+    let limit = server.oversized(&huge);
     assert_eq!(limit["error"]["code"], -32600);
     assert_eq!(limit["error"]["message"], "Request exceeds input limit");
     let (code, rest, stderr) = server.finish();
