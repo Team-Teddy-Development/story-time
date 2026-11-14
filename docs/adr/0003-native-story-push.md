@@ -2,6 +2,12 @@
 
 Status: accepted. Owner requested “rust native” for es_9c55035c0ff8.
 
+## Superseded in part (2026-11-14)
+
+Since ST-096 (PR #206), the native `story` binary runs every command and never starts the Node CLI. It reads neither `STORY_TIME_LEGACY_CLI` nor `~/.config/story-time/runtime.json`. Since ST-099 (PR #212), `story-install` writes no `runtime.json` and removes one that an earlier install wrote. No `story` command needs Node.
+
+This supersedes the Decision paragraph about the retained Node CLI and the Consequences sentence that Node remains required. The original text below is kept as the record of the decision at the time.
+
 ## Context
 
 The JavaScript push handler rejects every empty target array. That confuses a missing selector with a valid empty `--all` selection. Gateway construction also requires credentials before a dry-run needs them.
