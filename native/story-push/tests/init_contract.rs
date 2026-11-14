@@ -354,14 +354,121 @@ fn tracker_and_nested_normalization_matches_retained_config_interface() {
     }
 }
 
-#[test]
-fn help_short_circuits_files_and_missing_flag_values_are_usage_errors() {
-    let s = Sandbox::new();
-    success(&s.init(&["--from", "missing.json", "--help"], true));
-    for args in [vec!["--from"], vec!["--config"], vec!["--unknown"]] {
-        let out = s.init(&args, true);
-        assert_eq!(out.status.code(), Some(2));
-        assert!(!out.stderr.is_empty());
+fn tree(root: &std::path::Path) -> std::collections::BTreeMap<PathBuf, (u32, Vec<u8>)> {
+    use std::os::unix::fs::PermissionsExt;
+    fn walk(
+        root: &std::path::Path,
+        dir: &std::path::Path,
+        into: &mut std::collections::BTreeMap<PathBuf, (u32, Vec<u8>)>,
+    ) {
+        for entry in fs::read_dir(dir).unwrap() {
+            let path = entry.unwrap().path();
+            let meta = fs::symlink_metadata(&path).unwrap();
+            let bytes = if meta.is_dir() {
+                walk(root, &path, into);
+                Vec::new()
+            } else {
+                fs::read(&path).unwrap()
+            };
+            into.insert(
+                path.strip_prefix(root).unwrap().to_owned(),
+                (meta.permissions().mode(), bytes),
+            );
+        }
     }
-    assert_eq!(fs::read_dir(&s.0).unwrap().count(), 0);
+    let mut files = std::collections::BTreeMap::new();
+    walk(root, root, &mut files);
+    files
+}
+
+fn same_as_node(args: &[&str], fixture: &[(&str, &str)]) -> Output {
+    let s = Sandbox::new();
+    let build = || {
+        for entry in fs::read_dir(&s.0).unwrap() {
+            let path = entry.unwrap().path();
+            if path.is_dir() {
+                fs::remove_dir_all(&path).unwrap();
+            } else {
+                fs::remove_file(&path).unwrap();
+            }
+        }
+        for (name, text) in fixture {
+            fs::write(s.0.join(name), text).unwrap();
+        }
+    };
+    build();
+    let node = Command::new("node")
+        .arg(legacy())
+        .arg("init")
+        .args(args)
+        .current_dir(&s.0)
+        .env_remove("STORY_TIME_CONFIG")
+        .env_remove("STORY_TIME_DIR")
+        .output()
+        .unwrap();
+    let node_tree = tree(&s.0);
+    build();
+    let native = Command::new(
+        std::env::var_os("STORY_TIME_TEST_BIN")
+            .map(PathBuf::from)
+            .unwrap_or_else(|| env!("CARGO_BIN_EXE_story").into()),
+    )
+    .arg("init")
+    .args(args)
+    .current_dir(&s.0)
+    .env_clear()
+    .env("PATH", "/nonexistent")
+    .env("HOME", &s.0)
+    .output()
+    .unwrap();
+    let context = format!(
+        "init {args:?}: node {:?} {} / native {:?} {}",
+        node.status.code(),
+        String::from_utf8_lossy(&node.stderr),
+        native.status.code(),
+        String::from_utf8_lossy(&native.stderr)
+    );
+    assert_eq!(native.status.code(), node.status.code(), "{context}");
+    assert_eq!(
+        String::from_utf8_lossy(&native.stdout),
+        String::from_utf8_lossy(&node.stdout),
+        "{context}"
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&native.stderr),
+        String::from_utf8_lossy(&node.stderr),
+        "{context}"
+    );
+    assert_eq!(tree(&s.0), node_tree, "{context}");
+    native
+}
+
+#[test]
+fn a_flag_value_that_starts_with_dashes_is_read_as_node_reads_it() {
+    let answers = r#"{"tracker":"github","github":{"repo":"acme/shop"},"prefix":"PAY"}"#;
+    for args in [&["--from", "--x", "--json"][..], &["--from", "--x"]] {
+        let out = same_as_node(args, &[("--x", answers)]);
+        assert!(out.status.success());
+        assert!(String::from_utf8_lossy(&out.stdout).contains("github"));
+    }
+    same_as_node(
+        &["--config", "--y", "--from", "--x", "--json"],
+        &[("--x", answers)],
+    );
+}
+
+#[test]
+fn unknown_flags_and_positionals_are_ignored_as_node_ignores_them() {
+    for args in [
+        &["--zzz", "value", "--json"][..],
+        &["extra", "--json"],
+        &["-h", "--json"],
+        &["--help", "value"],
+        &["--from", "answers.json", "--help"],
+        &["--from"],
+        &["--config"],
+        &["--unknown"],
+    ] {
+        same_as_node(args, &[("answers.json", "{}")]);
+    }
 }
