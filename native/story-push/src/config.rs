@@ -81,7 +81,7 @@ pub fn load(flag: Option<&str>) -> Result<Loaded, String> {
     let path = locate(flag)?;
     let (raw, found) = match fs::read_to_string(&path) {
         Ok(text) => (
-            serde_json::from_str(&text)
+            crate::js_number::parse(&text)
                 .map_err(|_| format!("{}: invalid JSON configuration.", path.display()))?,
             true,
         ),
@@ -161,7 +161,7 @@ pub fn run(args: &[String]) -> Result<String, Failure> {
     let flags = Flags::parse(args)?;
     let loaded = load(flags.value("config"))?;
     let config = parse(&loaded.raw).map_err(|e| format!("{}: {e}", loaded.path.display()))?;
-    let text = serde_json::to_string_pretty(&config).map_err(|e| e.to_string())?;
+    let text = crate::js_number::stringify(&config, true);
     Ok(if flags.has("json") {
         format!("{text}\n")
     } else if loaded.found {
@@ -264,7 +264,10 @@ fn team(t: &Value) -> Result<Value, String> {
     let mut team = Map::new();
     team.insert("sprintDays".into(), sprint_days);
     if let Some(velocity) = prop(t, "velocity") {
-        if !velocity.as_f64().is_some_and(|n| n > 0.0) {
+        if !velocity
+            .as_number()
+            .is_some_and(|n| crate::js_number::value(n) > 0.0)
+        {
             return Err("team.velocity must be a positive number of points per sprint.".into());
         }
         team.insert("velocity".into(), velocity.clone());
@@ -436,7 +439,8 @@ fn string_list(value: Option<&Value>, name: &str) -> Result<Value, String> {
 
 fn positive_integer(value: &Value) -> bool {
     value
-        .as_f64()
+        .as_number()
+        .map(crate::js_number::value)
         .is_some_and(|n| n.is_finite() && n.fract() == 0.0 && n >= 1.0)
 }
 
@@ -479,11 +483,6 @@ pub(crate) fn truthy(value: Option<&Value>) -> bool {
 
 /// `String(value)` in JavaScript.
 pub(crate) fn js_string(value: &Value) -> String {
-    js_string_with(value, crate::js_number::to_string)
-}
-
-/// `String(value)`, with `number` printing each Number.
-pub(crate) fn js_string_with(value: &Value, number: fn(f64) -> String) -> String {
     match value {
         Value::String(s) => s.clone(),
         Value::Array(items) => items
@@ -492,13 +491,13 @@ pub(crate) fn js_string_with(value: &Value, number: fn(f64) -> String) -> String
                 if v.is_null() {
                     String::new()
                 } else {
-                    js_string_with(v, number)
+                    js_string(v)
                 }
             })
             .collect::<Vec<_>>()
             .join(","),
         Value::Object(_) => "[object Object]".into(),
-        Value::Number(n) => number(n.as_f64().expect("a JSON number is an f64")),
+        Value::Number(n) => crate::js_number::to_string(crate::js_number::value(n)),
         other => other.to_string(),
     }
 }
@@ -535,7 +534,7 @@ fn spread(value: &Value) -> Value {
     }
 }
 
-/// The value `JSON.parse` would build: array-index keys first in ascending order, and integral numbers printed without a fraction.
+/// The value `JSON.parse` would build: array-index keys first in ascending order, and each number the Number JavaScript holds.
 pub(crate) fn js_value(value: &Value) -> Value {
     match value {
         Value::Object(o) => {
@@ -544,7 +543,7 @@ pub(crate) fn js_value(value: &Value) -> Value {
             Value::Object(entries.into_iter().collect())
         }
         Value::Array(a) => Value::Array(a.iter().map(js_value).collect()),
-        Value::Number(n) if n.is_f64() => crate::js_number::number(n.as_f64().unwrap()),
+        Value::Number(n) => crate::js_number::number(crate::js_number::value(n)),
         _ => value.clone(),
     }
 }

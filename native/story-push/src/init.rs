@@ -60,7 +60,7 @@ pub fn run(args: &[String]) -> Result<String, Failure> {
         Some(from) => {
             let text =
                 fs::read_to_string(&from).map_err(|e| format!("Could not read {from}: {e}"))?;
-            serde_json::from_str(&text).map_err(|e| format!("{from}: invalid JSON: {e}"))?
+            crate::js_number::parse(&text).map_err(|e| format!("{from}: invalid JSON: {e}"))?
         }
         None => json!({}),
     };
@@ -85,10 +85,7 @@ pub fn run(args: &[String]) -> Result<String, Failure> {
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => String::new(),
         Err(e) => return Err(format!("Could not read {}: {e}", ignore_path.display()).into()),
     };
-    let settings = format!(
-        "{}\n",
-        serde_json::to_string_pretty(&config).map_err(|e| e.to_string())?
-    );
+    let settings = format!("{}\n", crate::js_number::stringify(&config, true));
     fs::create_dir_all(parent).map_err(|e| e.to_string())?;
     fs::create_dir_all(&metadata).map_err(|e| e.to_string())?;
     if !current.lines().any(|line| line == "*.env") {

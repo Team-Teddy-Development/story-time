@@ -4,8 +4,8 @@
 //! their JavaScript meaning, so a field the author left out is `None` (JavaScript `undefined`).
 
 use crate::{
-    config::{self, js_value, truthy, Flags},
-    js_number::{model_string, model_stringify},
+    config::{self, js_string, js_value, truthy, Flags},
+    js_number::stringify,
     models::{model_name, out, read_model, report_defects, Defect},
     Failure,
 };
@@ -85,7 +85,7 @@ pub fn run(args: &[String]) -> Result<(String, u8), Failure> {
 
 /// `${value}` in a JavaScript template literal.
 fn text(value: &Option<Value>) -> String {
-    value.as_ref().map_or("undefined".into(), model_string)
+    value.as_ref().map_or("undefined".into(), js_string)
 }
 
 fn is_in(names: &[String], value: &Option<Value>) -> bool {
@@ -240,12 +240,12 @@ fn check(doc: &Value, name: &str) -> (Option<Machine>, Vec<Defect>) {
             ));
         }
         if let Some(guard) = &t.guard {
-            if !m.guards.contains_key(&model_string(guard)) {
+            if !m.guards.contains_key(&js_string(guard)) {
                 defects.push(defect(
                     "unknown-guard",
                     format!(
                         "Transition {n} uses unknown guard \"{}\".",
-                        model_string(guard)
+                        js_string(guard)
                     ),
                 ));
             }
@@ -267,7 +267,7 @@ fn check(doc: &Value, name: &str) -> (Option<Machine>, Vec<Defect>) {
     let mut groups: Vec<(String, usize)> = Vec::new();
     for t in m.transitions.iter().filter(|t| truthy(t.event.as_ref())) {
         let parts = [&t.from, &t.event, &t.guard].map(|v| v.as_ref().unwrap_or(&Value::Null));
-        let key = model_stringify(&parts, false);
+        let key = stringify(&parts, false);
         match groups.iter_mut().find(|g| g.0 == key) {
             Some(group) => group.1 += 1,
             None => groups.push((key, 1)),
@@ -280,8 +280,8 @@ fn check(doc: &Value, name: &str) -> (Option<Machine>, Vec<Defect>) {
             "ambiguous",
             format!(
                 "State \"{}\" has {count} transitions on \"{}\" with the same guard.",
-                model_string(&from),
-                model_string(&event)
+                js_string(&from),
+                js_string(&event)
             ),
         ));
     }
@@ -335,16 +335,16 @@ fn check(doc: &Value, name: &str) -> (Option<Machine>, Vec<Defect>) {
 /// One criterion per transition, one per (state, event) whose every transition is guarded (the
 /// case where no guard holds), and one per event a state refuses.
 fn criteria(m: &Machine) -> Vec<Value> {
-    let e = model_string(&m.entity);
+    let e = js_string(&m.entity);
     let article = if e.starts_with(|c: char| "aeiouAEIOU".contains(c)) {
         "an"
     } else {
         "a"
     };
     let a = format!("{article} {e}");
-    let description = |g: &Value| m.guards.get(&model_string(g)).filter(|d| truthy(Some(d)));
+    let description = |g: &Value| m.guards.get(&js_string(g)).filter(|d| truthy(Some(d)));
     let guard_text = |g: &Value| {
-        description(g).map_or_else(|| format!("guard {} holds", model_string(g)), model_string)
+        description(g).map_or_else(|| format!("guard {} holds", js_string(g)), js_string)
     };
     let refuse =
         |state: &str, event: &str| format!("then {event} is refused and the {e} stays in {state}.");
@@ -396,8 +396,8 @@ fn criteria(m: &Machine) -> Vec<Value> {
                     .iter()
                     .map(|g| {
                         let why = description(g)
-                            .map_or(String::new(), |d| format!(" ({})", model_string(d)));
-                        format!("guard {} fails{why}", model_string(g))
+                            .map_or(String::new(), |d| format!(" ({})", js_string(d)));
+                        format!("guard {} fails{why}", js_string(g))
                     })
                     .collect::<Vec<_>>()
                     .join(" and ");
@@ -424,7 +424,7 @@ fn diagram(m: &Machine) -> String {
             .guard
             .as_ref()
             .filter(|g| truthy(Some(g)))
-            .map_or(String::new(), |g| format!(" [{}]", model_string(g)));
+            .map_or(String::new(), |g| format!(" [{}]", js_string(g)));
         lines.push(format!(
             "    {} --> {}: {}{guard}",
             text(&t.from),

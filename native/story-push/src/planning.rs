@@ -329,8 +329,8 @@ fn snapshot(root: &Path) -> Result<Snapshot> {
     }
     let (config_image, config) = if let Some(name) = configs.first() {
         let (file, bytes) = image(root, name)?;
-        let config: Value =
-            serde_json::from_slice(&bytes).map_err(|e| format!("malformed_config: {e}"))?;
+        let config: Value = crate::js_number::parse(&String::from_utf8_lossy(&bytes))
+            .map_err(|e| format!("malformed_config: {e}"))?;
         (Some(file), config)
     } else {
         (None, json!({}))
