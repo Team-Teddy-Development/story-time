@@ -211,5 +211,14 @@ fn gitea_cli_create_links_then_update_reuses_issue_without_node() {
             .count(),
         1
     );
-    assert_eq!(requests.last().unwrap().1, json!({"labels":[1,44]}));
+    let (line, body) = requests.last().unwrap();
+    assert!(
+        line.starts_with("POST /api/v1/repos/acme/shop/issues/11/labels "),
+        "{line}"
+    );
+    assert_eq!(body, &json!({"labels":[1]}));
+    assert!(
+        !requests.iter().any(|(line, _)| line.starts_with("DELETE ")),
+        "the customer label stays on the issue"
+    );
 }

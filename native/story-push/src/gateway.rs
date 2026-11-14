@@ -497,26 +497,45 @@ impl Gateway {
             }
             Backend::Gitea(gitea) => {
                 let current = gitea.api(Method::GET, &format!("/issues/{id}"), None)?;
-                let mut ids = Vec::new();
+                let mut stale = Vec::new();
+                let mut present = HashSet::new();
                 if let Some(labels) = current.get("labels").filter(|v| !v.is_null()) {
                     for label in labels
                         .as_array()
                         .ok_or("Gitea returned invalid issue labels.")?
                     {
-                        if !managed(required(label, "name")?, true) {
-                            ids.push(numeric_id(&label["id"])?);
+                        let label_id = numeric_id(&label["id"])?;
+                        present.insert(label_id);
+                        if managed(required(label, "name")?, true) {
+                            stale.push(label_id);
                         }
                     }
                 }
-                ids.extend(gitea.ensure_labels(&gitea_labels(&card, story)?)?);
-                ids.sort_unstable();
-                ids.dedup();
+                let wanted = gitea.ensure_labels(&gitea_labels(&card, story)?)?;
+                stale.retain(|label_id| !wanted.contains(label_id));
+                let mut missing: Vec<u64> = wanted
+                    .into_iter()
+                    .filter(|label_id| !present.contains(label_id))
+                    .collect();
+                missing.sort_unstable();
+                missing.dedup();
                 gitea.api(Method::PATCH, &format!("/issues/{id}"), Some(json!({"title":required(&card,"title")?,"body":required(&card,"body")?,"state":if closing(story).is_some(){"closed"}else{"open"}})))?;
-                gitea.api(
-                    Method::PUT,
-                    &format!("/issues/{id}/labels"),
-                    Some(json!({"labels":ids})),
-                )?;
+                // Add and delete only the labels this push changes: replacing the whole set
+                // would drop a label that a concurrent push or a person changed after our read.
+                if !missing.is_empty() {
+                    gitea.api(
+                        Method::POST,
+                        &format!("/issues/{id}/labels"),
+                        Some(json!({"labels":missing})),
+                    )?;
+                }
+                for label_id in stale {
+                    gitea.api(
+                        Method::DELETE,
+                        &format!("/issues/{id}/labels/{label_id}"),
+                        None,
+                    )?;
+                }
                 Ok(gitea.remote(id))
             }
         }
@@ -1321,9 +1340,19 @@ mod tests {
             ),
             ("PATCH /api/v1/repos/acme/shop/issues/4", 200, json!({})),
             (
-                "PUT /api/v1/repos/acme/shop/issues/4/labels",
+                "POST /api/v1/repos/acme/shop/issues/4/labels",
                 200,
                 json!([]),
+            ),
+            (
+                "DELETE /api/v1/repos/acme/shop/issues/4/labels/12",
+                200,
+                json!(null),
+            ),
+            (
+                "DELETE /api/v1/repos/acme/shop/issues/4/labels/13",
+                200,
+                json!(null),
             ),
         ]);
         let mut gateway = Gateway {
@@ -1336,7 +1365,8 @@ mod tests {
         let bodies = handle.join().unwrap();
         assert_eq!(bodies[3]["state"], "open");
         assert_eq!(bodies[3]["title"], "ST-001: Native tracker");
-        assert_eq!(bodies[4]["labels"], json!([1, 2, 3, 99]));
+        assert_eq!(bodies[4]["labels"], json!([1, 2, 3]));
+        assert_eq!(bodies.len(), 7, "team label 99 is never touched");
     }
 
     #[test]
