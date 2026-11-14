@@ -10,7 +10,11 @@ use crate::{
     list, show, Failure,
 };
 use regex_lite::Regex;
-use std::{path::Path, sync::LazyLock};
+use std::{
+    fs,
+    path::{Path, PathBuf},
+    sync::LazyLock,
+};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Severity {
@@ -452,12 +456,58 @@ fn state_machine_exists(s: &Js, ctx: &Context) -> Found {
             ));
         }
     };
-    if config::resolve(&root.join(path)).is_ok_and(|p| p.exists()) {
-        return none();
+    match place(root, path) {
+        Place::Present => none(),
+        Place::Missing => err(format!(
+            "state_machine: {path} does not exist (paths are relative to the repo root). Write it with the state-machine skill."
+        )),
+        Place::Outside => err(format!(
+            "state_machine: {path} is outside the repository (paths are relative to the repo root). Keep the model inside the repository."
+        )),
     }
-    err(format!(
-        "state_machine: {path} does not exist (paths are relative to the repo root). Write it with the state-machine skill."
-    ))
+}
+
+enum Place {
+    Present,
+    Missing,
+    Outside,
+}
+
+/// Where a root-relative path lands. Symlinks are read, never followed, so nothing outside the
+/// root is ever examined and an outside path reads the same whether or not it exists.
+fn place(root: &Path, path: &str) -> Place {
+    let root = root.canonicalize().unwrap_or_else(|_| root.to_owned());
+    let inside = |p: &Path| -> Option<Vec<std::ffi::OsString>> {
+        let rest = config::resolve(p).ok()?;
+        let rest = rest.strip_prefix(&root).ok()?;
+        Some(rest.iter().rev().map(ToOwned::to_owned).collect())
+    };
+    let Some(mut pending) = inside(&root.join(path)) else {
+        return Place::Outside;
+    };
+    let mut current = root.clone();
+    let mut hops = 0;
+    while let Some(part) = pending.pop() {
+        let next = current.join(&part);
+        let Ok(meta) = fs::symlink_metadata(&next) else {
+            return Place::Missing;
+        };
+        if !meta.file_type().is_symlink() {
+            current = next;
+            continue;
+        }
+        hops += 1;
+        let (true, Ok(link)) = (hops <= 40, fs::read_link(&next)) else {
+            return Place::Missing;
+        };
+        let rest: PathBuf = pending.iter().rev().collect();
+        let Some(resolved) = inside(&current.join(link).join(rest)) else {
+            return Place::Outside;
+        };
+        pending = resolved;
+        current = root.clone();
+    }
+    Place::Present
 }
 
 /// `story lint [id...] [--dir D] [--config C] [--json]`: exit 1 when any story is not ready.

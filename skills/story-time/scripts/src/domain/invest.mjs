@@ -111,14 +111,18 @@ export const DEFAULT_RULES = [
       : [err(`No story lists ${s.id} in depends_on. A spike must unblock a named story: link it, or archive the spike.`)];
   }),
 
-  rule('state_machine.exists', 'T', (s, ctx) =>
-    s.state_machine && ctx.exists && !ctx.exists(s.state_machine)
-      ? [err(`state_machine: ${s.state_machine} does not exist (paths are relative to the repo root). Write it with the state-machine skill.`)]
-      : [],
-  ),
+  rule('state_machine.exists', 'T', (s, ctx) => {
+    if (!s.state_machine || !ctx.exists) return [];
+    const found = ctx.exists(s.state_machine);
+    if (found === 'outside') {
+      return [err(`state_machine: ${s.state_machine} is outside the repository (paths are relative to the repo root). Keep the model inside the repository.`)];
+    }
+    return found ? [] : [err(`state_machine: ${s.state_machine} does not exist (paths are relative to the repo root). Write it with the state-machine skill.`)];
+  }),
 ];
 
-// ctx.stories is the whole backlog; ctx.exists(path) answers for a repo-root-relative path.
+// ctx.stories is the whole backlog; ctx.exists(path) answers true, false, or 'outside' for a
+// repo-root-relative path.
 // Rules that need either skip when it is absent.
 export function lintStory(story, { rules = DEFAULT_RULES, stories, exists } = {}) {
   const ctx = { stories, exists };
