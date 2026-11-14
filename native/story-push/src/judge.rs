@@ -8,7 +8,7 @@ use crate::{
     js_number,
     lenient_story::{trim, Js},
     lint::{acceptance_criteria, GHERKIN, SPACE, STATEMENT, VAGUE},
-    list, secret, show, stats, table, Failure,
+    list, secret, show, table, Failure,
 };
 use regex_lite::Regex;
 use serde_json::{json, Map, Value};
@@ -899,7 +899,7 @@ impl Client {
         let read = |name| {
             headers
                 .get(name)
-                .map(|v| stats::number(&String::from_utf8_lossy(v.as_bytes())))
+                .map(|v| js_number::string_to_number(&String::from_utf8_lossy(v.as_bytes())))
                 .filter(|n| n.is_finite())
         };
         read("retry-after-ms")

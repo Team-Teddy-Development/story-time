@@ -2,7 +2,7 @@
 
 use crate::{
     config::{self, Flags},
-    js_space,
+    js_number, js_space,
     lenient_story::{ordered, Js},
     list, Failure,
 };
@@ -18,7 +18,7 @@ pub fn run(args: &[String]) -> Result<String, Failure> {
         config::parse(&loaded.raw).map_err(|e| format!("{}: {e}", loaded.path.display()))?;
     let dir = list::backlog_dir(flags.value("dir"), &loaded.root, &settings)?;
     let stale_days = match flags.value("stale-days") {
-        Some(days) if !days.is_empty() => number(days),
+        Some(days) if !days.is_empty() => js_number::string_to_number(days),
         _ => 30.0,
     };
     let stats = stats(&list::stories(&dir, None)?, stale_days);
@@ -130,57 +130,6 @@ fn truthy(v: &Js) -> bool {
         Js::Num(n) => *n != 0.0 && !n.is_nan(),
         Js::Str(s) => !s.is_empty(),
         Js::Arr(_) | Js::Obj(_) => true,
-    }
-}
-
-/// `Number(string)`.
-pub(crate) fn number(s: &str) -> f64 {
-    let s = s.trim_matches(|c| js_space(c) || crate::lenient_story::line_terminator(c));
-    if s.is_empty() {
-        return 0.0;
-    }
-    for (prefix, radix) in [
-        ("0x", 16),
-        ("0X", 16),
-        ("0o", 8),
-        ("0O", 8),
-        ("0b", 2),
-        ("0B", 2),
-    ] {
-        if let Some(digits) = s.strip_prefix(prefix) {
-            if digits.is_empty() || !digits.chars().all(|c| c.is_digit(radix)) {
-                return f64::NAN;
-            }
-            return digits.chars().fold(0.0, |n, c| {
-                n * radix as f64 + c.to_digit(radix).unwrap() as f64
-            });
-        }
-    }
-    let unsigned = s.strip_prefix(['+', '-']).unwrap_or(s);
-    if unsigned == "Infinity" {
-        return if s.starts_with('-') {
-            f64::NEG_INFINITY
-        } else {
-            f64::INFINITY
-        };
-    }
-    let (mantissa, exponent) = match unsigned.find(['e', 'E']) {
-        Some(i) => (&unsigned[..i], Some(&unsigned[i + 1..])),
-        None => (unsigned, None),
-    };
-    let digits = |s: &str| s.bytes().all(|c| c.is_ascii_digit());
-    let (whole, fraction) = mantissa.split_once('.').unwrap_or((mantissa, ""));
-    let valid = digits(whole)
-        && digits(fraction)
-        && !(whole.is_empty() && fraction.is_empty())
-        && exponent.is_none_or(|e| {
-            let e = e.strip_prefix(['+', '-']).unwrap_or(e);
-            !e.is_empty() && digits(e)
-        });
-    if valid {
-        s.parse().unwrap_or(f64::NAN)
-    } else {
-        f64::NAN
     }
 }
 

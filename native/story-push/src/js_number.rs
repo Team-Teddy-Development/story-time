@@ -60,11 +60,7 @@ pub(crate) fn parse(text: &str) -> serde_json::Result<Value> {
         let token = &rest[..end];
         if is_number(token) {
             let index = numbers.len().to_string();
-            numbers.push(
-                token
-                    .parse::<f64>()
-                    .expect("a JSON number is an f64 literal"),
-            );
+            numbers.push(string_to_number(token));
             rewritten.push_str(&index);
             rewritten.push_str(&" ".repeat(token.len().saturating_sub(index.len())));
         } else {
@@ -129,6 +125,74 @@ fn restore(value: &mut Value, numbers: &[f64]) {
         Value::Object(entries) => entries.values_mut().for_each(|v| restore(v, numbers)),
         _ => (),
     }
+}
+
+/// `Number(string)`: the ECMAScript StringToNumber every command uses to read a numeric argument.
+pub(crate) fn string_to_number(s: &str) -> f64 {
+    let s = crate::lenient_story::trim(s);
+    if s.is_empty() {
+        return 0.0;
+    }
+    for (prefix, radix) in [("0x", 16), ("0o", 8), ("0b", 2)] {
+        let digits = s
+            .strip_prefix(prefix)
+            .or_else(|| s.strip_prefix(&prefix.to_uppercase()));
+        if let Some(digits) = digits {
+            return if !digits.is_empty() && digits.chars().all(|c| c.is_digit(radix)) {
+                radix_integer(digits, radix)
+            } else {
+                f64::NAN
+            };
+        }
+    }
+    let unsigned = s.strip_prefix(['+', '-']).unwrap_or(s);
+    if unsigned == "Infinity" {
+        return if s.starts_with('-') {
+            f64::NEG_INFINITY
+        } else {
+            f64::INFINITY
+        };
+    }
+    let (mantissa, exponent) = match unsigned.find(['e', 'E']) {
+        Some(i) => (&unsigned[..i], Some(&unsigned[i + 1..])),
+        None => (unsigned, None),
+    };
+    let digits = |s: &str| s.bytes().all(|c| c.is_ascii_digit());
+    let (whole, fraction) = mantissa.split_once('.').unwrap_or((mantissa, ""));
+    let valid = digits(whole)
+        && digits(fraction)
+        && !(whole.is_empty() && fraction.is_empty())
+        && exponent.is_none_or(|e| {
+            let e = e.strip_prefix(['+', '-']).unwrap_or(e);
+            !e.is_empty() && digits(e)
+        });
+    if valid {
+        s.parse().expect("a validated decimal literal is an f64")
+    } else {
+        f64::NAN
+    }
+}
+
+/// A base 2, 8, or 16 integer rounded once to the nearest f64, ties to even: folding digit by digit
+/// rounds at every step past 2^53 and can land one ulp away from the value Node gives.
+fn radix_integer(digits: &str, radix: u32) -> f64 {
+    let width = radix.trailing_zeros();
+    let bits: Vec<bool> = digits
+        .chars()
+        .flat_map(|c| {
+            let d = c.to_digit(radix).expect("digits were checked");
+            (0..width).rev().map(move |i| d >> i & 1 == 1)
+        })
+        .skip_while(|b| !b)
+        .collect();
+    let (kept, dropped) = bits.split_at(bits.len().min(53));
+    let mut mantissa = kept.iter().fold(0_u64, |n, &b| n << 1 | u64::from(b));
+    if let Some((&half, rest)) = dropped.split_first() {
+        if half && (mantissa & 1 == 1 || rest.contains(&true)) {
+            mantissa += 1;
+        }
+    }
+    mantissa as f64 * 2_f64.powi(dropped.len() as i32)
 }
 
 /// `String(n)`.
@@ -331,5 +395,134 @@ mod tests {
                 .unwrap_err()
                 .to_string()
         );
+    }
+
+    /// `Number(input)` as Node 24.22.1 prints it (`String(n)`, or `-0`), captured with `node -e`.
+    fn node_table(long_hex: &str) -> Vec<(&str, &'static str)> {
+        let mut cases = vec![
+            ("0x10", "16"),
+            ("0X1f", "31"),
+            ("0xFF", "255"),
+            ("0b101", "5"),
+            ("0B11", "3"),
+            ("0o17", "15"),
+            ("0O7", "7"),
+            ("1e3", "1000"),
+            ("1E3", "1000"),
+            ("1e+3", "1000"),
+            ("1e-3", "0.001"),
+            ("-0", "-0"),
+            ("+0", "0"),
+            ("0", "0"),
+            (".5", "0.5"),
+            ("5.", "5"),
+            ("+.5", "0.5"),
+            ("-.5", "-0.5"),
+            ("  12  ", "12"),
+            ("\u{9}12\u{a}", "12"),
+            ("\u{d}\u{a} 12 \u{2028}", "12"),
+            ("\u{2029} 1", "1"),
+            ("\u{a0}1\u{a0}", "1"),
+            ("\u{feff}1", "1"),
+            ("\u{1680} 1", "1"),
+            ("\u{2000}\u{200a}1", "1"),
+            ("\u{202f}1\u{205f}", "1"),
+            ("\u{3000}1", "1"),
+            ("\u{b}1\u{c}", "1"),
+            ("\u{85}1", "NaN"),
+            ("\u{180e}1", "NaN"),
+            ("\u{200b}1", "NaN"),
+            ("", "0"),
+            (" ", "0"),
+            ("\u{9}\u{a}", "0"),
+            ("Infinity", "Infinity"),
+            ("-Infinity", "-Infinity"),
+            ("+Infinity", "Infinity"),
+            ("infinity", "NaN"),
+            ("INFINITY", "NaN"),
+            ("Infinityx", "NaN"),
+            ("inf", "NaN"),
+            ("NaN", "NaN"),
+            ("nan", "NaN"),
+            ("1_000", "NaN"),
+            ("0x", "NaN"),
+            ("0b", "NaN"),
+            ("0o", "NaN"),
+            ("0x1g", "NaN"),
+            ("0b2", "NaN"),
+            ("0o8", "NaN"),
+            ("1e", "NaN"),
+            ("1e+", "NaN"),
+            ("e3", "NaN"),
+            (".", "NaN"),
+            ("-", "NaN"),
+            ("+", "NaN"),
+            ("--1", "NaN"),
+            ("+-1", "NaN"),
+            ("-+1", "NaN"),
+            ("+.", "NaN"),
+            ("00012", "12"),
+            ("-00012", "-12"),
+            ("0012.50", "12.5"),
+            ("-0x10", "NaN"),
+            ("+0x10", "NaN"),
+            ("0x-1", "NaN"),
+            (" 0x10 ", "16"),
+            ("1.2.3", "NaN"),
+            ("1 2", "NaN"),
+            ("1e1000", "Infinity"),
+            ("-1e1000", "-Infinity"),
+            ("1e308", "1e+308"),
+            ("1.7976931348623157e308", "1.7976931348623157e+308"),
+            ("1.7976931348623159e308", "Infinity"),
+            ("1e-400", "0"),
+            ("5e-324", "5e-324"),
+            ("2e-324", "0"),
+            ("3e-324", "5e-324"),
+            ("0.0000001", "1e-7"),
+            ("123456789012345678901234567890", "1.2345678901234568e+29"),
+            ("9007199254740993", "9007199254740992"),
+            ("0x20000000000001", "9007199254740992"),
+            ("0x200000000000011", "144115188075855900"),
+            ("0x1fffffffffffff8", "144115188075855870"),
+            (
+                "0b100000000000000000000000000000000000000000000000000000000010001",
+                "4611686018427388000",
+            ),
+            ("0o4000000000000000000021", "36893488147419103000"),
+            (
+                "0b1000000000000000000000000000000000000000000000000000011",
+                "18014398509481988",
+            ),
+            ("0o4000000000000000017", "72057594037927950"),
+            ("1.5e3x", "NaN"),
+            ("3.14", "3.14"),
+            ("-3.14", "-3.14"),
+            ("1e3.5", "NaN"),
+            ("0.1e1", "1"),
+            (".e1", "NaN"),
+            ("5.e1", "50"),
+            ("1e0005", "100000"),
+            ("0e0", "0"),
+        ];
+        cases.push((long_hex, "Infinity"));
+        cases
+    }
+
+    #[test]
+    fn string_to_number_matches_node() {
+        let long_hex = format!("0x{}", "f".repeat(300));
+        let mismatches = node_table(&long_hex)
+            .into_iter()
+            .filter_map(|(input, node)| {
+                let got = string_to_number(input);
+                let same = match node {
+                    "NaN" => got.is_nan(),
+                    _ => got.to_bits() == node.parse::<f64>().unwrap().to_bits(),
+                };
+                (!same).then(|| format!("Number({input:?}) is {node} in Node, {got:?} here"))
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(mismatches, Vec::<String>::new());
     }
 }

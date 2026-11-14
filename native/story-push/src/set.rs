@@ -3,11 +3,12 @@
 
 use crate::{
     config::{self, Flags},
+    js_number,
     lenient_story::{append_changelog, ordered, trim, Js},
     lint::{self, Context, Severity},
     list,
     new_story::TYPES,
-    stats, Failure,
+    Failure,
 };
 use chrono::Utc;
 
@@ -109,7 +110,7 @@ fn coerce(key: &str, raw: &str) -> Result<Option<Js>, String> {
         return Ok(None);
     }
     if NUMERIC.contains(&key) {
-        let n = stats::number(raw);
+        let n = js_number::string_to_number(raw);
         if !n.is_finite() {
             return Err(format!("{key} must be a number, got \"{raw}\"."));
         }

@@ -238,12 +238,7 @@ impl Parser {
         Ok(match word.as_str() {
             "true" => Value::Bool(true),
             "false" => Value::Bool(false),
-            digits => js_number::number(
-                digits
-                    .replace('_', "")
-                    .parse()
-                    .expect("word() only matches a signed decimal integer"),
-            ),
+            digits => js_number::number(js_number::string_to_number(&digits.replace('_', ""))),
         })
     }
 
