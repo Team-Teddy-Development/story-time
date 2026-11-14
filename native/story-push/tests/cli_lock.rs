@@ -44,14 +44,39 @@ fn snapshot(root: &Path) -> Tree {
     tree
 }
 
-fn story(root: &Path, args: &[&str]) -> Output {
-    Command::new(env!("CARGO_BIN_EXE_story"))
+fn command(root: &Path, args: &[&str]) -> Command {
+    let mut command = Command::new(env!("CARGO_BIN_EXE_story"));
+    command
         .args(args)
         .current_dir(root)
         .env_clear()
-        .env("PATH", "/nonexistent")
-        .output()
-        .unwrap()
+        .env("PATH", "/nonexistent");
+    command
+}
+
+fn story(root: &Path, args: &[&str]) -> Output {
+    command(root, args).output().unwrap()
+}
+
+struct Sandbox(PathBuf);
+
+impl Drop for Sandbox {
+    fn drop(&mut self) {
+        let _ = fs::remove_dir_all(&self.0);
+    }
+}
+
+fn fixture(name: &str) -> Sandbox {
+    let root = std::env::temp_dir().join(format!("story-cli-lock-{}-{name}", std::process::id()));
+    let _ = fs::remove_dir_all(&root);
+    fs::create_dir_all(root.join("backlog")).unwrap();
+    fs::write(root.join("backlog/ST-001.md"), STORY).unwrap();
+    fs::write(
+        root.join("children.json"),
+        r#"[{"title": "Pay by card"}, {"title": "Pay by invoice"}]"#,
+    )
+    .unwrap();
+    Sandbox(root)
 }
 
 #[test]
@@ -63,16 +88,8 @@ fn cli_writes_wait_for_the_repository_lock() {
         &["split", "ST-001", "--from", "children.json"],
     ];
     for args in commands {
-        let root =
-            std::env::temp_dir().join(format!("story-cli-lock-{}-{}", std::process::id(), args[0]));
-        let _ = fs::remove_dir_all(&root);
-        fs::create_dir_all(root.join("backlog")).unwrap();
-        fs::write(root.join("backlog/ST-001.md"), STORY).unwrap();
-        fs::write(
-            root.join("children.json"),
-            r#"[{"title": "Pay by card"}, {"title": "Pay by invoice"}]"#,
-        )
-        .unwrap();
+        let sandbox = fixture(args[0]);
+        let root = sandbox.0.clone();
 
         let before = snapshot(&root);
         let held = fs::File::open(&root).unwrap();
@@ -83,7 +100,7 @@ fn cli_writes_wait_for_the_repository_lock() {
         assert_eq!(
             String::from_utf8_lossy(&refused.stderr),
             format!(
-                "Another process holds the repository write lock on {}. Wait for it to finish, then rerun the command.\n",
+                "Another process held the repository write lock on {} for 3 seconds. Wait for it to finish, then rerun the command.\n",
                 root.display()
             ),
             "{args:?}"
@@ -102,6 +119,37 @@ fn cli_writes_wait_for_the_repository_lock() {
             before,
             "{args:?} wrote nothing once the lock was free"
         );
-        fs::remove_dir_all(&root).unwrap();
+    }
+}
+
+#[test]
+fn a_cli_write_waits_for_a_writer_that_finishes() {
+    let commands: [&[&str]; 4] = [
+        &["set", "ST-001", "size=3"],
+        &["note", "ST-001", "clarified the statement"],
+        &["new", "--title", "Refund an order"],
+        &["split", "ST-001", "--from", "children.json"],
+    ];
+    for args in commands {
+        let sandbox = fixture(&format!("wait-{}", args[0]));
+        let root = sandbox.0.clone();
+        let before = snapshot(&root);
+        let held = fs::File::open(&root).unwrap();
+        held.try_lock().unwrap();
+        let child = command(&root, args)
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .spawn()
+            .unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(300));
+        assert_eq!(snapshot(&root), before, "{args:?} wrote under the lock");
+        drop(held);
+        let done = child.wait_with_output().unwrap();
+        assert_eq!(done.status.code(), Some(0), "{args:?} {done:?}");
+        assert_ne!(
+            snapshot(&root),
+            before,
+            "{args:?} wrote nothing after the wait"
+        );
     }
 }
