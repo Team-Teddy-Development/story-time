@@ -18,11 +18,15 @@ below disagrees with this section, this section wins.
     `story set <id> remote=<n>` after `story new` and before its sync step. The
     push then updates the issue. That path is already tested in
     `native/story-push/tests/cli.rs:62`.
-*   **GitHub only.** The tracker collector runs
-    `gh issue list --state open --limit 200 --search "-label:story"`, drops
-    issues that are a story's `remote`, and reports truncation. Every other
-    tracker reports `tracker collector skipped (not yet supported)`. The skill
-    never touches a token.
+*   **GitHub and Gitea.** The tracker collector runs
+    `gh issue list --state open --limit 200 --search "-label:story"` on
+    GitHub. On Gitea (ST-037) it pages a read-only GET of
+    `/api/v1/repos/<owner>/<repo>/issues?state=open&type=issues`, up to 200
+    issues, and drops those with a `story` label. Both drop issues that are a
+    story's `remote` and report truncation. The Gitea request takes
+    `GITEA_TOKEN` on standard input, so the token never reaches the command
+    line or the output. Every other tracker reports
+    `tracker collector skipped (not yet supported)`.
 *   **Collectors only gather.** The walk checks every kind's excerpt, so only
     rows that reach the table cost a judgment. Skip patterns are anchored to
     test code. `docs/designs/`, the backlog, and the skill's own files are
