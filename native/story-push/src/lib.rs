@@ -5,10 +5,13 @@ pub mod gateway;
 pub mod init;
 mod lenient_story;
 pub mod list;
+pub mod machine;
+mod models;
 pub mod planning;
 pub mod secret;
 pub mod show;
 pub mod story;
+mod toml_subset;
 
 use chrono::Utc;
 use gateway::{Gateway, Remote};
