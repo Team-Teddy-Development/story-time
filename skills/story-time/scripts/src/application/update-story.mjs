@@ -43,7 +43,10 @@ function coerce(key, raw) {
     return n;
   }
   if (LIST.has(key)) {
-    return Array.isArray(raw) ? raw : String(raw).split(',').map((s) => s.trim()).filter(Boolean);
+    if (Array.isArray(raw)) return raw;
+    const text = String(raw).trim();
+    const items = text.startsWith('[') && text.endsWith(']') ? text.slice(1, -1) : text;
+    return items.split(',').map((s) => s.trim()).filter(Boolean);
   }
   if (key === 'status' && !STATUSES.includes(raw)) throw new Error(`Unknown status "${raw}". Use one of: ${STATUSES.join(', ')}.`);
   if (key === 'type' && !TYPES.includes(raw)) throw new Error(`Unknown type "${raw}". Use one of: ${TYPES.join(', ')}.`);
