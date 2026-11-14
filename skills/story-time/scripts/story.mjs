@@ -57,7 +57,11 @@ Commands:
   table  check|criteria <file>             Check a decision table for gaps and overlaps, or print its criteria
                                            as one parameterized rule table (exit 1 on defects)
   init   [--from answers.json] [--force]   Write a validated .story-time/settings.json (see the story-setup skill)
-  config                                   Show the effective project config
+  plan   --from request.json [--output docs/planning/name.json]
+                                           Native: generate a local planning proposal (JSON, plus Markdown with --output)
+  plan   --snapshot                        Native: capture a planning request with current source hashes; read-only
+  adopt  preview                           Native: preview adopting an existing backlog; writes nothing
+  config                                  Show the effective project config
   help                                     This text
 
 Config: --config, else $STORY_TIME_CONFIG, else ./.story-time/settings.json, else ./.story-time.json (optional).
