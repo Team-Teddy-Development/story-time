@@ -14,6 +14,7 @@ pub mod note;
 pub mod planning;
 pub mod secret;
 pub mod show;
+pub mod stats;
 pub mod story;
 pub mod table;
 mod toml_subset;
@@ -41,6 +42,7 @@ pub const NATIVE_COMMANDS: &[(&str, Native)] = &[
     ("show", |args| show::run(args).map(|out| (out, 0))),
     ("issues", |args| issues(args).map(|out| (out, 0))),
     ("list", |args| list::run(args).map(|out| (out, 0))),
+    ("stats", |args| stats::run(args).map(|out| (out, 0))),
     ("secret", |args| secret::run(args).map(|out| (out, 0))),
     ("machine", machine::run),
     ("table", table::run),

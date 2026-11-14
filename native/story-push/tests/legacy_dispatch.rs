@@ -47,7 +47,7 @@ fn fake_cli(path: &Path, label: &str) {
 fn dispatched_to(sandbox: &Sandbox, cwd: &str, env_cli: bool) -> String {
     let mut command = Command::new(env!("CARGO_BIN_EXE_story"));
     command
-        .arg("stats")
+        .arg("not-a-native-command")
         .current_dir(sandbox.0.join(cwd))
         .env("HOME", sandbox.0.join("home"))
         .env_remove("STORY_TIME_LEGACY_CLI");
