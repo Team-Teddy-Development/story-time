@@ -6,7 +6,7 @@ use crate::{
     js_number,
     lenient_story::{trim, Js},
     list::{self, backlog_dir},
-    next_id::next_id,
+    next_id::{format_id, next_id, number},
     Failure,
 };
 use chrono::Utc;
@@ -40,7 +40,8 @@ pub fn run(args: &[String]) -> Result<String, Failure> {
     })
 }
 
-/// `createStory` followed by `FileSystemStoryRepository.save`.
+/// `createStory` followed by `FileSystemStoryRepository.save`, except that an id another process
+/// took after `next_id` read the backlog is skipped instead of overwritten.
 fn create(flags: &Flags, dir: &Path, prefix: &str, date: &str) -> Result<Js, String> {
     let title = flags
         .value("title")
@@ -83,9 +84,30 @@ fn create(flags: &Flags, dir: &Path, prefix: &str, date: &str) -> Result<Js, Str
     }
     sections.push(("Changelog".into(), text(&format!("- {date} created"))));
 
-    let id = next_id(dir, prefix)?;
+    let mut taken = 0.0;
+    loop {
+        let next = number(&next_id(dir, prefix)?, prefix).unwrap_or(0.0);
+        let n = next.max(taken + 1.0);
+        let story = draft(flags, &format_id(prefix, n), title, kind, date, &sections);
+        match list::create(dir, &story) {
+            Ok(()) => return Ok(story),
+            Err(list::CreateError::Taken(_)) => taken = n,
+            Err(error) => return Err(error.into()),
+        }
+    }
+}
+
+fn draft(
+    flags: &Flags,
+    id: &str,
+    title: &str,
+    kind: &str,
+    date: &str,
+    sections: &[(String, Js)],
+) -> Js {
+    let text = |key: &str| Js::Str(key.into());
     let mut fields = vec![
-        ("id".to_owned(), text(&id)),
+        ("id".to_owned(), text(id)),
         ("title".into(), text(title)),
         ("status".into(), text("draft")),
         ("type".into(), text(kind)),
@@ -112,9 +134,7 @@ fn create(flags: &Flags, dir: &Path, prefix: &str, date: &str) -> Result<Js, Str
         ("depends_on".into(), Js::Arr(Vec::new())),
         ("created".into(), text(date)),
         ("updated".into(), text(date)),
-        ("sections".into(), Js::Obj(sections)),
+        ("sections".into(), Js::Obj(sections.to_vec())),
     ]);
-    let story = Js::Obj(fields);
-    list::save(dir, &story)?;
-    Ok(story)
+    Js::Obj(fields)
 }

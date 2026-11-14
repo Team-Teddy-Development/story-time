@@ -95,7 +95,8 @@ fn split(dir: &Path, parent_id: &str, specs: &Value, date: &str) -> Result<Vec<S
     );
 
     for (written, child) in children.iter().enumerate() {
-        if let Err(error) = list::save(dir, child) {
+        if let Err(error) = list::create(dir, child) {
+            let error = String::from(error);
             let step = format!("create {}", child_ids[written]);
             return Err(roll_back(dir, &step, &error, &child_ids[..written]));
         }
