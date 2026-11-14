@@ -252,3 +252,49 @@ fn missing_and_non_string_ids_match_node() {
         single.both_forms(&[], &[], 0);
     }
 }
+
+#[test]
+fn legacy_date_forms_match_node() {
+    let s = Sandbox::new();
+    for (i, updated) in [
+        "2026/11/14",
+        "Nov 14 2026",
+        "14 Nov 2026",
+        "11/14/2026",
+        "2026-11-14 10:00",
+        "2000/01/01",
+        "Jan 1 2000",
+        "1 January 2000 10:00 PM",
+        "Sat, 01 Jan 2000 10:00:00 GMT",
+        "01/01/00",
+        "2000.1.1 10:00 -0500",
+        "2999/12/31",
+        "Dec 31 2999 23:59:59.999 UTC",
+        "Nov 14 2026 garbage",
+        "2026/13/01",
+        "275760/1/1",
+        "+275760-01-01T00:00",
+    ]
+    .iter()
+    .enumerate()
+    {
+        s.story(
+            &format!("backlog/ST-{:03}.md", i + 1),
+            &format!(
+                "id: ST-{:03}\ntitle: x\nstatus: draft\nupdated: {updated}",
+                i + 1
+            ),
+        );
+    }
+    for days in ["30", "0", "-1", "-100000000"] {
+        s.both_forms(&["--stale-days", days], &[], 0);
+        for zone in [
+            "UTC",
+            "Asia/Kolkata",
+            "America/Chicago",
+            "Pacific/Kiritimati",
+        ] {
+            s.both_forms(&["--stale-days", days], &[("TZ", zone)], 0);
+        }
+    }
+}
