@@ -387,7 +387,7 @@ fn stale_config_identity_content_and_membership_are_rejected() {
     }
 }
 #[test]
-fn duplicate_cycle_unknown_status_size_and_nested_data_fail_closed() {
+fn duplicate_cycle_unknown_status_size_and_malformed_stories_fail_closed() {
     for (extra, status, size, cause) in [
         (
             "depends_on: [PAY-001]\r\n",
@@ -397,7 +397,7 @@ fn duplicate_cycle_unknown_status_size_and_nested_data_fail_closed() {
         ),
         ("", "imaginary", "3", "unknown or missing status"),
         ("", "ready", "huge", "unknown_size"),
-        ("nested: {bad: true}\r\n", "ready", "3", "malformed_story"),
+        ("epic: [EP-1]\r\n", "ready", "3", "epic must be"),
         ("depends_on: wrong\r\n", "ready", "3", "depends_on"),
     ] {
         let p = Project::new();
@@ -405,6 +405,10 @@ fn duplicate_cycle_unknown_status_size_and_nested_data_fail_closed() {
         p.story("PAY-001", status, size, extra);
         p.conflict(&r, None, cause);
     }
+    let p = Project::new();
+    let r = p.request();
+    p.put("work/PAY-001.md", "## Story\r\nNo frontmatter.\r\n");
+    p.conflict(&r, None, "malformed_story");
     let p = Project::new();
     p.story("PAY-001", "ready", "3", "");
     let r = p.request();

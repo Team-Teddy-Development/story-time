@@ -1,6 +1,6 @@
 //! Stories read the way the Node CLI's `parseStory` reads them, which is more lenient than
-//! [`crate::story::parse`]: `show`, `list`, and `push` must read every file Node reads,
-//! including for files the strict parser rejects. [`serialize`] is the one writer of the story
+//! [`crate::story::parse_legacy`]: every command that reads stories must read every file Node
+//! reads, including files the strict parser rejects. [`serialize`] is the one writer of the story
 //! file format for the commands built on this model (`show`, `note`, `new`).
 
 use crate::{config::array_index, js_space};

@@ -1,6 +1,6 @@
 //! `story metrics --from YYYY-MM-DD --to YYYY-MM-DD [--json]`: read-only delivery figures from changelog status events.
 
-use crate::{config, story, Failure};
+use crate::{config, lenient_story, Failure};
 use chrono::NaiveDate;
 use serde_json::{json, Value};
 use std::{fs, path::Path};
@@ -69,8 +69,8 @@ fn histories(dir: &Path) -> Result<Vec<History>, String> {
         .map(|id| {
             let text =
                 fs::read_to_string(dir.join(format!("{id}.md"))).map_err(|e| e.to_string())?;
-            Ok(match story::parse(&text) {
-                Ok(parsed) => history(id, &parsed),
+            Ok(match lenient_story::parse(&text) {
+                Ok(parsed) => history(id, &parsed.to_value()),
                 Err(e) => History {
                     id,
                     events: Vec::new(),
