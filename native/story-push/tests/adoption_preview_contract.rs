@@ -416,7 +416,7 @@ fn malformed_config_identity_fields_are_not_silently_defaulted() {
 fn unsupported_adoption_commands_do_not_fall_back_to_node() {
     let p = Project::new();
     let out = Command::new(env!("CARGO_BIN_EXE_story"))
-        .args(["adopt", "apply"])
+        .args(["adopt", "import"])
         .env_clear()
         .env("PATH", "/nonexistent")
         .current_dir(&p.0)

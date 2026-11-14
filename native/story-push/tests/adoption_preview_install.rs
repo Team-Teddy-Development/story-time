@@ -36,7 +36,7 @@ fn disposable_skill_install_routes_before_gitea_and_native_commands_need_no_node
     assert!(routing < skill.find("## Gitea setup branch").unwrap());
     assert!(skill[routing..].contains("story adopt preview"));
     assert!(skill.contains("already_adopted"));
-    assert!(!skill.contains("story adopt apply"));
+    assert!(skill.contains("story adopt apply --plan"));
     let binary = temp.join("story");
     fs::copy(env!("CARGO_BIN_EXE_story"), &binary).unwrap();
     for kind in ["new", "adopt", "upgrade"] {
