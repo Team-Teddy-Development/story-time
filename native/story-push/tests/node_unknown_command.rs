@@ -45,3 +45,29 @@ fn the_node_cli_fails_on_an_unknown_command() {
         Some("Unknown command \"no-such-command\".")
     );
 }
+
+#[test]
+fn the_node_cli_never_calls_a_native_command_unknown() {
+    let cli =
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../skills/story-time/scripts/story.mjs");
+    for (command, _) in story_time_native::NATIVE_COMMANDS {
+        let dir = std::env::temp_dir().join(format!("st087-node-{}-{command}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let output = Command::new("node")
+            .arg(&cli)
+            .arg(command)
+            .env_clear()
+            .env("PATH", std::env::var("PATH").unwrap())
+            .env("HOME", &dir)
+            .current_dir(&dir)
+            .output()
+            .unwrap();
+        std::fs::remove_dir_all(&dir).unwrap();
+        let stderr = String::from_utf8(output.stderr).unwrap();
+        assert_ne!(
+            stderr.lines().next(),
+            Some(format!("Unknown command \"{command}\".").as_str()),
+            "native command {command} needs a Node handler or a NATIVE_ONLY entry"
+        );
+    }
+}
