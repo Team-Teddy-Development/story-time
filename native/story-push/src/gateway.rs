@@ -62,13 +62,67 @@ impl Cli {
         let mut child = command
             .spawn()
             .map_err(|_| "Tracker CLI could not start; check its installation.".to_string())?;
-        let write_result = match (input, child.stdin.take()) {
-            (Some(text), Some(mut stdin)) => stdin.write_all(text.as_bytes()),
-            _ => Ok(()),
+        let writer = match (input, child.stdin.take()) {
+            (Some(text), Some(mut stdin)) => {
+                let text = text.to_owned();
+                Some(std::thread::spawn(move || stdin.write_all(text.as_bytes())))
+            }
+            _ => None,
         };
-        let out = child
-            .wait_with_output()
-            .map_err(|_| "Tracker CLI could not be read.".to_string())?;
+        let drain = |pipe: Option<Box<dyn Read + Send>>| {
+            std::thread::spawn(move || {
+                let mut bytes = Vec::new();
+                if let Some(mut pipe) = pipe {
+                    let _ = pipe.read_to_end(&mut bytes);
+                }
+                bytes
+            })
+        };
+        let stdout = drain(
+            child
+                .stdout
+                .take()
+                .map(|p| Box::new(p) as Box<dyn Read + Send>),
+        );
+        let stderr = drain(
+            child
+                .stderr
+                .take()
+                .map(|p| Box::new(p) as Box<dyn Read + Send>),
+        );
+        let deadline = std::time::Instant::now() + self.timeout;
+        let status = loop {
+            match child.try_wait() {
+                Ok(Some(status)) => break status,
+                Ok(None) if std::time::Instant::now() < deadline => {
+                    std::thread::sleep(Duration::from_millis(20))
+                }
+                Ok(None) => {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    let program = self
+                        .program
+                        .file_name()
+                        .map(|n| n.to_string_lossy().into_owned())
+                        .unwrap_or_default();
+                    let command: Vec<&str> = std::iter::once(program.as_str())
+                        .chain(args.iter().take(2).map(String::as_str))
+                        .collect();
+                    return Err(format!(
+                        "Tracker CLI `{}` timed out after {}s and was stopped.",
+                        command.join(" "),
+                        self.timeout.as_secs()
+                    ));
+                }
+                Err(_) => return Err("Tracker CLI could not be read.".to_string()),
+            }
+        };
+        let out = std::process::Output {
+            status,
+            stdout: stdout.join().unwrap_or_default(),
+            stderr: stderr.join().unwrap_or_default(),
+        };
+        let write_result = writer.map_or(Ok(()), |w| w.join().unwrap_or(Ok(())));
         if !out.status.success() {
             return Err(format!(
                 "Tracker CLI failed (exit {}). Check tracker authentication and repository access.",
