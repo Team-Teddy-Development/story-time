@@ -729,54 +729,61 @@ pub fn to_html(text: &str) -> String {
         .collect()
 }
 
-pub fn ado_args(story: &Value, ado: &Value) -> Result<Value, String> {
-    let card = render_card(story, "ado", &json!({"ado":ado}))?;
-    let fields = card["fields"].as_array().ok_or("ADO card lacks fields")?;
+/// The `az boards work-item` arguments for a rendered ADO card. Push and the printed
+/// `az` command both use it, so the two cannot disagree about field mapping.
+#[derive(Debug)]
+pub struct AdoArgs {
+    pub kind: String,
+    pub title: String,
+    pub description: Option<String>,
+    pub area: Option<String>,
+    pub iteration: Option<String>,
+    pub fields: Vec<String>,
+}
+
+/// Node's `adoArgs`, over the card [`render_card`] or [`tracker_card`] returns.
+pub fn ado_args(card: &Value) -> Result<AdoArgs, String> {
+    let fields = card["fields"]
+        .as_array()
+        .ok_or("Rendered ADO card has invalid fields.")?;
     let get = |name| {
         fields
             .iter()
             .find(|f| string(f, "name") == name)
-            .map(|f| f["value"].clone())
+            .map(|f| string(f, "value").to_owned())
     };
-    let mut out = json!({"type":get("Work Item Type"),"title":card["title"],"fields":[]});
-    for (name, key) in [
-        ("Description", "description"),
-        ("Area Path", "area"),
-        ("Iteration Path", "iteration"),
-    ] {
-        if let Some(v) = get(name) {
-            out[key] = if key == "description" {
-                json!(to_html(v.as_str().ok_or("ADO description must be text")?))
-            } else {
-                v
-            };
-        }
-    }
-    out["fields"] = json!(fields
-        .iter()
-        .filter_map(|f| {
-            let reference = f.get("ref")?.as_str()?;
-            if [
-                "System.Description",
-                "System.AreaPath",
-                "System.IterationPath",
-            ]
-            .contains(&reference)
-            {
-                return None;
-            }
-            let value = string(f, "value");
-            Some(format!(
-                "{reference}={}",
-                if reference.contains("AcceptanceCriteria") || reference.contains("ReproSteps") {
-                    to_html(value)
-                } else {
-                    value.into()
+    Ok(AdoArgs {
+        kind: get("Work Item Type").ok_or("Rendered ADO card has no work item type.")?,
+        title: string(card, "title").to_owned(),
+        description: get("Description").map(|d| to_html(&d)),
+        area: get("Area Path").filter(|v| !v.is_empty()),
+        iteration: get("Iteration Path").filter(|v| !v.is_empty()),
+        fields: fields
+            .iter()
+            .filter_map(|f| {
+                let reference = f.get("ref")?.as_str()?;
+                if [
+                    "System.Description",
+                    "System.AreaPath",
+                    "System.IterationPath",
+                ]
+                .contains(&reference)
+                {
+                    return None;
                 }
-            ))
-        })
-        .collect::<Vec<_>>());
-    Ok(out)
+                let value = string(f, "value");
+                Some(format!(
+                    "{reference}={}",
+                    if reference.contains("AcceptanceCriteria") || reference.contains("ReproSteps")
+                    {
+                        to_html(value)
+                    } else {
+                        value.into()
+                    }
+                ))
+            })
+            .collect(),
+    })
 }
 
 #[cfg(test)]
@@ -885,7 +892,8 @@ mod tests {
                     let card = render_card(&s, format, &json!({})).unwrap();
                     assert_eq!(card["title"], title, "{format}");
                 }
-                assert_eq!(ado_args(&s, &json!({})).unwrap()["title"], title);
+                let card = render_card(&s, "ado", &json!({})).unwrap();
+                assert_eq!(ado_args(&card).unwrap().title, title);
             }
         }
     }
@@ -942,12 +950,10 @@ mod tests {
                     field(&card, "Acceptance Criteria"),
                     "- Given email <exists>\n- Given token & valid"
                 );
-                let args = ado_args(&s, &cfg["ado"]).unwrap();
-                assert!(args["fields"].as_array().unwrap().contains(&json!("Microsoft.VSTS.Common.AcceptanceCriteria=<ul><li>Given email &lt;exists&gt;</li><li>Given token &amp; valid</li></ul>")));
-                assert!(args["description"]
-                    .as_str()
-                    .unwrap()
-                    .starts_with("<p>As a user"));
+                let args = ado_args(&card).unwrap();
+                assert!(args.fields.contains(&"Microsoft.VSTS.Common.AcceptanceCriteria=<ul><li>Given email &lt;exists&gt;</li><li>Given token &amp; valid</li></ul>".to_owned()));
+                assert!(args.description.unwrap().starts_with("<p>As a user"));
+                assert_eq!(args.area.as_deref(), Some("Shop\\Web"));
             }
         }
         assert_eq!(
