@@ -34,6 +34,24 @@ test('unknown command exits 2 with usage', async () => {
   assert.match(r.stderr, /Unknown command/);
 });
 
+test('Object.prototype member names are unknown commands', async () => {
+  const dir = await tempDir();
+  for (const name of ['constructor', 'toString', 'hasOwnProperty', '__proto__', 'valueOf']) {
+    const r = await story(dir, name);
+    assert.equal(r.code, 2, name);
+    assert.match(r.stderr, new RegExp(`^Unknown command "${name}"\\.\n\nstory — agile backlog toolkit`), name);
+  }
+});
+
+test('secret rejects Object.prototype member names as trackers', async () => {
+  const dir = await tempDir();
+  for (const args of [['clear', 'constructor'], ['set', 'toString'], ['clear', '__proto__']]) {
+    const r = await story(dir, 'secret', ...args);
+    assert.equal(r.code, 2, args.join(' '));
+    assert.match(r.stderr, new RegExp(`no token support for "${args[1]}"`), args.join(' '));
+  }
+});
+
 test('new creates a story file and prints its id', async () => {
   const dir = await tempDir();
   const r = await story(dir, 'new', '--title', 'Export invoices', '--statement', 'As an accountant, I want CSV export, so that I can reconcile.', '--ac', 'Given invoices, when I export, then I get CSV', '--json');
