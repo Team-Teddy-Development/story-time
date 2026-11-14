@@ -108,7 +108,7 @@ part of either Rust push execution path.
 | `story stats [--stale-days 30] [--json]` | Counts, points, unestimated and stale stories. Native Rust; read-only |
 | `story export <id> [--format github\|ado\|gitea\|markdown] [--command]` | Copy-paste card for the tracker, or the `gh` / `az boards` command that creates it. Native Rust; read-only |
 | `story push <id...> \| --all [--dry-run]` | Create or update items in GitHub, ADO, or Gitea. Native Rust; refuses when `sync` is `off` |
-| `story judge [id...]` | Judgement calls: need vs. solution, real benefit, testable criteria, type, size, split pattern. Jev with a key, code heuristics without |
+| `story judge [id...]` | Judgement calls: need vs. solution, real benefit, testable criteria, type, size, split pattern. Jev with a key, code heuristics without. Native Rust; read-only |
 | `story secret set\|status\|clear <github\|ado\|jev>` | Store a tracker token or the TypeSafe key in `.story-time/.<name>.env` (mode 600, git-ignored). The user runs `set` themselves. Native Rust |
 | `story machine check\|criteria\|diagram <file>` | Check a state machine (`model/state/<entity>.toml`) for unreachable states, dead ends, transitions without an event, and unknown names; print one criterion per transition and per refused event; or print its Mermaid diagram. Exit 1 on defects. Native Rust; read-only |
 | `story table check\|criteria <file>` | Check a decision table for uncovered input combinations and, under `unique`, overlapping rules; or print one criterion with a row per combination for a parameterized test. Exit 1 on defects. Native Rust; read-only |
