@@ -8,7 +8,15 @@ use std::{
 const ROUNDS: usize = 10;
 const RACERS: usize = 12;
 
-fn project(name: &str) -> PathBuf {
+struct Sandbox(PathBuf);
+
+impl Drop for Sandbox {
+    fn drop(&mut self) {
+        let _ = fs::remove_dir_all(&self.0);
+    }
+}
+
+fn project(name: &str) -> Sandbox {
     let root = std::env::temp_dir().join(format!("story-race-{name}-{}", std::process::id()));
     let _ = fs::remove_dir_all(&root);
     fs::create_dir_all(root.join(".story-time")).unwrap();
@@ -17,7 +25,7 @@ fn project(name: &str) -> PathBuf {
         r#"{"prefix":"RACE","tracker":"files"}"#,
     )
     .unwrap();
-    root
+    Sandbox(root)
 }
 
 fn spawn(root: &Path, args: &[&str]) -> Child {
@@ -51,7 +59,8 @@ fn titles(root: &Path) -> BTreeSet<String> {
 
 #[test]
 fn concurrent_creates_never_replace_a_story() {
-    let root = project("new");
+    let sandbox = project("new");
+    let root = sandbox.0.clone();
     let mut expected = BTreeSet::new();
     for round in 0..ROUNDS {
         let racers: Vec<(String, Child)> = (0..RACERS)
@@ -82,12 +91,12 @@ fn concurrent_creates_never_replace_a_story() {
         expected,
         "every concurrent story new kept its own story file"
     );
-    fs::remove_dir_all(&root).unwrap();
 }
 
 #[test]
 fn a_split_racing_creates_never_replaces_a_story() {
-    let root = project("split");
+    let sandbox = project("split");
+    let root = sandbox.0.clone();
     let mut expected = BTreeSet::new();
     for round in 0..ROUNDS {
         let title = format!("Parent {round}");
@@ -145,5 +154,4 @@ fn a_split_racing_creates_never_replaces_a_story() {
         expected,
         "no story was replaced and a failed split left nothing behind"
     );
-    fs::remove_dir_all(&root).unwrap();
 }
