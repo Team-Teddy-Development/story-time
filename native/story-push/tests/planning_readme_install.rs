@@ -1,7 +1,7 @@
 use std::{fs, path::PathBuf};
 
 const HEADING: &str = "## Install the native prerequisite";
-const CLAIM: &str = "The native `story` binary runs every command, including `story config` and `story plan`, and no command requires Node.";
+const CLAIM: &str = "The native `story` binary runs every command, including `story config` and `story plan`, and no `story` command requires Node.";
 
 fn install_section() -> String {
     let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../docs/planning/README.md");
