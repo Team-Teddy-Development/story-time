@@ -11,7 +11,7 @@ const LEGACY: &str = ".story-time.json";
 const METADATA: &str = ".story-time/lifecycle.json";
 const RECEIPT: &str = ".story-time/adoption-receipt.json";
 
-fn sha(bytes: &[u8]) -> String {
+pub(crate) fn sha(bytes: &[u8]) -> String {
     digest(&SHA256, bytes)
         .as_ref()
         .iter()
@@ -273,9 +273,13 @@ fn unknowns() -> Value {
 }
 
 pub fn run(args: &[String]) -> (String, u8) {
-    if args != ["preview"] {
-        let report = json!({"schema_version":1,"status":"conflict","allowed_writes":[],"diagnostics":[{"code":"unsupported_command","path":null,"recovery":"Use story adopt preview. Only read-only preview is implemented; no apply command is available."}]});
-        return (format!("{report}\n"), 2);
+    match args.first().map(String::as_str) {
+        Some("apply" | "verify" | "rollback") => return crate::adoption_apply::run(args),
+        _ if args == ["preview"] => {}
+        _ => {
+            let report = json!({"schema_version":1,"status":"conflict","allowed_writes":[],"diagnostics":[{"code":"unsupported_command","path":null,"recovery":"Use story adopt preview, then story adopt apply|verify|rollback --plan <reviewed-preview.json> [--state <dir>]."}]});
+            return (format!("{report}\n"), 2);
+        }
     }
     let root = match std::env::current_dir().and_then(fs::canonicalize) {
         Ok(root) => root,
@@ -289,6 +293,14 @@ pub fn run(args: &[String]) -> (String, u8) {
             )
         }
     };
+    let report = preview(&root);
+    let code = if report["status"] == "conflict" { 2 } else { 0 };
+    (format!("{report}\n"), code)
+}
+
+/// Builds the version1 preview report for a canonical repository root.
+pub(crate) fn preview(root: &Path) -> Value {
+    let root = root.to_path_buf();
     let mut inventory = Inventory {
         root: root.clone(),
         diagnostics: Vec::new(),
@@ -438,5 +450,5 @@ pub fn run(args: &[String]) -> (String, u8) {
     let mut report = json!({"schema_version":1,"status":if conflict{"conflict"}else if adopted{"already_adopted"}else{"preview"},"source_version":source_version,"target_metadata_version":1,"repository":{"root":root},"config":config,"backlog":backlog,"migration_id":migration_id,"unknowns":unknowns(),"preservation_rules":{"story_bytes":"unchanged","config_bytes":"unchanged","custom_fields_and_sections":"retained in original bytes, never rendered","terminal_records":"included","tracker_state":"no reads or writes","sync_policy":"unchanged"},"preimages":inventory.preimages,"allowed_writes":writes,"diagnostics":inventory.diagnostics});
     let plan_digest = sha(report.to_string().as_bytes());
     report["plan_digest"] = json!(plan_digest);
-    (format!("{report}\n"), if conflict { 2 } else { 0 })
+    report
 }

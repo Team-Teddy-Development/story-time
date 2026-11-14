@@ -20,11 +20,11 @@ Before the Gitea branch or any write, inspect current `.story-time/settings.json
 | Project state | Route |
 | --- | --- |
 | No settings, lifecycle metadata, or existing backlog | New setup. Continue below and use native `story init --from <answers.json>`. |
-| Existing settings or local/tracker backlog | Adopt. Run native `story adopt preview` from the project root, then stop setup and report its JSON. |
-| Lifecycle metadata, including unknown versions | Upgrade review. Run the same native `story adopt preview` owner, then stop setup and report its JSON. |
+| Existing settings or local/tracker backlog | Adopt. Run native `story adopt preview > <plan.json>` from the project root, with the plan file outside the repository, and report its JSON for review. |
+| Lifecycle metadata, including unknown versions | Upgrade review. Run the same native preview; `story adopt apply` refuses any plan whose preview is a conflict. |
 
 Preview writes nothing and needs no credentials. Exit 0 `preview` is a plan, not adoption; `already_adopted` requires verified preimages and membership. Exit 2 `conflict` has recovery diagnostics and empty `allowed_writes`.
-For either existing-project route, read `docs/adoption-preview/README.md` in the source checkout for preservation and export/import handoffs. Missing settings do not establish tracker or prefix identity. Preserve originals and sync; no adoption apply, verify, or rollback command exists. The installer copies skills only; install the native CLI separately.
+After review, run `story adopt apply --plan <plan.json>`, then `story adopt verify --plan <plan.json>`; `story adopt rollback --plan <plan.json>` reverses only journaled writes. Optional `--state <dir>` keeps the mode-600 backup and journal outside the repository. Rerun apply after an interruption to resume. Adoption never writes to a tracker. Missing settings do not establish tracker or prefix identity. Read `docs/adoption-preview/README.md` in the source checkout for preservation, recovery, and export/import handoffs. The installer copies skills only; install the native CLI separately.
 
 ## Gitea setup branch
 
