@@ -33,6 +33,7 @@ fn main() -> ExitCode {
         Some("config") => Some(story_time_native::config::run),
         Some("issues") => Some(story_time_native::issues),
         Some("show") => Some(story_time_native::show::run),
+        Some("list") => Some(story_time_native::list::run),
         _ => None,
     };
     if let Some(run) = native {
@@ -57,7 +58,7 @@ fn main() -> ExitCode {
             raw["legacyCli"].as_str().map(PathBuf::from)
         });
     let Some(legacy) = legacy else {
-        eprintln!("Commands other than init, push, adopt, plan, config, show, and issues require STORY_TIME_LEGACY_CLI or ~/.config/story-time/runtime.json with legacyCli. Init, push, adopt, plan, config, show, and issues are fully native and need neither Node nor this setting.");
+        eprintln!("Commands other than init, push, adopt, plan, config, show, issues, and list require STORY_TIME_LEGACY_CLI or ~/.config/story-time/runtime.json with legacyCli. Init, push, adopt, plan, config, show, issues, and list are fully native and need neither Node nor this setting.");
         return ExitCode::from(1);
     };
     match Command::new("node").arg(legacy).args(args).status() {

@@ -140,7 +140,7 @@ fn valid_key(key: &str) -> bool {
         && chars.all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
 }
 
-fn numeric_literal(s: &str) -> bool {
+pub(crate) fn numeric_literal(s: &str) -> bool {
     let s = s.strip_prefix('-').unwrap_or(s);
     let mut pieces = s.split('.');
     let digits = |s: &str| !s.is_empty() && s.bytes().all(|c| c.is_ascii_digit());
