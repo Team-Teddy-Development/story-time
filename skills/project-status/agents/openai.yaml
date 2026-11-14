@@ -1,0 +1,4 @@
+interface:
+  display_name: "Project status"
+  short_description: "Write a dated status report with a record for every claim"
+  default_prompt: "Use $project-status to write a dated status report that separates accepted, released, blocked, and forecast work and cites a record for every claim."
