@@ -45,7 +45,7 @@ fn judge(
     let loaded = config::load(flags.value("config"))?;
     let settings =
         config::parse(&loaded.raw).map_err(|e| format!("{}: {e}", loaded.path.display()))?;
-    let dir = list::backlog_dir(&flags, &loaded.root, &settings)?;
+    let dir = list::backlog_dir(flags.value("dir"), &loaded.root, &settings)?;
     let targets = if flags.positional.is_empty() {
         list::stories(&dir, None)?
             .into_iter()

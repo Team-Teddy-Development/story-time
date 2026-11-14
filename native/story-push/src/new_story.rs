@@ -19,7 +19,7 @@ pub fn run(args: &[String]) -> Result<String, Failure> {
     let loaded = config::load(flags.value("config"))?;
     let settings =
         config::parse(&loaded.raw).map_err(|e| format!("{}: {e}", loaded.path.display()))?;
-    let dir = backlog_dir(&flags, &loaded.root, &settings)?;
+    let dir = backlog_dir(flags.value("dir"), &loaded.root, &settings)?;
     let prefix = match flags.value("prefix") {
         Some(prefix) => prefix.to_owned(),
         None => std::env::var("STORY_TIME_PREFIX")
