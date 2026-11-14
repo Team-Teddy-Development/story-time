@@ -1,3 +1,4 @@
+use crate::story::to_html;
 use reqwest::blocking::Client;
 use reqwest::{Method, StatusCode, Url};
 use serde_json::{json, Value};
@@ -1096,36 +1097,6 @@ fn ado_remote(org: &str, project: &str, id: String) -> Remote {
         remote_id: id,
     }
 }
-fn html(text: &str) -> String {
-    text.replace('&', "&amp;")
-        .replace('<', "&lt;")
-        .replace('>', "&gt;")
-}
-fn to_html(text: &str) -> String {
-    let lines: Vec<_> = text.split('\n').collect();
-    let items: Vec<_> = lines.iter().filter_map(|l| l.strip_prefix("- ")).collect();
-    if !items.is_empty() && items.len() == lines.iter().filter(|l| !l.is_empty()).count() {
-        return format!(
-            "<ul>{}</ul>",
-            items
-                .iter()
-                .map(|s| format!("<li>{}</li>", html(s)))
-                .collect::<String>()
-        );
-    }
-    let mut paragraphs = Vec::new();
-    let mut rest = text;
-    while let Some(index) = rest.find("\n\n") {
-        paragraphs.push(&rest[..index]);
-        rest = rest[index..].trim_start_matches('\n');
-    }
-    paragraphs.push(rest);
-    paragraphs
-        .iter()
-        .map(|p| format!("<p>{}</p>", html(p).replace('\n', "<br>")))
-        .collect::<Vec<_>>()
-        .join("\n")
-}
 fn ado_content(card: &Value) -> Result<(String, Vec<String>), String> {
     let fields = card["fields"]
         .as_array()
@@ -1141,7 +1112,7 @@ fn ado_content(card: &Value) -> Result<(String, Vec<String>), String> {
             .ok_or("Rendered ADO field has invalid value.")?;
         match name {
             "Work Item Type" => kind = Some(value.to_string()),
-            "Description" if !value.is_empty() => {
+            "Description" => {
                 args.extend(strings(&["--description", &to_html(value)]));
             }
             "Area Path" if !value.is_empty() => {
@@ -1452,7 +1423,7 @@ mod tests {
             ]});
             let (_, args) = ado_content(&card).unwrap();
             assert_eq!(json!(args), node_args);
-            assert_eq!(args[3], crate::story::to_html(description));
+            assert_eq!(args[3], to_html(description));
         }
     }
 
