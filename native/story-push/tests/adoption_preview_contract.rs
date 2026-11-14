@@ -109,9 +109,9 @@ fn current_and_legacy_exact_inventory_and_deterministic_plan() {
         let p = Project::new();
         p.config(legacy);
         for (name, id, status) in [
-            ("work/z.md", "PAY-003", "archived"),
-            ("work/é.md", "PAY-002", "done"),
-            ("work/a.md", "PAY-001", "split"),
+            ("work/PAY-003.md", "PAY-003", "archived"),
+            ("work/PAY-002.md", "PAY-002", "done"),
+            ("work/PAY-001.md", "PAY-001", "split"),
         ] {
             p.story(
                 name,
@@ -122,13 +122,13 @@ fn current_and_legacy_exact_inventory_and_deterministic_plan() {
         }
         // Distinct remote identities are required even for terminal records.
         p.story(
-            "work/z.md",
+            "work/PAY-003.md",
             "PAY-003",
             "archived",
             "custom: true\r\nremote: 43\r\n",
         );
         p.story(
-            "work/é.md",
+            "work/PAY-002.md",
             "PAY-002",
             "done",
             "custom: café\r\nremote: 44\r\n",
@@ -156,7 +156,7 @@ fn current_and_legacy_exact_inventory_and_deterministic_plan() {
                 .iter()
                 .map(|v| v["path"].as_str().unwrap())
                 .collect::<Vec<_>>(),
-            ["work/a.md", "work/z.md", "work/é.md"]
+            ["work/PAY-001.md", "work/PAY-002.md", "work/PAY-003.md"]
         );
         for f in files {
             assert_eq!(
@@ -239,21 +239,21 @@ fn conflicting_duplicate_id_or_remote_is_a_conflict_for_that_file() {
     ] {
         let p = Project::new();
         p.config(false);
-        p.story("work/a.md", "PAY-001", "done", extra);
+        p.story("work/PAY-001.md", "PAY-001", "done", extra);
         let r = conflict(&p, code);
         assert!(
             r["diagnostics"]
                 .as_array()
                 .unwrap()
                 .iter()
-                .any(|d| d["code"] == code && d["path"] == "work/a.md"),
+                .any(|d| d["code"] == code && d["path"] == "work/PAY-001.md"),
             "{r}"
         );
     }
     let p = Project::new();
     p.config(false);
     p.story(
-        "work/a.md",
+        "work/PAY-001.md",
         "PAY-001",
         "done",
         "id: PAY-001\r\nremote: 7\r\nremote: 7\r\nstatus: ready\r\n",
@@ -327,7 +327,7 @@ fn symlinks_at_every_boundary_are_rejected_without_reading_targets() {
 fn adopted_requires_receipt_and_exact_preservation_membership() {
     let p = Project::new();
     p.config(false);
-    p.story("work/a.md", "PAY-001", "done", "");
+    p.story("work/PAY-001.md", "PAY-001", "done", "");
     let (_, r) = p.preview();
     for w in r["allowed_writes"].as_array().unwrap() {
         p.put(w["path"].as_str().unwrap(), w["content"].as_str().unwrap());
@@ -336,14 +336,14 @@ fn adopted_requires_receipt_and_exact_preservation_membership() {
     assert!(out.status.success(), "{r}");
     assert_eq!(r["status"], "already_adopted");
     assert_eq!(r["allowed_writes"], json!([]));
-    p.story("work/b.md", "PAY-002", "done", "");
+    p.story("work/PAY-002.md", "PAY-002", "done", "");
     conflict(&p, "preservation_diverged");
-    fs::remove_file(p.0.join("work/b.md")).unwrap();
-    p.story("work/a.md", "PAY-001", "ready", "");
+    fs::remove_file(p.0.join("work/PAY-002.md")).unwrap();
+    p.story("work/PAY-001.md", "PAY-001", "ready", "");
     conflict(&p, "preservation_diverged");
     let p = Project::new();
     p.config(false);
-    p.story("work/a.md", "PAY-001", "done", "");
+    p.story("work/PAY-001.md", "PAY-001", "done", "");
     p.put(".story-time/lifecycle.json", r#"{"schema_version":1}"#);
     conflict(&p, "preservation_diverged");
 }
@@ -356,7 +356,7 @@ fn source_link_conflicts_and_receipt_versions_are_diagnosed() {
         let p = Project::new();
         p.config(false);
         p.story(
-            "work/a.md",
+            "work/PAY-001.md",
             "PAY-001",
             "done",
             &format!("remote: 7\r\nremote_url: '{link}'\r\n"),
@@ -375,7 +375,7 @@ fn source_link_conflicts_and_receipt_versions_are_diagnosed() {
         let p = Project::new();
         p.config(false);
         p.story(
-            "work/a.md",
+            "work/PAY-001.md",
             "PAY-001",
             "done",
             &format!("remote: 7\r\nremote_url: '{link}'\r\n"),
@@ -384,7 +384,7 @@ fn source_link_conflicts_and_receipt_versions_are_diagnosed() {
     }
     let p = Project::new();
     p.config(false);
-    p.story("work/a.md", "PAY-001", "done", "");
+    p.story("work/PAY-001.md", "PAY-001", "done", "");
     p.put(
         ".story-time/adoption-receipt.json",
         r#"{"schema_version":99}"#,
@@ -396,7 +396,7 @@ fn installed_preimages_detect_config_change_deletion_and_receipt_tampering() {
     for change in ["config", "delete", "receipt"] {
         let p = Project::new();
         p.config(false);
-        p.story("work/a.md", "PAY-001", "done", "");
+        p.story("work/PAY-001.md", "PAY-001", "done", "");
         let (_, r) = p.preview();
         for w in r["allowed_writes"].as_array().unwrap() {
             p.put(w["path"].as_str().unwrap(), w["content"].as_str().unwrap());
@@ -408,7 +408,7 @@ fn installed_preimages_detect_config_change_deletion_and_receipt_tampering() {
                     .to_string(),
             ),
             "delete" => {
-                fs::remove_file(p.0.join("work/a.md")).unwrap();
+                fs::remove_file(p.0.join("work/PAY-001.md")).unwrap();
             }
             _ => p.put(
                 ".story-time/adoption-receipt.json",
