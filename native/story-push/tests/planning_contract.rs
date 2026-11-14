@@ -23,7 +23,7 @@ impl Project {
         let root = base.join("project");
         fs::create_dir_all(&root).unwrap();
         let p = Self { base, root };
-        p.put(".story-time/settings.json",json!({"tracker":"github","sync":"auto","github":{"repo":"acme/shop"},"prefix":"PAY","backlogDir":"work","team":{"sprintDays":10,"wipLimit":1},"custom":{"preserve":true}}).to_string());
+        p.put(".story-time/settings.json",json!({"tracker":"github","sync":"auto","github":{"repo":"acme/shop"},"prefix":"PAY","backlogDir":"work","team":{"sprintDays":10,"wipLimit":1},"jira":{"preserve":true}}).to_string());
         p
     }
     fn put(&self, path: &str, bytes: impl AsRef<[u8]>) {
@@ -607,7 +607,7 @@ fn complete_files_only_plan_is_planned_without_tracker_publication() {
 fn malformed_config_and_unknown_nested_request_fields_cannot_masquerade_as_missing_inputs() {
     for config in [
         json!([]),
-        json!({"team":"ten"}),
+        json!({"team":{"sprintDays":"ten"}}),
         json!({"tracker":3}),
         json!({"tracker":"imaginary"}),
         json!({"sync":"automatic"}),
