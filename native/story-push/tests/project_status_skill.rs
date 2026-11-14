@@ -203,6 +203,7 @@ fn project_status_places_every_other_status() {
         position(&text, status);
     }
     position(&text, "one `open` count per status");
+    position(&text, "These counts include blocked stories");
     position(&text, "excluded, with their counts");
     let rows = assert_every_row_cites_a_record(&text, "| Work | State | Claim | Record |");
     assert!(rows.iter().any(|row| row[1] == "`open`"));
