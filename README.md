@@ -97,13 +97,18 @@ without Node or retained-runtime configuration.
 
 ### Installer (Claude Code, Codex, or both)
 
+The skill installer is the Rust binary `story-install-skills`. Run it from a
+checkout with Cargo; it needs no Node.
+
 ```bash
 git clone https://github.com/team-teddy-development/story-time
 cd story-time
-node scripts/install.mjs --agent codex       # Codex       -> ~/.agents/skills
-node scripts/install.mjs --agent claude      # Claude Code -> ~/.claude/skills
-node scripts/install.mjs --agent all         # both
+cargo run --locked --manifest-path native/story-push/Cargo.toml --bin story-install-skills -- --agent codex   # Codex       -> ~/.agents/skills
+cargo run --locked --manifest-path native/story-push/Cargo.toml --bin story-install-skills -- --agent claude  # Claude Code -> ~/.claude/skills
+cargo run --locked --manifest-path native/story-push/Cargo.toml --bin story-install-skills -- --agent all     # both
 ```
+
+Add `--help` after `--` to print its usage.
 
 | Flag | Effect |
 |---|---|
@@ -112,6 +117,7 @@ node scripts/install.mjs --agent all         # both
 | `--dry-run` | Print the plan, write nothing |
 | `--force` | Replace story-time skills that are already installed. Without it, the installer refuses and writes nothing |
 | `--uninstall` | Remove the story-time skills, and nothing else |
+| `--source DIR` | Copy the skills from the story-time checkout or release at `DIR` instead of the checkout the binary was built from |
 
 The installer copies the skills without the test suite. It does not install the
 native executable. Install native `story` separately before using planning skills.
@@ -144,7 +150,8 @@ As a plugin (inside Claude Code):
 /plugin install story-time@story-time
 ```
 
-Or with the installer: `node scripts/install.mjs --agent claude`.
+Or with the installer, from a checkout:
+`cargo run --locked --manifest-path native/story-push/Cargo.toml --bin story-install-skills -- --agent claude`.
 
 ### Any agent
 
