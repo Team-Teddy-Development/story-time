@@ -8,13 +8,20 @@ fn skill(name: &str) -> String {
     fs::read_to_string(&path).unwrap_or_else(|e| panic!("{}: {e}", path.display()))
 }
 
+fn flowed(text: &str) -> String {
+    text.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
 fn position(text: &str, needle: &str) -> usize {
-    text.find(needle)
+    flowed(text)
+        .find(&flowed(needle))
         .unwrap_or_else(|| panic!("missing instruction: {needle}"))
 }
 
 fn table_rows<'a>(text: &'a str, header: &str) -> Vec<&'a str> {
-    let start = position(text, header);
+    let start = text
+        .find(header)
+        .unwrap_or_else(|| panic!("missing table: {header}"));
     text[start..]
         .lines()
         .skip(2)
@@ -171,7 +178,7 @@ fn project_status_defines_and_states_its_scope() {
 #[test]
 fn project_status_allows_copied_counts_and_forbids_derived_figures() {
     let text = skill("project-status");
-    assert!(!text.contains("Do not count stories by hand"));
+    assert!(!flowed(&text).contains("Do not count stories by hand"));
     position(
         &text,
         "Copy a count directly from `story list --json` or `story metrics` output and cite the command",
@@ -185,7 +192,7 @@ fn project_status_allows_copied_counts_and_forbids_derived_figures() {
 #[test]
 fn project_status_blocked_covers_any_open_story_with_a_named_blocker() {
     let text = skill("project-status");
-    assert!(!text.contains("in progress and stopped"));
+    assert!(!flowed(&text).contains("in progress and stopped"));
     position(&text, "`blocked`: any open story with a named blocker");
 }
 
@@ -207,7 +214,7 @@ fn project_status_forecast_cites_a_stated_basis_and_is_never_computed() {
     position(&text, "a basis that already states a date or scope");
     position(&text, "epic map order");
     position(&text, "Never compute a forecast");
-    assert!(!text.contains("or a metrics window"));
+    assert!(!flowed(&text).contains("or a metrics window"));
 }
 
 #[test]
