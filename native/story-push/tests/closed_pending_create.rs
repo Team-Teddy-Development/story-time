@@ -258,3 +258,63 @@ fn closed_story_with_a_lost_create_and_no_matching_item_is_skipped() {
         );
     }
 }
+
+fn snapshot(root: &std::path::Path) -> Vec<(PathBuf, u32, Vec<u8>)> {
+    use std::os::unix::fs::PermissionsExt;
+    let mut files = Vec::new();
+    let mut dirs = vec![root.to_owned()];
+    while let Some(dir) = dirs.pop() {
+        for entry in fs::read_dir(&dir).unwrap() {
+            let path = entry.unwrap().path();
+            let meta = fs::symlink_metadata(&path).unwrap();
+            let bytes = if meta.is_dir() {
+                dirs.push(path.clone());
+                Vec::new()
+            } else {
+                fs::read(&path).unwrap()
+            };
+            files.push((path, meta.permissions().mode(), bytes));
+        }
+    }
+    files.sort();
+    files
+}
+
+#[test]
+fn push_waits_for_the_repository_lock_before_touching_the_tracker_or_stories() {
+    let tracker = FakeGitea::start(&[(7, "ST-001: Native push")]);
+    let f = fixture(&tracker.base, "done");
+    let before = snapshot(&f.0);
+
+    let held = fs::File::open(&f.0).unwrap();
+    held.try_lock().unwrap();
+    let refused = push(&f);
+    assert_eq!(refused.status.code(), Some(1), "{refused:?}");
+    assert!(refused.stdout.is_empty(), "{refused:?}");
+    assert_eq!(
+        String::from_utf8_lossy(&refused.stderr),
+        format!(
+            "Another process held the repository write lock on {} for 3 seconds. Wait for it to finish, then rerun the command.\n",
+            f.0.canonicalize().unwrap().display()
+        )
+    );
+    assert_eq!(
+        snapshot(&f.0),
+        before,
+        "a story file changed under the lock"
+    );
+    assert!(
+        tracker.state.lock().unwrap().writes.is_empty(),
+        "the tracker changed under the lock"
+    );
+    drop(held);
+
+    let done = push(&f);
+    assert!(done.status.success(), "{done:?}");
+    assert_eq!(
+        tracker.state.lock().unwrap().writes,
+        vec!["PATCH 7", "POST 7 labels"]
+    );
+    let story = fs::read_to_string(f.0.join("backlog/ST-001.md")).unwrap();
+    assert!(story.contains("\nremote: 7\n"), "{story}");
+}
