@@ -3,6 +3,8 @@ mod adoption_apply;
 pub mod config;
 pub mod gateway;
 pub mod init;
+mod lenient_story;
+pub mod list;
 pub mod planning;
 pub mod show;
 pub mod story;
@@ -759,14 +761,21 @@ pub fn push(args: &[String]) -> Result<String, Failure> {
     }
     Ok(output)
 }
-fn table(headers: &[&str], rows: Vec<Vec<String>>) -> String {
+/// `\s` in a JavaScript regular expression, which `trim` also removes.
+pub(crate) fn js_space(c: char) -> bool {
+    (c.is_whitespace() && c != '\u{85}') || c == '\u{feff}'
+}
+
+/// Node's `table`: columns padded to their widest cell in UTF-16 units, rows end-trimmed.
+pub(crate) fn table(headers: &[&str], rows: Vec<Vec<String>>) -> String {
+    let width = |s: &str| s.encode_utf16().count();
     let widths: Vec<_> = headers
         .iter()
         .enumerate()
         .map(|(i, h)| {
             rows.iter()
-                .map(|r| r[i].chars().count())
-                .chain([h.chars().count()])
+                .map(|r| width(&r[i]))
+                .chain([width(h)])
                 .max()
                 .unwrap()
         })
@@ -774,10 +783,10 @@ fn table(headers: &[&str], rows: Vec<Vec<String>>) -> String {
     let render = |row: Vec<String>| -> String {
         row.iter()
             .enumerate()
-            .map(|(i, c)| format!("{c}{}", " ".repeat(widths[i] - c.chars().count())))
+            .map(|(i, c)| format!("{c}{}", " ".repeat(widths[i] - width(c))))
             .collect::<Vec<_>>()
             .join("  ")
-            .trim_end()
+            .trim_end_matches(js_space)
             .to_owned()
     };
     let mut output = render(headers.iter().map(|s| s.to_string()).collect());
