@@ -479,6 +479,11 @@ pub(crate) fn truthy(value: Option<&Value>) -> bool {
 
 /// `String(value)` in JavaScript.
 pub(crate) fn js_string(value: &Value) -> String {
+    js_string_with(value, crate::js_number::to_string)
+}
+
+/// `String(value)`, with `number` printing each Number.
+pub(crate) fn js_string_with(value: &Value, number: fn(f64) -> String) -> String {
     match value {
         Value::String(s) => s.clone(),
         Value::Array(items) => items
@@ -487,13 +492,13 @@ pub(crate) fn js_string(value: &Value) -> String {
                 if v.is_null() {
                     String::new()
                 } else {
-                    js_string(v)
+                    js_string_with(v, number)
                 }
             })
             .collect::<Vec<_>>()
             .join(","),
         Value::Object(_) => "[object Object]".into(),
-        Value::Number(n) => crate::js_number::to_string(n),
+        Value::Number(n) => number(n.as_f64().expect("a JSON number is an f64")),
         other => other.to_string(),
     }
 }

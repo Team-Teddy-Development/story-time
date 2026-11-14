@@ -1,5 +1,6 @@
 //! JavaScript Numbers held in a `serde_json::Value`, printed as `String(n)` and
-//! `JSON.stringify(n)` print them.
+//! `JSON.stringify(n)` print them. Only the `model_` functions read the Infinity mark, because only a
+//! model file's TOML integers can overflow to Infinity, and they never produce the mark themselves.
 
 use serde::Serialize;
 use serde_json::{
@@ -11,7 +12,6 @@ use std::io;
 const MAX_SAFE: f64 = 9_007_199_254_740_992.0;
 
 /// A `Value` cannot hold a non-finite number, so ±Infinity is stored as ±the smallest subnormal.
-/// Model files only hold integers, so they never produce that value themselves.
 const INFINITY_MARK: f64 = 5e-324;
 
 /// The Number JavaScript holds, as a `Value`: safe integers as integers, Infinity as its mark.
@@ -33,8 +33,8 @@ fn decode(n: f64) -> f64 {
     }
 }
 
-/// `Number.prototype.toString()` for a decoded Number.
-fn format(n: f64) -> String {
+/// `String(n)`.
+pub(crate) fn to_string(n: f64) -> String {
     if n.is_nan() {
         return "NaN".into();
     }
@@ -42,7 +42,7 @@ fn format(n: f64) -> String {
         return "0".into();
     }
     if n < 0.0 {
-        return format!("-{}", format(-n));
+        return format!("-{}", to_string(-n));
     }
     if n.is_infinite() {
         return "Infinity".into();
@@ -72,13 +72,13 @@ fn format(n: f64) -> String {
     }
 }
 
-/// `String(n)`.
-pub(crate) fn to_string(n: &Number) -> String {
-    format(decode(n.as_f64().expect("a JSON number is an f64")))
+/// `String(value)` for a value read from a model file.
+pub(crate) fn model_string(value: &Value) -> String {
+    crate::config::js_string_with(value, |n| to_string(decode(n)))
 }
 
-/// `JSON.stringify(value)`, or `JSON.stringify(value, null, 2)` when `pretty`.
-pub(crate) fn stringify(value: &impl Serialize, pretty: bool) -> String {
+/// `JSON.stringify(value)`, or `JSON.stringify(value, null, 2)` when `pretty`, for a value read from a model file.
+pub(crate) fn model_stringify(value: &impl Serialize, pretty: bool) -> String {
     let mut out = Vec::new();
     let result = if pretty {
         value.serialize(&mut serde_json::Serializer::with_formatter(
@@ -101,7 +101,7 @@ impl<F: Formatter> Formatter for JsFormatter<F> {
     fn write_f64<W: ?Sized + io::Write>(&mut self, writer: &mut W, value: f64) -> io::Result<()> {
         let n = decode(value);
         let text = if n.is_finite() {
-            format(n)
+            to_string(n)
         } else {
             "null".into()
         };
@@ -165,22 +165,26 @@ mod tests {
         ];
         for (literal, expected) in cases {
             let value = number(literal.parse().unwrap());
-            let Value::Number(n) = &value else {
-                panic!("{literal} is not a number")
-            };
-            assert_eq!(to_string(n), expected, "String({literal})");
+            assert!(value.is_number(), "{literal} is not a number");
+            assert_eq!(model_string(&value), expected, "String({literal})");
             let json = if expected.ends_with("Infinity") {
                 "null"
             } else {
                 expected
             };
-            assert_eq!(stringify(&value, false), json, "JSON.stringify({literal})");
+            assert_eq!(
+                model_stringify(&value, false),
+                json,
+                "JSON.stringify({literal})"
+            );
         }
-        assert_eq!(format(0.5), "0.5");
-        assert_eq!(format(1e-7), "1e-7");
-        assert_eq!(format(1.5e-6), "0.0000015");
+        assert_eq!(to_string(0.5), "0.5");
+        assert_eq!(to_string(1e-7), "1e-7");
+        assert_eq!(to_string(1.5e-6), "0.0000015");
+        assert_eq!(to_string(5e-324), "5e-324");
+        assert_eq!(to_string(-5e-324), "-5e-324");
         assert_eq!(
-            stringify(&serde_json::json!({"a": [1, 2.5]}), true),
+            model_stringify(&serde_json::json!({"a": [1, 2.5]}), true),
             "{\n  \"a\": [\n    1,\n    2.5\n  ]\n}"
         );
     }

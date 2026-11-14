@@ -5,7 +5,8 @@
 //! that is a string or array exposes its indices as keys, as `Object.hasOwn` and `Object.keys` do.
 
 use crate::{
-    config::{self, js_string, js_value, Flags},
+    config::{self, js_value, Flags},
+    js_number::{model_string, model_stringify},
     models::{model_name, out, read_model, report_defects, Defect},
     Failure,
 };
@@ -57,7 +58,7 @@ pub fn run(args: &[String]) -> Result<(String, u8), Failure> {
                 table
                     .hit_policy
                     .as_ref()
-                    .map_or_else(String::new, js_string)
+                    .map_or_else(String::new, model_string)
             )
         }));
     }
@@ -118,7 +119,7 @@ fn is_scalar(value: &Value) -> bool {
 }
 
 fn stringify(value: &Value) -> String {
-    crate::js_number::stringify(value, false)
+    model_stringify(value, false)
 }
 
 fn defect(code: &'static str, message: String, extra: Map<String, Value>) -> Defect {
@@ -157,7 +158,7 @@ fn show(table: &Table, combo: &[Value]) -> String {
         .inputs
         .iter()
         .zip(combo)
-        .map(|((name, _), v)| format!("{name}={}", js_string(v)))
+        .map(|((name, _), v)| format!("{name}={}", model_string(v)))
         .collect::<Vec<_>>()
         .join(", ")
 }
@@ -251,7 +252,8 @@ fn check(doc: &Value, name: &str) -> (Table, Vec<Defect>) {
                     Some(value) => {
                         if let Some(d) = domain.as_array().filter(|_| !is_any(&value)) {
                             if !d.iter().any(|v| same(v, &value)) {
-                                let listed = d.iter().map(js_string).collect::<Vec<_>>().join(", ");
+                                let listed =
+                                    d.iter().map(model_string).collect::<Vec<_>>().join(", ");
                                 schema(format!(
                                     "Rule {n}: {input} = {} is not in its domain ({listed}).",
                                     stringify(&value)
@@ -267,10 +269,10 @@ fn check(doc: &Value, name: &str) -> (Table, Vec<Defect>) {
                 }
             }
             for o in &outputs {
-                if own(&then, &js_string(o)).is_none() {
+                if own(&then, &model_string(o)).is_none() {
                     schema(format!(
                         "Rule {n}: no value for output \"{}\".",
-                        js_string(o)
+                        model_string(o)
                     ));
                 }
             }
@@ -352,7 +354,7 @@ fn check(doc: &Value, name: &str) -> (Table, Vec<Defect>) {
 fn criteria(table: &Table) -> Value {
     let criterion = format!(
         "Given the inputs in a row of the {} table, when the rule is evaluated, then the result is the outputs in that row.",
-        js_string(&table.name)
+        model_string(&table.name)
     );
     let columns: Vec<Value> = std::iter::once(json!("rule"))
         .chain(table.inputs.iter().map(|(n, _)| json!(n)))
@@ -369,13 +371,13 @@ fn criteria(table: &Table) -> Value {
                     table
                         .outputs
                         .iter()
-                        .map(|o| own(then, &js_string(o)).unwrap_or(Value::Null)),
+                        .map(|o| own(then, &model_string(o)).unwrap_or(Value::Null)),
                 )
                 .collect()
         })
         .collect();
     let row = |cells: &[Value]| {
-        let cells: Vec<String> = cells.iter().map(js_string).collect();
+        let cells: Vec<String> = cells.iter().map(model_string).collect();
         format!("  | {} |", cells.join(" | "))
     };
     let markdown = [
