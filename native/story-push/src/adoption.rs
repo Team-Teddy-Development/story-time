@@ -168,6 +168,10 @@ impl Inventory {
                 files.push(json!({"path":relative,"kind":"unreadable"}));
                 continue;
             };
+            if name.ends_with(".map.md") {
+                files.push(json!({"path":relative,"kind":"epic_map","sha256":sha(&bytes),"bytes":bytes.len()}));
+                continue;
+            }
             let mut row = json!({"path":relative,"kind":"file","sha256":sha(&bytes),"bytes":bytes.len(),"id":null,"status":null,"remote":null,"remote_url":null});
             let parsed = if Path::new(&name).extension().is_some_and(|e| e == "md") {
                 std::str::from_utf8(&bytes)

@@ -463,3 +463,38 @@ fn unsupported_adoption_commands_do_not_fall_back_to_node() {
     assert_eq!(r["allowed_writes"], json!([]));
     assert!(out.stderr.is_empty());
 }
+#[test]
+fn epic_map_files_are_retained_non_story_files_not_conflicts() {
+    let p = Project::new();
+    p.config(false);
+    p.story("work/PAY-001.md", "PAY-001", "ready", "");
+    p.put("work/EP-001.map.md", "# EP-001 map\n\n| Slice | Step |\n");
+    let (out, r) = p.preview();
+    assert_eq!(out.status.code(), Some(0), "{r}");
+    assert_eq!(r["status"], "preview");
+    assert_eq!(r["diagnostics"], json!([]));
+    let map = r["backlog"]["files"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|f| f["path"] == "work/EP-001.map.md")
+        .expect("map file stays in the inventory");
+    let bytes = b"# EP-001 map\n\n| Slice | Step |\n";
+    assert_eq!(map["kind"], "epic_map");
+    assert_eq!(map["sha256"], sha(bytes));
+    assert_eq!(map["bytes"], bytes.len());
+    assert_eq!(
+        r["preimages"]["work/EP-001.map.md"],
+        json!({"state":"present","sha256":sha(bytes),"bytes":bytes.len()})
+    );
+
+    p.put("work/PAY-002.md", "bad");
+    let r = conflict(&p, "unsupported_story");
+    let paths: Vec<&Value> = r["diagnostics"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|d| &d["path"])
+        .collect();
+    assert_eq!(paths, [&json!("work/PAY-002.md")]);
+}
