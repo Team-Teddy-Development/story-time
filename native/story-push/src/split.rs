@@ -5,7 +5,7 @@ use crate::{
     config::{self, js_string, truthy, Flags},
     lenient_story::{append_changelog, Js},
     list,
-    next_id::{format_id, number},
+    next_id::{format_id, next_id, number},
     Failure,
 };
 use chrono::Utc;
@@ -68,7 +68,8 @@ fn split(dir: &Path, parent_id: &str, specs: &Value, date: &str) -> Result<Vec<S
     let highest = list::stories(dir, None)?
         .iter()
         .filter_map(|s| number(&s.get("id").string(), prefix))
-        .fold(0.0, f64::max);
+        .fold(0.0, f64::max)
+        .max(number(&next_id(dir, prefix)?, prefix).unwrap_or(0.0) - 1.0);
     let children = specs
         .iter()
         .enumerate()

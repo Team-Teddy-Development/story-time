@@ -19,7 +19,9 @@ export async function splitStory(repo, parentId, childSpecs, { date = today() } 
   }
 
   const prefix = parentId.split('-')[0];
-  const first = highestNumber((await repo.list()).map((s) => s.id), prefix) + 1;
+  // nextId also counts ids reserved on other branches; list() adds ids a file declares under another name.
+  const reserved = highestNumber([await repo.nextId(prefix)], prefix);
+  const first = Math.max(highestNumber((await repo.list()).map((s) => s.id), prefix) + 1, reserved);
   const children = childSpecs.map((spec, i) => buildChild(parent, spec, formatId(prefix, first + i), date));
   const childIds = children.map((c) => c.id);
 
