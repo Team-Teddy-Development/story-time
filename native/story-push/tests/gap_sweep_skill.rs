@@ -61,29 +61,17 @@ fn story_create_adopts_the_source_issue_before_it_syncs() {
 fn gap_sweep_lists_open_gitea_issues_read_only_and_drops_story_remotes() {
     let text = skill("gap-sweep");
     let gitea = position(&text, "when `tracker` is `gitea`");
-    let listing = text
-        .lines()
-        .find(|line| line.contains("/api/v1/repos/") && line.contains("/issues?"))
-        .expect("Gitea issues are listed through the REST issues endpoint");
-    let request = &listing[listing.find("curl").expect("listed with curl")..];
-    for query in ["state=open", "type=issues", "limit=", "page="] {
-        assert!(request.contains(query), "missing {query}: {listing}");
-    }
-    for write in ["-X", "--request", "-d ", "--data", "-F ", "--form"] {
+    let listing = position(&text, "story issues --state open --limit 200 --json");
+    assert!(gitea < listing, "Gitea issues come from the native command");
+    for handled in ["curl", "GITEA_TOKEN", "Authorization"] {
         assert!(
-            !request.contains(write),
-            "listing must only read: {listing}"
+            !text.contains(handled),
+            "the skill must not handle a token or call the API directly: {handled}"
         );
     }
     assert!(
-        !request.contains("GITEA_TOKEN"),
-        "the token must stay off curl's command line: {listing}"
-    );
-    assert!(
-        text.lines()
-            .filter(|line| line.contains("GITEA_TOKEN"))
-            .all(|line| !line.contains("echo")),
-        "the token is never printed"
+        text[gitea..].contains("skipped (no signed-in Gitea access)"),
+        "a failed listing is recorded as skipped"
     );
     let drop = position(&text, "Drop issues whose number is any story's `remote`");
     assert!(gitea < drop, "Gitea issues pass through the remote filter");
