@@ -1433,6 +1433,30 @@ mod tests {
     }
 
     #[test]
+    fn ado_description_matches_node_gateway_content() {
+        for (description, node_args) in [
+            (
+                "First line\nsecond\n\nNext <p>\n\n\n& last",
+                json!([
+                    "--title",
+                    "T",
+                    "--description",
+                    "<p>First line<br>second</p><p>Next &lt;p&gt;</p><p>&amp; last</p>"
+                ]),
+            ),
+            ("", json!(["--title", "T", "--description", "<p></p>"])),
+        ] {
+            let card = json!({"title":"T","fields":[
+                {"name":"Work Item Type","value":"User Story"},
+                {"name":"Description","value":description,"ref":"System.Description"}
+            ]});
+            let (_, args) = ado_content(&card).unwrap();
+            assert_eq!(json!(args), node_args);
+            assert_eq!(args[3], crate::story::to_html(description));
+        }
+    }
+
+    #[test]
     fn ado_maps_html_fields_and_process_states() {
         let card = json!({"title":"Example","fields":[
             {"name":"Work Item Type","value":"Bug"},
@@ -1442,8 +1466,6 @@ mod tests {
         ]});
         let (kind, args) = ado_content(&card).unwrap();
         assert_eq!(kind, "Bug");
-        assert_eq!(to_html("\ntext\n"), "<p><br>text<br></p>");
-        assert_eq!(to_html("\n\ntext\n\n\n"), "<p></p>\n<p>text</p>\n<p></p>");
         assert!(args.contains(&"Microsoft.VSTS.TCM.ReproSteps=<p>&lt;bad&gt;<br>next</p>".into()));
         assert!(args.contains(
             &"Microsoft.VSTS.Common.AcceptanceCriteria=<ul><li>one</li><li>two</li></ul>".into()
