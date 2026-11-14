@@ -376,7 +376,7 @@ impl Gateway {
 
     pub fn create(&mut self, story: &Value) -> Result<Remote, String> {
         let tracker = self.tracker();
-        let card = crate::story::render_card(story, tracker, &self.config)?;
+        let card = crate::story::tracker_card(story, tracker, &self.config)?;
         match &mut self.backend {
             Backend::Github { repo, cli, labels } => {
                 let names = card_labels(&card)?;
@@ -465,7 +465,7 @@ impl Gateway {
         let id = value_id(&story["remote"]).map_err(|_| {
             "Story has no valid positive numeric remote item to update.".to_string()
         })?;
-        let card = crate::story::render_card(story, self.tracker(), &self.config)?;
+        let card = crate::story::tracker_card(story, self.tracker(), &self.config)?;
         match &mut self.backend {
             Backend::Github { repo, cli, labels } => {
                 let current = parse_json(&cli.run(

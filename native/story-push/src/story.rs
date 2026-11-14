@@ -524,6 +524,16 @@ fn tracker_title(story: &Value) -> String {
     }
 }
 
+/// The card push sends: [`render_card`] with the story ID prefixed to the title.
+pub fn tracker_card(story: &Value, tracker: &str, config: &Value) -> Result<Value, String> {
+    let mut titled = story.clone();
+    if story.get("title").is_some_and(Value::is_string) {
+        titled["title"] = json!(tracker_title(story));
+    }
+    render_card(&titled, tracker, config)
+}
+
+/// Node's `renderCard`: the card `story export` prints.
 pub fn render_card(story: &Value, tracker: &str, config: &Value) -> Result<Value, String> {
     object(story)?;
     sections(story)?;
@@ -532,11 +542,7 @@ pub fn render_card(story: &Value, tracker: &str, config: &Value) -> Result<Value
             return Err(format!("Story {key} must be a string"));
         }
     }
-    let title = if tracker == "markdown" {
-        string(story, "title").to_owned()
-    } else {
-        tracker_title(story)
-    };
+    let title = string(story, "title");
     match tracker {
         "github" | "gitea" => {
             let mut labels = vec![story
@@ -585,7 +591,7 @@ pub fn render_card(story: &Value, tracker: &str, config: &Value) -> Result<Value
                 .collect::<Vec<_>>()
                 .join("\n\n");
             Ok(
-                json!({"format":"markdown","title":title,"text":format!("## {title}\n\n{body}"),"body":body}),
+                json!({"format":"markdown","title":title,"body":body,"text":format!("## {title}\n\n{body}")}),
             )
         }
         "ado" => {
@@ -654,7 +660,7 @@ fn ado_fields(s: &Value, config: &Value) -> Result<Vec<Value>, String> {
     }
     let mut fields = vec![
         json!({"name":"Work Item Type","value":if bug {bug_type} else {story_type}}),
-        json!({"name":"Title","value":tracker_title(s)}),
+        json!({"name":"Title","value":string(s, "title")}),
     ];
     if bug && bug_type == "Bug" {
         let mut parts = vec![description];
@@ -879,18 +885,18 @@ mod tests {
                 let original = s.clone();
                 let expected = format!("{id}: Build a bridge");
                 for tracker in ["github", "gitea", "ado"] {
-                    let card = render_card(&s, tracker, &json!({})).unwrap();
+                    let card = tracker_card(&s, tracker, &json!({})).unwrap();
                     assert_eq!(card["title"], expected, "{tracker}");
                     if tracker == "ado" {
                         assert_eq!(field(&card, "Title"), expected);
-                        assert_eq!(ado_args(&s, &json!({})).unwrap()["title"], expected);
                     }
                 }
                 assert_eq!(s, original);
-                assert_eq!(
-                    render_card(&s, "markdown", &json!({})).unwrap()["title"],
-                    title
-                );
+                for format in ["github", "gitea", "ado", "markdown"] {
+                    let card = render_card(&s, format, &json!({})).unwrap();
+                    assert_eq!(card["title"], title, "{format}");
+                }
+                assert_eq!(ado_args(&s, &json!({})).unwrap()["title"], title);
             }
         }
     }
