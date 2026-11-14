@@ -327,6 +327,7 @@ fn non_string_tracker_fields_reject_settings_node_accepts() {
             r#"{"gitea":{"baseUrl":"https://h","owner":"o","repo":5}}"#,
             "gitea.repo",
         ),
+        (r#"{"prefix":["ST"]}"#, "prefix"),
     ] {
         let s = Sandbox::new();
         s.write(".story-time/settings.json", text);
