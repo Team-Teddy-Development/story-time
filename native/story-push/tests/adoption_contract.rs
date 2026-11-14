@@ -617,10 +617,8 @@ fn setup_routes_use_the_native_contract_and_init_is_unchanged() {
     ] {
         assert!(routing.contains(command), "setup route lacks {command}");
     }
-    let binary = home.join("story");
-    fs::copy(env!("CARGO_BIN_EXE_story"), &binary).unwrap();
     let run = |project: &Path, args: &[&str]| {
-        Command::new(&binary)
+        Command::new(env!("CARGO_BIN_EXE_story"))
             .args(args)
             .current_dir(project)
             .env_clear()
