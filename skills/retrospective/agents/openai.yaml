@@ -1,0 +1,4 @@
+interface:
+  display_name: "Retrospective"
+  short_description: "Revisit past actions and propose up to three owned improvements"
+  default_prompt: "Use $retrospective to revisit previous improvement actions and propose at most three owned, measured actions without changing any policy."
