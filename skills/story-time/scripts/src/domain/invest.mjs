@@ -76,7 +76,7 @@ export const DEFAULT_RULES = [
   ),
 
   rule('size.small', 'S', (s) => {
-    if (!isNum(s.size)) return [];
+    if (s.status === 'split' || !isNum(s.size)) return [];
     if (s.size >= SIZE_MAX) return [err(`Size ${s.size} >= ${SIZE_MAX}: too big to finish in a sprint. Split it.`)];
     if (s.size >= SIZE_WARN) return [warn(`Size ${s.size} is large. Look for a split before committing.`)];
     return [];
