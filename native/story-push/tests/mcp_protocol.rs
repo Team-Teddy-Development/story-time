@@ -1029,6 +1029,7 @@ fn without_write_no_write_tool_is_listed_and_a_write_call_is_an_unknown_tool() {
             "story_note",
             json!({"id": "ST-001", "expected_sha256": sha, "note": "hello"}),
         ),
+        ("story_create", json!({"title": "A new story"})),
     ] {
         let response = server.modern("tools/call", json!({"name": name, "arguments": arguments}));
         assert_eq!(response["error"]["code"], -32602, "{response}");
@@ -1042,10 +1043,14 @@ fn without_write_no_write_tool_is_listed_and_a_write_call_is_an_unknown_tool() {
     let names: Vec<&str> = tools.iter().map(|t| t["name"].as_str().unwrap()).collect();
     assert_eq!(
         names,
-        [READ_TOOLS.as_slice(), &["story_update", "story_note"]].concat()
+        [
+            READ_TOOLS.as_slice(),
+            &["story_update", "story_note", "story_create"]
+        ]
+        .concat()
     );
     for tool in tools {
-        let write = tool["name"] == "story_update" || tool["name"] == "story_note";
+        let write = !READ_TOOLS.contains(&tool["name"].as_str().unwrap());
         assert_eq!(tool["annotations"]["readOnlyHint"], !write, "{tool}");
         assert_eq!(tool["annotations"]["openWorldHint"], false, "{tool}");
     }
@@ -1058,6 +1063,10 @@ fn without_write_no_write_tool_is_listed_and_a_write_call_is_an_unknown_tool() {
     );
     let note = tools.iter().find(|t| t["name"] == "story_note").unwrap();
     assert_eq!(note["annotations"]["idempotentHint"], false);
+    let create = tools.iter().find(|t| t["name"] == "story_create").unwrap();
+    assert_eq!(create["annotations"]["destructiveHint"], false);
+    assert_eq!(create["annotations"]["idempotentHint"], false);
+    assert_eq!(create["inputSchema"]["required"], json!(["title"]));
     server.finish();
 }
 
@@ -1243,5 +1252,214 @@ fn story_note_appends_what_story_note_appends_and_a_stale_hash_is_a_conflict() {
     assert_eq!(error["code"], "conflict");
     assert_eq!(error["details"]["current_sha256"], content["sha256_after"]);
     assert_eq!(by_mcp.snapshot(), before);
+    server.finish();
+}
+
+/// The story text with every occurrence of its own creation date replaced, so two stories
+/// created on different days compare equal.
+fn undated(text: &str) -> String {
+    let date = text
+        .lines()
+        .find_map(|l| l.strip_prefix("created: "))
+        .unwrap();
+    text.replace(date, "DATE")
+}
+
+#[test]
+fn story_create_writes_what_story_new_writes_and_returns_audit_evidence() {
+    for (sync, next) in [("ask", json!("story push ST-004")), ("off", Value::Null)] {
+        let by_cli = Fixture::new().with_stories(3);
+        let by_mcp = Fixture::new().with_stories(3);
+        let settings = SETTINGS.replace("\"ask\"", &format!("\"{sync}\""));
+        by_cli.write(".story-time/settings.json", &settings);
+        by_mcp.write(".story-time/settings.json", &settings);
+        let created = by_cli.cli(&[
+            "new",
+            "--title",
+            "  Plan the release  ",
+            "--statement",
+            "As a planner, I want a release plan, so that dates hold.",
+            "--ac",
+            "Given a plan, when it is read, then dates show",
+            "--ac",
+            "Given no plan, when it is read, then a gap shows",
+            "--type",
+            "bug",
+            "--epic",
+            "EP-9",
+            "--json",
+        ]);
+        assert_eq!(created["id"], "ST-004");
+
+        let mut server = by_mcp.writer();
+        let schemas = output_schemas(&mut server);
+        let result = server.tool(
+            "story_create",
+            json!({
+                "title": "  Plan the release  ",
+                "statement": "As a planner, I want a release plan, so that dates hold.",
+                "acceptance_criteria": [
+                    "Given a plan, when it is read, then dates show",
+                    "Given no plan, when it is read, then a gap shows",
+                ],
+                "type": "bug",
+                "epic": "EP-9",
+            }),
+        );
+        let content = structured(&result).clone();
+        conforms(&schemas["story_create"], &content, "story_create").unwrap();
+        let listed = server.tool("story_list", json!({}));
+        assert!(ids(&structured(&listed)["stories"]).contains(&"ST-004".to_owned()));
+        let (_, _, stderr) = server.finish();
+
+        let written = by_mcp.read("backlog/ST-004.md");
+        assert_eq!(
+            undated(&written),
+            undated(&by_cli.read("backlog/ST-004.md"))
+        );
+        assert_eq!(content["status"], "created");
+        assert_eq!(content["story"]["id"], "ST-004");
+        assert_eq!(content["story"]["title"], "Plan the release");
+        assert_eq!(content["story"]["status"], "draft");
+        assert_eq!(content["sha256_before"], Value::Null);
+        assert_eq!(content["sha256_after"], sha256(&by_mcp, "ST-004"));
+        assert_eq!(content["story"]["sha256"], content["sha256_after"]);
+        assert_eq!(content["audit"]["operation"], "story_create");
+        assert_eq!(content["audit"]["id"], "ST-004");
+        assert_eq!(content["audit"]["changelog"], "created");
+        assert_eq!(
+            content["audit"]["fields"],
+            json!(["title", "statement", "acceptance_criteria", "type", "epic"])
+        );
+        assert_eq!(content["publish"]["sync"], sync);
+        assert_eq!(content["publish"]["pushed"], false);
+        assert_eq!(content["publish"]["next"], next);
+
+        let audit = stderr
+            .lines()
+            .map(|l| serde_json::from_str::<Value>(l).unwrap())
+            .find(|a| a["tool"] == "story_create")
+            .unwrap();
+        assert_eq!(audit["ids"], json!(["ST-004"]));
+        assert_eq!(audit["sha256_after"], content["sha256_after"]);
+        assert!(!stderr.contains("Plan the release"), "{stderr}");
+    }
+}
+
+#[test]
+fn story_create_refuses_a_duplicate_title_unless_it_is_allowed() {
+    let fixture = Fixture::new().with_stories(3);
+    let mut server = fixture.writer();
+    let refuse = |server: &mut Server, arguments: Value| -> Value {
+        let before = fixture.snapshot();
+        let result = server.tool("story_create", arguments);
+        assert_eq!(fixture.snapshot(), before);
+        tool_error(&result).clone()
+    };
+
+    let error = refuse(&mut server, json!({"title": "  STORY number 2 "}));
+    assert_eq!(error["code"], "duplicate_title", "{error}");
+    assert_eq!(error["retryable"], false);
+    assert_eq!(error["details"]["ids"], json!(["ST-002"]));
+
+    let error = refuse(
+        &mut server,
+        json!({"title": "Story number 2", "allow_duplicate_title": false}),
+    );
+    assert_eq!(error["code"], "duplicate_title");
+
+    let error = refuse(&mut server, json!({"title": "   "}));
+    assert_eq!(error["code"], "invalid_argument", "{error}");
+    assert_eq!(error["details"]["pointer"], "/title");
+
+    let root = fs::File::open(&fixture.root).unwrap();
+    root.try_lock().unwrap();
+    let error = refuse(&mut server, json!({"title": "Locked out"}));
+    assert_eq!(error["code"], "lock_held");
+    drop(root);
+
+    let result = server.tool(
+        "story_create",
+        json!({"title": "Story number 2", "allow_duplicate_title": true}),
+    );
+    let content = structured(&result).clone();
+    assert_eq!(content["story"]["id"], "ST-004");
+    assert_eq!(content["story"]["title"], "Story number 2");
+    server.finish();
+}
+
+/// A creator outside the lock that writes `id` while the server stages that id: the server's
+/// temporary file is a FIFO, and the racer writes its story after the server opens the FIFO
+/// and before it reads the server's text. The text is larger than a pipe holds, so the server
+/// cannot finish staging, and so cannot link, until the racer's story exists.
+fn racer(fixture: &Fixture, pid: u32, id: &str) -> std::thread::JoinHandle<String> {
+    let fifo = fixture.root.join(format!("backlog/{id}.md.{pid}.tmp"));
+    let made = Command::new("mkfifo").arg(&fifo).status().unwrap();
+    assert!(made.success());
+    let target = fixture.root.join(format!("backlog/{id}.md"));
+    let text = format!(
+        "---\nid: {id}\ntitle: Racer {id}\nstatus: draft\ntype: story\ncreated: 2026-11-14\nupdated: 2026-11-14\n---\n\n## Story\nThe racer's story.\n"
+    );
+    std::thread::spawn(move || {
+        let mut staged = fs::File::open(&fifo).unwrap();
+        fs::write(&target, &text).unwrap();
+        let mut rest = Vec::new();
+        staged.read_to_end(&mut rest).unwrap();
+        text
+    })
+}
+
+#[test]
+fn story_create_never_replaces_a_racing_story_and_a_second_collision_is_id_taken() {
+    let statement = "x".repeat(100_000);
+
+    let fixture = Fixture::new().with_stories(3);
+    let mut server = fixture.writer();
+    let first = racer(&fixture, server.child.id(), "ST-004");
+    let result = server.tool(
+        "story_create",
+        json!({"title": "After one collision", "statement": statement}),
+    );
+    let content = structured(&result).clone();
+    let raced = first.join().unwrap();
+    assert_eq!(content["story"]["id"], "ST-005", "{content}");
+    assert_eq!(fixture.read("backlog/ST-004.md"), raced);
+    assert!(fixture
+        .read("backlog/ST-005.md")
+        .contains("title: After one collision\n"));
+    server.finish();
+
+    let fixture = Fixture::new().with_stories(3);
+    let mut server = fixture.writer();
+    let pid = server.child.id();
+    let racers = [
+        racer(&fixture, pid, "ST-004"),
+        racer(&fixture, pid, "ST-005"),
+    ];
+    let result = server.tool(
+        "story_create",
+        json!({"title": "After two collisions", "statement": statement}),
+    );
+    let error = tool_error(&result).clone();
+    let raced: Vec<String> = racers.map(|r| r.join().unwrap()).into();
+    assert_eq!(error["code"], "id_taken", "{error}");
+    assert_eq!(error["retryable"], true);
+    assert_eq!(fixture.read("backlog/ST-004.md"), raced[0]);
+    assert_eq!(fixture.read("backlog/ST-005.md"), raced[1]);
+    let mut names: Vec<String> = fs::read_dir(fixture.root.join("backlog"))
+        .unwrap()
+        .map(|e| e.unwrap().file_name().into_string().unwrap())
+        .collect();
+    names.sort();
+    assert_eq!(
+        names,
+        [
+            "ST-001.md",
+            "ST-002.md",
+            "ST-003.md",
+            "ST-004.md",
+            "ST-005.md"
+        ]
+    );
     server.finish();
 }
