@@ -1,6 +1,5 @@
-//! Stories read the way the Node CLI's `parseStory` reads them, which is more lenient than
-//! [`crate::story::parse_legacy`]: every command that reads stories must read every file Node
-//! reads, including files the strict parser rejects. [`serialize`] is the one writer of the story
+//! Stories read the way the Node CLI's `parseStory` reads them: every command that reads stories
+//! must read every file Node reads. [`serialize`] is the one writer of the story
 //! file format for the commands built on this model (`show`, `note`, `new`).
 
 use crate::{config::array_index, js_space};
@@ -230,6 +229,22 @@ pub(crate) fn parse(text: &str) -> Result<Js, String> {
 /// [`parse`], plus a description of each piece of text the result leaves out, which a
 /// rewrite of the story from the result would lose.
 pub(crate) fn parse_noting_drops(text: &str) -> Result<(Js, Vec<String>), String> {
+    read(text).map(|r| (r.story, r.dropped))
+}
+
+pub(crate) struct Read {
+    pub(crate) story: Js,
+    dropped: Vec<String>,
+    /// Frontmatter keys whose value is nested YAML data (a flow mapping or an array inside an
+    /// array), which `parseStory` flattens into a string or a one-level array.
+    pub(crate) nested: Vec<String>,
+    /// Identity keys (`id`, `remote`, `remote_url`) given twice with different values; `parseStory` keeps the
+    /// last one, so the story's identity is ambiguous.
+    pub(crate) conflicting: Vec<String>,
+}
+
+/// [`parse`], plus notes on what the result leaves out or flattens.
+pub(crate) fn read(text: &str) -> Result<Read, String> {
     const MISSING: &str = "Story is missing YAML frontmatter (--- ... ---)";
     let start = ["---\r\n", "---\n"]
         .iter()
@@ -252,8 +267,10 @@ pub(crate) fn parse_noting_drops(text: &str) -> Result<(Js, Vec<String>), String
     body = body.strip_prefix('\r').unwrap_or(body);
     body = body.strip_prefix('\n').unwrap_or(body);
 
-    let mut story = Vec::new();
+    let mut story: Vec<(String, Js)> = Vec::new();
     let mut dropped = Vec::new();
+    let mut nested = Vec::new();
+    let mut conflicting = Vec::new();
     for line in lines(&text[start..end]) {
         if trim(line).is_empty() || trim_start(line).starts_with('#') {
             continue;
@@ -271,8 +288,15 @@ pub(crate) fn parse_noting_drops(text: &str) -> Result<(Js, Vec<String>), String
         if raw.contains(line_terminator) {
             return Err(unsupported());
         }
-        let value = value(strip_comment(raw))?;
-        if story.iter().any(|(k, _)| k == key) {
+        let raw = strip_comment(raw);
+        if nested_value(raw) {
+            nested.push(key.to_owned());
+        }
+        let value = value(raw)?;
+        if let Some((_, prev)) = story.iter().find(|(k, _)| k == key) {
+            if matches!(key, "id" | "remote" | "remote_url") && !prev.same(&value) {
+                conflicting.push(key.to_owned());
+            }
             dropped.push(format!("duplicate frontmatter key {key}"));
         } else if matches!(key, "sections" | "__proto__") {
             dropped.push(format!("frontmatter key {key}"));
@@ -313,7 +337,24 @@ pub(crate) fn parse_noting_drops(text: &str) -> Result<(Js, Vec<String>), String
         );
     }
     Js::set(&mut story, "sections", Js::Obj(sections));
-    Ok((Js::Obj(story), dropped))
+    Ok(Read {
+        story: Js::Obj(story),
+        dropped,
+        nested,
+        conflicting,
+    })
+}
+
+fn nested_value(raw: &str) -> bool {
+    raw.starts_with('{')
+        || raw
+            .strip_prefix('[')
+            .and_then(|r| r.strip_suffix(']'))
+            .is_some_and(|inner| {
+                inner
+                    .split(',')
+                    .any(|item| trim(item).starts_with(['[', '{']))
+            })
 }
 
 const PREAMBLE: &str = "text before the first section";
@@ -485,7 +526,15 @@ pub(crate) fn append_changelog(story: &Js, note: &str, date: &str) -> Js {
 
 #[cfg(test)]
 mod tests {
-    use super::number;
+    use super::{number, read};
+
+    #[test]
+    fn nested_values_are_named_and_flat_ones_are_not() {
+        let text = "---\nid: ST-1\na: {b: 2}\nc: [[1]]\nd: [x, {y}]\ne: \"{quoted}\"\nf: [x, y]\ng: x {y}\n---\n";
+        let r = read(text).unwrap();
+        assert_eq!(r.nested, ["a", "c", "d"]);
+        assert_eq!(r.story.get("a").string(), "{b: 2}");
+    }
 
     #[test]
     fn numbers_print_like_javascript() {

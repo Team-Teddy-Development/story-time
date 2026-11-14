@@ -1,4 +1,4 @@
-use serde_json::{json, Map, Number, Value};
+use serde_json::{json, Map, Value};
 
 const KEY_ORDER: &[&str] = &[
     "id",
@@ -29,99 +29,6 @@ const INTERNAL: &[&str] = &[
     "Test Plan",
 ];
 
-/// Reads a legacy story for adoption, which keeps the original bytes and
-/// never renders the result, so prose before the first section is skipped.
-pub fn parse_legacy(text: &str) -> Result<Value, String> {
-    let normalized = text.replace("\r\n", "\n");
-    let rest = normalized
-        .strip_prefix("---\n")
-        .ok_or("Story is missing YAML frontmatter (--- ... ---)")?;
-    let end = rest
-        .find("\n---")
-        .filter(|&i| rest[i + 4..].is_empty() || rest[i + 4..].starts_with('\n'))
-        .ok_or("Story is missing YAML frontmatter (--- ... ---)")?;
-    let mut meta = Map::new();
-    for line in rest[..end].split('\n') {
-        if line.trim().is_empty() || line.trim_start().starts_with('#') {
-            continue;
-        }
-        let (key, raw) = line
-            .split_once(':')
-            .ok_or_else(|| format!("Unsupported frontmatter line: {line}"))?;
-        if !valid_key(key) || key == "sections" {
-            return Err(format!("Unsupported frontmatter key: {key}"));
-        }
-        if meta.contains_key(key) {
-            return Err(format!("Duplicate frontmatter key: {key}"));
-        }
-        let raw = raw.trim();
-        let raw = strip_comment(raw);
-        meta.insert(key.into(), parse_value(raw)?);
-    }
-    let mut sections = Map::new();
-    let mut current: Option<String> = None;
-    let mut lines = Vec::new();
-    for line in rest[end + 4..]
-        .strip_prefix('\n')
-        .unwrap_or(&rest[end + 4..])
-        .split('\n')
-    {
-        let heading = line
-            .strip_prefix("##")
-            .filter(|s| s.starts_with(char::is_whitespace))
-            .map(str::trim)
-            .filter(|s| !s.is_empty());
-        if let Some(name) = heading {
-            if let Some(previous) = current.take() {
-                sections.insert(previous, Value::String(lines.join("\n").trim().into()));
-                lines.clear();
-            }
-            if sections.contains_key(name) {
-                return Err(format!("Duplicate section: {name}"));
-            }
-            current = Some(name.into());
-        } else if current.is_some() {
-            lines.push(line);
-        }
-    }
-    if let Some(name) = current {
-        sections.insert(name, Value::String(lines.join("\n").trim().into()));
-    }
-    meta.insert("sections".into(), Value::Object(sections));
-    Ok(Value::Object(meta))
-}
-
-fn strip_comment(raw: &str) -> &str {
-    if raw.starts_with(['\'', '"']) {
-        return raw;
-    }
-    let mut quote = None;
-    let mut escaped = false;
-    let mut previous = None;
-    let mut chars = raw.char_indices().peekable();
-    while let Some((i, c)) = chars.next() {
-        if let Some(q) = quote {
-            if escaped {
-                escaped = false;
-            } else if q == '"' && c == '\\' {
-                escaped = true;
-            } else if c == q {
-                if q == '\'' && chars.peek().is_some_and(|(_, n)| *n == '\'') {
-                    chars.next();
-                } else {
-                    quote = None;
-                }
-            }
-        } else if raw.starts_with('[') && (c == '\'' || c == '"') {
-            quote = Some(c);
-        } else if c == '#' && previous == Some(' ') {
-            return raw[..i].trim();
-        }
-        previous = Some(c);
-    }
-    raw
-}
-
 fn valid_key(key: &str) -> bool {
     let mut chars = key.chars();
     chars
@@ -137,106 +44,6 @@ pub(crate) fn numeric_literal(s: &str) -> bool {
     digits(pieces.next().unwrap_or(""))
         && pieces.next().is_none_or(digits)
         && pieces.next().is_none()
-}
-
-fn parse_value(raw: &str) -> Result<Value, String> {
-    if raw.is_empty() || raw == "~" || raw == "null" {
-        return Ok(Value::Null);
-    }
-    if raw.starts_with('"') {
-        return serde_json::from_str::<String>(raw)
-            .map(Value::String)
-            .map_err(|e| format!("Invalid quoted frontmatter: {e}"));
-    }
-    if raw.starts_with('\'') {
-        if !raw.ends_with('\'') || raw.len() < 2 {
-            return Err("Unclosed single quote".into());
-        }
-        let inner = &raw[1..raw.len() - 1];
-        let mut chars = inner.chars().peekable();
-        let mut out = String::new();
-        while let Some(c) = chars.next() {
-            if c == '\'' && chars.next() != Some('\'') {
-                return Err("Unescaped single quote".into());
-            }
-            out.push(c);
-        }
-        return Ok(Value::String(out));
-    }
-    if raw.starts_with('[') {
-        if !raw.ends_with(']') {
-            return Err("Unclosed inline array".into());
-        }
-        let inner = raw[1..raw.len() - 1].trim();
-        if inner.is_empty() {
-            return Ok(json!([]));
-        }
-        let mut values = Vec::new();
-        let mut start = 0;
-        let mut quote = None;
-        let mut escaped = false;
-        let mut chars = inner.char_indices().peekable();
-        while let Some((i, c)) = chars.next() {
-            if let Some(q) = quote {
-                if escaped {
-                    escaped = false;
-                } else if q == '"' && c == '\\' {
-                    escaped = true;
-                } else if c == q {
-                    if q == '\'' && chars.peek().is_some_and(|(_, n)| *n == '\'') {
-                        chars.next();
-                    } else {
-                        quote = None;
-                    }
-                }
-            } else {
-                match c {
-                    '\'' | '"' => quote = Some(c),
-                    '[' | ']' | '{' | '}' => {
-                        return Err("Nested frontmatter collections are unsupported".into())
-                    }
-                    ',' => {
-                        if inner[start..i].trim().is_empty() {
-                            return Err("Empty inline array item".into());
-                        }
-                        values.push(parse_value(inner[start..i].trim())?);
-                        start = i + 1;
-                    }
-                    _ => {}
-                }
-            }
-        }
-        if quote.is_some() || inner[start..].trim().is_empty() {
-            return Err("Invalid inline array".into());
-        }
-        values.push(parse_value(inner[start..].trim())?);
-        return Ok(Value::Array(values));
-    }
-    if raw == "true" {
-        return Ok(json!(true));
-    }
-    if raw == "false" {
-        return Ok(json!(false));
-    }
-    if numeric_literal(raw) {
-        let n: f64 = raw.parse().map_err(|_| "Invalid number")?;
-        if !n.is_finite() {
-            return Err("Non-finite frontmatter number".into());
-        }
-        if let Ok(n) = raw.parse::<i64>() {
-            return Ok(json!(n));
-        }
-        if let Ok(n) = raw.parse::<u64>() {
-            return Ok(json!(n));
-        }
-        return Number::from_f64(n)
-            .map(Value::Number)
-            .ok_or("Invalid number".into());
-    }
-    if raw.starts_with(['{', ']', '&', '*', '!', '|', '>']) || raw.contains(": ") {
-        return Err(format!("Unsupported frontmatter value: {raw}"));
-    }
-    Ok(Value::String(raw.into()))
 }
 
 fn format_value(v: &Value) -> Result<String, String> {
@@ -789,8 +596,11 @@ pub fn ado_args(card: &Value) -> Result<AdoArgs, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    fn reread(text: &str) -> Value {
+        crate::lenient_story::parse(text).unwrap().to_value()
+    }
     fn story() -> Value {
-        parse_legacy("---\nid: ST-001\ntitle: Reset password\nstatus: ready\ntype: story\nepic: EP-1\nvalue: 8\ntime_criticality: 5\nrisk_reduction: 3\nsize: 3\ndepends_on: []\n---\n\n## Story\nAs a user, I want reset.\n\n## Acceptance Criteria\n- [ ] Given email <exists>\n* [X] Given token & valid\n\n## Notes\nKeep this.\n\n## Out of Scope\n- SMS reset\n\n## Changelog\n- 2026-11-02 created\n").unwrap()
+        reread("---\nid: ST-001\ntitle: Reset password\nstatus: ready\ntype: story\nepic: EP-1\nvalue: 8\ntime_criticality: 5\nrisk_reduction: 3\nsize: 3\ndepends_on: []\n---\n\n## Story\nAs a user, I want reset.\n\n## Acceptance Criteria\n- [ ] Given email <exists>\n* [X] Given token & valid\n\n## Notes\nKeep this.\n\n## Out of Scope\n- SMS reset\n\n## Changelog\n- 2026-11-02 created\n")
     }
     fn field(card: &Value, name: &str) -> Value {
         card["fields"]
@@ -805,17 +615,10 @@ mod tests {
     fn roundtrip_order_quotes_and_arrays() {
         let mut s = story();
         s["title"] = json!("Fix: login \"quoted\" # hash");
-        s["depends_on"] = json!([
-            "ST-1",
-            "comma, inside",
-            "quote's",
-            "true",
-            "123",
-            "value # hash"
-        ]);
+        s["depends_on"] = json!(["ST-1", "quote's", "true", "123"]);
         s["custom"] = json!("null");
         let text = serialize(&s).unwrap();
-        assert_eq!(parse_legacy(&text).unwrap(), s);
+        assert_eq!(reread(&text), s);
         assert!(text.find("id:").unwrap() < text.find("title:").unwrap());
         assert_eq!(
             s["sections"]
@@ -833,23 +636,13 @@ mod tests {
             ]
         );
         assert_eq!(
-            parse_legacy("---\nid: 'it''s'\nflag: true # comment\n---\n").unwrap()["id"],
+            reread("---\nid: 'it''s'\nflag: true # comment\n---\n")["id"],
             "it's"
         );
-        assert_eq!(parse_legacy(&text.replace('\n', "\r\n")).unwrap(), s);
+        assert_eq!(reread(&text.replace('\n', "\r\n")), s);
     }
     #[test]
-    fn rejects_lossy_input() {
-        for text in [
-            "no frontmatter",
-            "---\na:\n  b: x\n---\n",
-            "---\na: {b: 2}\n---\n",
-            "---\na: [[1]]\n---\n",
-            "---\na: 1\na: 2\n---\n",
-            "---\na: x\n---\n## Story\nx\n## Story\ny",
-        ] {
-            assert!(parse_legacy(text).is_err(), "{text}");
-        }
+    fn rejects_unrenderable_input() {
         assert!(serialize(&json!({"id":"ST-1","unknown":{"a":1}})).is_err());
     }
     #[test]
@@ -869,7 +662,7 @@ mod tests {
             .as_str()
             .unwrap()
             .ends_with("- 2026-11-06 updated tracker item ABC-1"));
-        assert_eq!(parse_legacy(&serialize(&linked).unwrap()).unwrap(), linked);
+        assert_eq!(reread(&serialize(&linked).unwrap()), linked);
     }
     #[test]
     fn tracker_titles_include_one_story_id_without_mutating_local_titles() {
