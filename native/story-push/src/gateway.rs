@@ -34,10 +34,13 @@ enum Backend {
     Gitea(Gitea),
 }
 
+const TRACKER_CLI_TIMEOUT: Duration = Duration::from_secs(120);
+
 struct Cli {
     program: PathBuf,
     root: PathBuf,
     token: Option<(String, String)>,
+    timeout: Duration,
 }
 
 impl Cli {
@@ -107,6 +110,7 @@ impl Gateway {
             program: PathBuf::from(program),
             root: root.to_path_buf(),
             token: token.clone().map(|value| (variable.into(), value)),
+            timeout: TRACKER_CLI_TIMEOUT,
         };
         let backend = match tracker {
             "github" => {
@@ -1493,6 +1497,7 @@ mod tests {
             use std::{env,fs::OpenOptions,io::{Read,Write}};
             fn main() {
                 let args:Vec<String>=env::args().skip(1).collect();
+                if std::path::Path::new("hang").exists() { loop { std::thread::sleep(std::time::Duration::from_secs(60)); } }
                 assert!(!args.iter().any(|s|s.contains("private-cli-token")));
                 assert!(env::var("GH_TOKEN").ok().as_deref()==Some("private-cli-token") || env::var("AZURE_DEVOPS_EXT_PAT").ok().as_deref()==Some("private-cli-token"));
                 let mut input=String::new(); std::io::stdin().read_to_string(&mut input).unwrap();
@@ -1542,6 +1547,7 @@ mod tests {
                 .into(),
                 "private-cli-token".into(),
             )),
+            timeout: TRACKER_CLI_TIMEOUT,
         }
     }
 
@@ -1590,6 +1596,28 @@ mod tests {
                 .count(),
             1
         );
+    }
+
+    #[test]
+    fn a_tracker_cli_that_never_exits_is_stopped_with_a_timeout_naming_the_command() {
+        let tmp = Temp::new();
+        let mut cli = stub_cli(&tmp.0, "gh");
+        cli.timeout = Duration::from_secs(1);
+        fs::write(tmp.0.join("hang"), "").unwrap();
+        let mut gateway = Gateway {
+            config: json!({}),
+            backend: Backend::Github {
+                repo: "acme/shop".into(),
+                cli,
+                labels: HashSet::new(),
+            },
+        };
+        let started = std::time::Instant::now();
+        let error = gateway.create(&story("ready")).unwrap_err();
+        assert!(started.elapsed() < Duration::from_secs(10), "{error}");
+        assert!(error.contains("timed out after 1s"), "{error}");
+        assert!(error.contains("gh label create"), "{error}");
+        assert!(!error.contains("private-cli-token"), "{error}");
     }
 
     #[test]
