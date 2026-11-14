@@ -147,7 +147,10 @@ fn every_heuristic(s: &Sandbox) {
         "ST-003",
         "title: Restated\nstatus: refined",
         &[
-            ("Story", "As a reader, I want to read reports, so that I can read the reports."),
+            (
+                "Story",
+                "As a reader, I want to read reports, so that I can read the reports.",
+            ),
             ("Acceptance Criteria", &criteria(4)),
         ],
     );
@@ -155,7 +158,10 @@ fn every_heuristic(s: &Sandbox) {
         "ST-004",
         "title: Login crashes on submit\nstatus: in-progress",
         &[
-            ("Story", "As a member, I want to log in and see my orders, so that I can track deliveries."),
+            (
+                "Story",
+                "As a member, I want to log in and see my orders, so that I can track deliveries.",
+            ),
             ("Acceptance Criteria", &criteria(9)),
         ],
     );
@@ -171,7 +177,10 @@ fn every_heuristic(s: &Sandbox) {
         "ST-006",
         "title: Investigate caching\nstatus: draft\ntype: spike\ntimebox: 2d",
         &[
-            ("Question", "Should we evaluate whether to add a crash cache?"),
+            (
+                "Question",
+                "Should we evaluate whether to add a crash cache?",
+            ),
             ("Exit Criteria", "- [ ] Given a, when b, then c"),
         ],
     );
@@ -196,7 +205,10 @@ fn every_heuristic(s: &Sandbox) {
         "ST-012",
         "title: Many\nstatus: ready",
         &[
-            ("Story", "As a planner, I want many things, so that I can plan."),
+            (
+                "Story",
+                "As a planner, I want many things, so that I can plan.",
+            ),
             ("Acceptance Criteria", &criteria(12)),
         ],
     );
@@ -204,7 +216,10 @@ fn every_heuristic(s: &Sandbox) {
         "ST-013",
         "title: Very many\nstatus: ready\ntype: chore",
         &[
-            ("Story", "As a planner, I want lots, so that I can plan more."),
+            (
+                "Story",
+                "As a planner, I want lots, so that I can plan more.",
+            ),
             ("Acceptance Criteria", &criteria(14)),
         ],
     );
@@ -212,7 +227,10 @@ fn every_heuristic(s: &Sandbox) {
         "ST-014",
         "title: Mixed case\nstatus: ready",
         &[
-            ("Story", "As the Ops team, I need a Redis table and JSON, so that pages load."),
+            (
+                "Story",
+                "As the Ops team, I need a Redis table and JSON, so that pages load.",
+            ),
             ("Acceptance Criteria", &criteria(7)),
         ],
     );
@@ -223,7 +241,9 @@ fn judge_without_a_key_matches_node_for_every_argument_form() {
     let s = Sandbox::new();
     every_heuristic(&s);
     let all = s.compare(&[], 0);
-    assert!(all.starts_with("engine: code (no TypeSafe key; run story secret set jev to use Jev)\n"));
+    assert!(
+        all.starts_with("engine: code (no TypeSafe key; run story secret set jev to use Jev)\n")
+    );
     assert!(!all.contains("ST-008") && !all.contains("ST-009") && !all.contains("ST-010"));
     s.compare(&["ST-008", "ST-002", "ST-006"], 0);
     for id in 1..=14 {

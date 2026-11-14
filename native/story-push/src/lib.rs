@@ -5,6 +5,7 @@ pub mod export;
 pub mod gateway;
 pub mod init;
 mod js_number;
+pub mod judge;
 mod lenient_story;
 pub mod lint;
 pub mod list;
