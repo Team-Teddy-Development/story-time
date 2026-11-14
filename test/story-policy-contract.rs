@@ -24,8 +24,15 @@ fn checker() -> &'static Path {
     static BINARY: OnceLock<std::path::PathBuf> = OnceLock::new();
     BINARY
         .get_or_init(|| {
-            let binary =
-                std::env::temp_dir().join(format!("story-policy-contract-{}", std::process::id()));
+            // Beside the contract binary, not in TMPDIR, so runs leave nothing behind. The
+            // suite re-runs itself in child processes; staging then renaming means none
+            // overwrites a checker another process is executing. The staging name has no
+            // dot because rustc names its object files after the output's file stem.
+            let mut binary = std::env::current_exe().unwrap().into_os_string();
+            binary.push("-checker");
+            let binary = std::path::PathBuf::from(binary);
+            let mut staging = binary.clone().into_os_string();
+            staging.push(format!("-{}", std::process::id()));
             let output = Command::new("rustc")
                 .args([
                     "--edition=2021",
@@ -33,7 +40,7 @@ fn checker() -> &'static Path {
                     "scripts/story-policy.rs",
                     "-o",
                 ])
-                .arg(&binary)
+                .arg(&staging)
                 .current_dir(repository_root())
                 .output()
                 .unwrap();
@@ -42,6 +49,7 @@ fn checker() -> &'static Path {
                 "{}",
                 String::from_utf8_lossy(&output.stderr)
             );
+            fs::rename(&staging, &binary).unwrap();
             binary
         })
         .as_path()
