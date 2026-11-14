@@ -1,0 +1,4 @@
+interface:
+  display_name: "Sprint review"
+  short_description: "Close a sprint with goal outcome, feedback, and dispositions"
+  default_prompt: "Use $sprint-review to record the goal outcome, link feedback, and decide each unfinished story without marking any story done."

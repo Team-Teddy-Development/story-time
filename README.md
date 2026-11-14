@@ -15,6 +15,7 @@ script. Here the subject is the story lifecycle, from idea to accepted.
 |---|---|---|
 | `story-time` | "story time" | Entry point. Lifecycle, file format, the `story` CLI, and routing to the right skill. |
 | `story-setup` | "set up story time" | One-time setup: detects repo, tracker, stack, and test tooling, asks the rest (including whether to push to the tracker), and writes `.story-time/settings.json`. |
+| `project-discovery` | "start a project" | Writes `docs/project-brief.md`: validated versus assumed facts, open decisions with owners, and proposed epics traced to an outcome or marked unresolved. No estimates or schedules; epics go to story-map. |
 | `story-create` | "write a story for…" | Turns ideas, bugs, PRDs, or notes into INVEST stories with persona, benefit, criteria, and scope. |
 | `story-edit` | "update ST-012" | Changes a story safely: classifies the change, guards done and in-progress work, catches scope creep, logs why. |
 | `story-split` | "this is too big" | Splits with SPIDR and the classic patterns into vertical slices, and writes them as an all-or-nothing saga. |
@@ -26,6 +27,7 @@ script. Here the subject is the story lifecycle, from idea to accepted.
 | `gap-sweep` | "what are we missing?" | Finds work with no story in code, tests, docs, stories, and open GitHub or Gitea issues, plus up to 2 evidence-backed features. Proposes at most 10 rows and hands approved ones to story-create. |
 | `sprint-planning` | "plan a sprint" | Goal-based local JSON and Markdown proposals with explicit capacity, completed dependencies, deferred work, and forecast limits. |
 | `flow-review` | "what is stuck?" | Read-only report of blocked, aging, and over-WIP work, each with an owner and a next action, plus scope swaps with their capacity effect. Missing sprint and flow data stays `unknown`; pulls go to story-pick. |
+| `sprint-review` | "close the sprint" | Records the goal outcome and demo evidence, links each piece of feedback to a backlog item, and gives every unfinished story a disposition: carry over, return to backlog, split, or drop. Keeps original estimates and sprint membership, and marks no story done. |
 | `story-pick` | "what's next?" | WSJF-ranked pick, checked against WIP, capacity, dependencies, and risk, with alternatives. |
 | `story-map` | "map this epic" | User story map (backbone → steps → stories) sliced into a walking skeleton and outcome-named releases. |
 | `spike` | "we need to investigate" | A time-boxed, single-question spike with exit criteria, which ends in estimated follow-up stories. |
@@ -39,9 +41,10 @@ script. Here the subject is the story lifecycle, from idea to accepted.
 story-setup (once) → idea → story-create → acceptance-criteria → story-estimate → story-ready → story-pick → story-kickoff → build → story-accept
           ├─ too big → story-split      ├─ epic → story-map      └─ unknown → spike
           ├─ a lifecycle → state-machine      └─ a multi-input rule → decision-table   (both feed acceptance-criteria)
+project-discovery writes a project brief for a project with no direction and hands proposed epics to story-map.
 refinement runs in single-story or backlog mode; backlog-groom is its alias.
 gap-sweep finds work with no story and hands approved rows to story-create.
-sprint-planning consumes ordered ready stories; flow-review reports stuck work; story-edit applies anywhere.
+sprint-planning consumes ordered ready stories; flow-review reports stuck work; sprint-review closes the sprint; story-edit applies anywhere.
 ```
 
 Every skill depends on `story-time`, which holds the CLI. Install it with any

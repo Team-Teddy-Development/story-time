@@ -18,10 +18,12 @@ idea ──► story-create ──► acceptance-criteria ──► story-estima
             ├─ an epic? ──► story-map                                                    ▼
             └─ unknown? ──► spike                             story-pick ──► story-kickoff ──► build ──► story-accept ──► [done]
 
+project-discovery writes a project brief before backlog work and hands proposed epics to story-map.
 refinement owns single-story and backlog modes; backlog-groom is its compatibility alias.
 gap-sweep finds work with no story and hands approved rows to story-create.
 sprint-planning consumes ordered ready candidates and produces local proposals.
 flow-review reports blocked, aging, and over-WIP work and sends pulls to story-pick.
+sprint-review records the goal outcome, links feedback, and decides unfinished work; it marks no story done.
 story-edit changes any story at any stage.
 state-machine and decision-table write checked models that acceptance-criteria and story-kickoff build on.
 ```
@@ -29,6 +31,7 @@ state-machine and decision-table write checked models that acceptance-criteria a
 | Request | Skill |
 |---|---|
 | "set up story time", first use in a repo | **story-setup** skill |
+| "start a project", "project discovery", no stated goals | **project-discovery** skill |
 | "write a story for…", "turn this into stories" | **story-create** skill |
 | "change / update / rewrite ST-012" | **story-edit** skill |
 | "this is too big", "break this down" | **story-split** skill |
@@ -40,6 +43,7 @@ state-machine and decision-table write checked models that acceptance-criteria a
 | "sweep for gaps", "what are we missing" | **gap-sweep** skill |
 | "plan a sprint", goal and capacity planning | **sprint-planning** skill |
 | "flow review", "what is stuck?", "are we over WIP?" | **flow-review** skill |
+| "sprint review", "close the sprint" | **sprint-review** skill |
 | "what should I work on next?" | **story-pick** skill |
 | "map out this epic / feature" | **story-map** skill |
 | "we don't know enough to estimate" | **spike** skill |
