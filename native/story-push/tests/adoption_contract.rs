@@ -513,6 +513,70 @@ fn rollback_stops_on_diverged_bytes_and_records_the_failure() {
 }
 
 #[test]
+fn adopt_refuses_stories_outside_their_id_file_and_list_shows_every_adopted_story() {
+    let p = Project::new();
+    p.legacy_config();
+    p.put("work/old-1.md", "---\nid: PAY-001\nstatus: done\n---\n");
+    p.put("work/PAY-003.md", "---\nid: PAY-002\nstatus: ready\n---\n");
+    p.put("work/PAY-004.md", "---\nid: PAY-004\nstatus: ready\n---\n");
+    let before = snapshot(&p.root);
+    let (out, preview) = p.story_cmd(&["adopt", "preview"], &[]);
+    assert_conflict(&out, &preview, "noncanonical_story_file");
+    let refused: Vec<_> = preview["diagnostics"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|d| d["code"] == "noncanonical_story_file")
+        .map(|d| d["path"].as_str().unwrap())
+        .collect();
+    assert_eq!(refused, ["work/PAY-003.md", "work/old-1.md"]);
+    assert_eq!(preview["allowed_writes"], json!([]));
+    assert_eq!(preview["backlog"]["files"].as_array().unwrap().len(), 3);
+    let plan = p.plan();
+    let (out, r) = p.adopt("apply", &plan);
+    assert_eq!(out.status.code(), Some(2), "{r}");
+    assert_eq!(before, snapshot(&p.root), "refused adoption mutated files");
+
+    fs::rename(p.root.join("work/old-1.md"), p.root.join("work/PAY-001.md")).unwrap();
+    fs::rename(
+        p.root.join("work/PAY-003.md"),
+        p.root.join("work/PAY-002.md"),
+    )
+    .unwrap();
+    let plan = p.plan();
+    let (out, r) = p.adopt("apply", &plan);
+    assert!(out.status.success(), "{r}");
+    let metadata: Value = serde_json::from_slice(&p.read(".story-time/lifecycle.json")).unwrap();
+    let adopted: Vec<_> = metadata["preservation"]["backlog"]["files"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|f| f["id"].as_str().unwrap().to_owned())
+        .collect();
+    assert_eq!(adopted, ["PAY-001", "PAY-002", "PAY-004"]);
+    let list = Command::new(env!("CARGO_BIN_EXE_story"))
+        .args(["list", "--json"])
+        .current_dir(&p.root)
+        .env_clear()
+        .env("PATH", "/nonexistent")
+        .output()
+        .unwrap();
+    assert!(
+        list.status.success(),
+        "{}",
+        String::from_utf8_lossy(&list.stderr)
+    );
+    let listed: Value = serde_json::from_slice(&list.stdout).unwrap();
+    let listed: Vec<_> = listed
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|s| s["id"].as_str().unwrap().to_owned())
+        .collect();
+    assert_eq!(listed, adopted);
+}
+
+#[test]
 fn legacy_stories_keep_missing_data_explicit_and_terminal_status_unchanged() {
     let p = Project::new();
     p.legacy_config();
