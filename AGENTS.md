@@ -4,8 +4,9 @@
 
 Use this repository's installed native `story` executable for `init` and `push`.
 Build it with `cargo install --path native/story-push --locked`.
-Other commands remain in the Node CLI; set `STORY_TIME_LEGACY_CLI` to its
-absolute `skills/story-time/scripts/story.mjs` path for retained dispatch.
+Other commands remain in the Node CLI. Inside this checkout, native `story`
+dispatches them to this checkout's `skills/story-time/scripts/story.mjs`;
+`STORY_TIME_LEGACY_CLI`, when set, still takes precedence.
 Direct `node skills/story-time/scripts/story.mjs <command>` remains valid
 for commands other than `init` and `push`. Retain the old init source as
 history; exercise setup through native `story init`.

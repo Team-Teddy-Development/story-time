@@ -52,6 +52,7 @@ fn main() -> ExitCode {
     }
     let legacy = std::env::var_os("STORY_TIME_LEGACY_CLI")
         .map(PathBuf::from)
+        .or_else(checkout_cli)
         .or_else(|| {
             let path =
                 PathBuf::from(std::env::var_os("HOME")?).join(".config/story-time/runtime.json");
@@ -69,4 +70,12 @@ fn main() -> ExitCode {
             ExitCode::from(1)
         }
     }
+}
+
+fn checkout_cli() -> Option<PathBuf> {
+    let cwd = std::env::current_dir().ok()?;
+    cwd.ancestors()
+        .find(|dir| dir.join("native/story-push/Cargo.toml").is_file())
+        .map(|dir| dir.join("skills/story-time/scripts/story.mjs"))
+        .filter(|cli| cli.is_file())
 }
