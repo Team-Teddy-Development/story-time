@@ -6,8 +6,8 @@ use std::{
 use story_time_native::skill_install::{self, Agent, Target};
 
 const USAGE: &str = "Usage: story-install-skills --agent codex|claude|all [--scope user|project]
-                            [--project DIR] [--codex-home DIR] [--source DIR]
-                            [--force] [--dry-run]
+                            [--project DIR] [--codex-home DIR] [--force] [--dry-run] [--uninstall]
+                            [--source DIR]
 
   --source DIR  the story-time checkout or release whose skills/ to copy
                 (default: the checkout this binary was built from)
@@ -31,6 +31,8 @@ struct Flags {
     source: Option<String>,
     force: bool,
     dry_run: bool,
+    uninstall: bool,
+    help: bool,
 }
 
 fn parse(args: &[String]) -> Result<Flags, Failure> {
@@ -52,6 +54,14 @@ fn parse(args: &[String]) -> Result<Flags, Failure> {
             }
             "dry-run" => {
                 flags.dry_run = true;
+                continue;
+            }
+            "uninstall" => {
+                flags.uninstall = true;
+                continue;
+            }
+            "help" => {
+                flags.help = true;
                 continue;
             }
             _ => return Err(Failure::Usage(format!("Unknown flag {arg}."))),
@@ -87,7 +97,11 @@ fn target(flags: &Flags, home: PathBuf) -> Result<Target, Failure> {
 
 fn run(args: &[String]) -> Result<(), Failure> {
     let flags = parse(args)?;
-    let Some(agent) = flags.agent.as_deref() else {
+    if flags.help {
+        println!("{USAGE}");
+        return Ok(());
+    }
+    let Some(agent) = flags.agent.as_deref().filter(|agent| !agent.is_empty()) else {
         return Err(Failure::Usage(format!("--agent is required.\n\n{USAGE}")));
     };
     let agents = Agent::parse(agent).ok_or_else(|| {
@@ -113,6 +127,21 @@ fn run(args: &[String]) -> Result<(), Failure> {
         .filter(|home| home.is_absolute())
         .ok_or_else(|| Failure::Fatal("Cannot find your home folder.".into()))?;
     let plan = skill_install::plan(&agents, &target(&flags, home)?, &skills);
+
+    if flags.uninstall {
+        for copy in plan.iter().filter(|copy| copy.dest.exists()) {
+            if flags.dry_run {
+                println!("would remove {}", copy.dest.display());
+            } else {
+                skill_install::remove(&copy.dest).map_err(fatal)?;
+            }
+        }
+        if !flags.dry_run {
+            let names: Vec<&str> = agents.iter().map(|agent| agent.name()).collect();
+            println!("Removed story-time skills for {}.", names.join(", "));
+        }
+        return Ok(());
+    }
 
     let clashes: Vec<String> = plan
         .iter()

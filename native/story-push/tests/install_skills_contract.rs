@@ -437,6 +437,8 @@ fn uninstall_dry_run_lists_what_it_would_remove_and_writes_nothing() {
             "codex",
             "--scope",
             "project",
+            "--project",
+            "project",
             "--uninstall",
             "--dry-run",
         ],
@@ -444,6 +446,12 @@ fn uninstall_dry_run_lists_what_it_would_remove_and_writes_nothing() {
         let run = compare(installed_beside_others, args);
         assert_eq!(run.code, Some(0), "{}", run.stderr);
         assert!(run.stdout.starts_with("would remove "), "{}", run.stdout);
+        assert!(run
+            .tree
+            .contains_key(Path::new("project/.agents/skills/story-time/SKILL.md")));
+        assert!(run
+            .tree
+            .contains_key(Path::new("home/.agents/skills/spike/SKILL.md")));
     }
 }
 
