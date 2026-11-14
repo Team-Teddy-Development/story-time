@@ -282,15 +282,14 @@ fn github(g: &Value) -> Result<Value, String> {
     if !truthy(repo) {
         return Err("tracker \"github\" needs github.repo, e.g. \"acme/shop\".".into());
     }
-    let repo = repo.unwrap();
-    let text = js_string(repo);
+    let text = text(repo.unwrap(), "github.repo")?;
     if !text
         .split_once('/')
         .is_some_and(|(owner, name)| is_segment(owner) && is_segment(name))
     {
         return Err(format!("github.repo must be owner/repo; got \"{text}\"."));
     }
-    Ok(json!({ "repo": repo }))
+    Ok(json!({ "repo": text }))
 }
 
 fn ado(a: &Value) -> Result<Value, String> {
@@ -302,6 +301,8 @@ fn ado(a: &Value) -> Result<Value, String> {
     if !truthy(prop(a, "project")) {
         return Err("tracker \"ado\" needs ado.project.".into());
     }
+    let organization = text(&a["organization"], "ado.organization")?;
+    let project = text(&a["project"], "ado.project")?;
     let process = present(prop(a, "process"))
         .cloned()
         .unwrap_or(json!("agile"));
@@ -313,8 +314,8 @@ fn ado(a: &Value) -> Result<Value, String> {
         ));
     }
     let mut ado = Map::new();
-    ado.insert("organization".into(), a["organization"].clone());
-    ado.insert("project".into(), a["project"].clone());
+    ado.insert("organization".into(), json!(organization));
+    ado.insert("project".into(), json!(project));
     ado.insert("process".into(), process);
     for key in ["areaPath", "iterationPath"] {
         if let Some(value) = string(prop(a, key), &format!("ado.{key}"))? {
@@ -337,12 +338,12 @@ fn gitea(g: &Value) -> Result<Value, String> {
             "tracker \"gitea\" needs gitea.baseUrl, e.g. \"https://gitea.example.com\".".into(),
         );
     }
-    let text = js_string(base_url.unwrap());
-    let url = reqwest::Url::parse(&text)
+    let base_url = text(base_url.unwrap(), "gitea.baseUrl")?;
+    let url = reqwest::Url::parse(base_url)
         .ok()
         .filter(|u| ["http", "https"].contains(&u.scheme()));
     let Some(url) = url else {
-        return Err(format!("gitea.baseUrl must be an http(s) URL such as \"https://gitea.example.com\"; got \"{text}\"."));
+        return Err(format!("gitea.baseUrl must be an http(s) URL such as \"https://gitea.example.com\"; got \"{base_url}\"."));
     };
     // Stricter than Node: the URL can carry a secret, so the reason never echoes it.
     if !url.username().is_empty()
@@ -360,21 +361,20 @@ fn gitea(g: &Value) -> Result<Value, String> {
     if !truthy(prop(g, "repo")) {
         return Err("tracker \"gitea\" needs gitea.repo.".into());
     }
-    for key in ["owner", "repo"] {
-        let name = js_string(&g[key]);
-        if !is_segment(&name) {
-            return Err(format!(
+    let segment = |key| {
+        let name = text(&g[key], &format!("gitea.{key}"))?;
+        if is_segment(name) {
+            Ok(name)
+        } else {
+            Err(format!(
                 "gitea.{key} must be a single name (letters, digits, _ . -); got \"{name}\"."
-            ));
+            ))
         }
-    }
-    let base_url = g["baseUrl"]
-        .as_str()
-        .ok_or("g.baseUrl.replace is not a function")?;
+    };
     Ok(json!({
         "baseUrl": base_url.trim_end_matches('/'),
-        "owner": g["owner"],
-        "repo": g["repo"],
+        "owner": segment("owner")?,
+        "repo": segment("repo")?,
     }))
 }
 
@@ -396,6 +396,13 @@ fn jev(j: &Value) -> Result<Value, String> {
     } else {
         json!({})
     })
+}
+
+/// A tracker field push reads as a string; stricter than Node, which accepts any value `String(value)` turns into valid text.
+fn text<'a>(value: &'a Value, name: &str) -> Result<&'a str, String> {
+    value
+        .as_str()
+        .ok_or_else(|| format!("{name} must be a string."))
 }
 
 fn string(value: Option<&Value>, name: &str) -> Result<Option<Value>, String> {
