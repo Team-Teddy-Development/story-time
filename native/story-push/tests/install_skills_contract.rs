@@ -91,6 +91,27 @@ fn run(root: &Path, native: bool, home: Home, setup: fn(&Path), args: &[&str]) -
     }
 }
 
+const NATIVE_ONLY_USAGE: &str = "
+                            [--source DIR]
+
+  --source DIR  the story-time checkout or release whose skills/ to copy
+                (default: the checkout this binary was built from)";
+
+/// The usage text is Node's with two named differences: the program name (with its
+/// continuation lines aligned under it) and the --source flag that only the Rust installer has.
+fn as_node_usage(native: &str) -> String {
+    native
+        .replace(NATIVE_ONLY_USAGE, "")
+        .replace(
+            "Usage: story-install-skills",
+            "Usage: node scripts/install.mjs",
+        )
+        .replace(
+            &format!("\n{}[", " ".repeat(28)),
+            &format!("\n{}[", " ".repeat(32)),
+        )
+}
+
 fn compare(setup: fn(&Path), args: &[&str]) -> Run {
     compare_home(Home::Fixture, setup, args)
 }
@@ -98,8 +119,10 @@ fn compare(setup: fn(&Path), args: &[&str]) -> Run {
 fn compare_home(home: Home, setup: fn(&Path), args: &[&str]) -> Run {
     let root = fixture_root();
     let node = run(&root, false, home, setup, args);
-    let native = run(&root, true, home, setup, args);
+    let mut native = run(&root, true, home, setup, args);
     fs::remove_dir_all(&root).unwrap();
+    native.stdout = as_node_usage(&native.stdout);
+    native.stderr = as_node_usage(&native.stderr);
     assert_eq!(native.stdout, node.stdout, "stdout differs for {args:?}");
     assert_eq!(native.stderr, node.stderr, "stderr differs for {args:?}");
     assert_eq!(native.code, node.code, "exit code differs for {args:?}");
@@ -355,5 +378,130 @@ fn missing_skills_folder_fails_clearly_and_writes_nothing() {
             )
         );
         untouched(&run);
+    }
+}
+
+fn installed_beside_others(root: &Path) {
+    installed(root);
+    for dir in [
+        "home/.claude/skills/my-own",
+        "home/.agents/skills/my-own",
+        "project/.claude/skills/my-own",
+        "project/.agents/skills/story-time",
+        "codex/skills/spike",
+        "codex/skills/my-own",
+    ] {
+        let dir = root.join(dir);
+        fs::create_dir_all(&dir).unwrap();
+        fs::write(dir.join("SKILL.md"), "keep or remove").unwrap();
+    }
+}
+
+#[test]
+fn uninstall_removes_only_story_time_skills() {
+    for args in [
+        &["--agent", "all", "--uninstall"][..],
+        &["--agent", "codex", "--uninstall"],
+        &["--agent", "codex", "--codex-home", "codex", "--uninstall"],
+        &[
+            "--agent",
+            "all",
+            "--scope",
+            "project",
+            "--project",
+            "project",
+            "--uninstall",
+        ],
+        &["--agent", "claude", "--uninstall", "--force"],
+    ] {
+        let run = compare(installed_beside_others, args);
+        assert_eq!(run.code, Some(0), "{}", run.stderr);
+        assert!(run.stdout.starts_with("Removed story-time skills for "));
+        assert!(run.tree.keys().any(|k| k.ends_with("my-own/SKILL.md")));
+    }
+    let run = compare(installed_beside_others, &["--agent", "all", "--uninstall"]);
+    assert!(!run
+        .tree
+        .contains_key(Path::new("home/.claude/skills/story-time")));
+    assert!(!run
+        .tree
+        .contains_key(Path::new("home/.agents/skills/spike")));
+}
+
+#[test]
+fn uninstall_dry_run_lists_what_it_would_remove_and_writes_nothing() {
+    for args in [
+        &["--agent", "all", "--uninstall", "--dry-run"][..],
+        &[
+            "--agent",
+            "codex",
+            "--scope",
+            "project",
+            "--uninstall",
+            "--dry-run",
+        ],
+    ] {
+        let run = compare(installed_beside_others, args);
+        assert_eq!(run.code, Some(0), "{}", run.stderr);
+        assert!(run.stdout.starts_with("would remove "), "{}", run.stdout);
+    }
+}
+
+#[test]
+fn uninstall_with_nothing_installed_succeeds() {
+    for args in [
+        &["--agent", "all", "--uninstall"][..],
+        &["--agent", "codex", "--uninstall", "--dry-run"],
+    ] {
+        let run = compare(empty, args);
+        assert_eq!(run.code, Some(0), "{}", run.stderr);
+        untouched(&run);
+    }
+}
+
+#[test]
+fn help_prints_the_usage_and_writes_nothing() {
+    for args in [
+        &["--help"][..],
+        &["--help", "--agent", "bogus"],
+        &["--agent", "all", "--uninstall", "--help"],
+    ] {
+        let run = compare(installed, args);
+        assert_eq!(run.code, Some(0), "{}", run.stderr);
+        assert!(run.stdout.starts_with("Usage: node scripts/install.mjs"));
+        assert!(run.stderr.is_empty());
+    }
+}
+
+#[test]
+fn usage_errors_match_node() {
+    for (args, code) in [
+        (&[][..], 2),
+        (&["--scope", "project"][..], 2),
+        (&["--agent", ""][..], 2),
+        (&["bogus"][..], 2),
+        (&["--agent", "all", "extra"][..], 2),
+        (&["--bogus"][..], 2),
+        (&["--"][..], 2),
+        (&["--agent=all"][..], 2),
+        (&["--agent"][..], 2),
+        (&["--agent", "all", "--scope"][..], 2),
+        (&["--agent", "all", "--project"][..], 2),
+        (&["--agent", "all", "--codex-home"][..], 2),
+        (&["--help", "--agent"][..], 2),
+        (&["--agent", "bogus"][..], 1),
+        (&["--agent", "bogus", "--uninstall"][..], 1),
+        (&["--agent", "bogus", "--scope", "bogus"][..], 1),
+        (&["--agent", "all", "--scope", "bogus"][..], 1),
+        (&["--agent", "claude", "--scope", ""][..], 1),
+        (
+            &["--agent", "codex", "--scope", "bogus", "--uninstall"][..],
+            1,
+        ),
+    ] {
+        let run = compare(installed, args);
+        assert_eq!(run.code, Some(code), "{args:?}: {}", run.stderr);
+        assert!(run.stdout.is_empty(), "{args:?}: {}", run.stdout);
+        assert!(!run.stderr.is_empty(), "{args:?}");
     }
 }
