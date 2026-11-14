@@ -7,7 +7,7 @@
 
 use crate::{
     adoption::sha,
-    adoption_apply::lock_repository,
+    adoption_apply::wait_for_lock,
     config,
     lenient_story::{self, Js},
     lint::{self, Severity},
@@ -918,10 +918,10 @@ impl Server {
     /// The repository with its write lock held until the returned file drops.
     fn lock(&self, args: &Map<String, Value>) -> Result<(Repo<'_>, fs::File), ToolError> {
         let repo = self.open(args)?;
-        let lock = lock_repository(&repo.root.path).map_err(|e| match e {
+        let lock = wait_for_lock(&repo.root.path).map_err(|e| match e {
             TryLockError::WouldBlock => fail(
                 "lock_held",
-                "Another process holds the repository write lock.",
+                "Another process held the repository write lock for 3 seconds.",
             ),
             TryLockError::Error(_) => io_error("lock repository"),
         })?;
