@@ -180,6 +180,7 @@ fn config_push_plan_and_init_reject_the_same_settings_naming_the_same_field() {
             json!({"tracker": "gitea", "sync": "ask", "gitea": {"baseUrl": "https://gitea.example.com", "owner": "acme", "repo": 5}}),
             "gitea.repo",
         ),
+        ("prefix is a list", json!({"prefix": ["ST"]}), "prefix"),
     ] {
         let s = Sandbox::new(&settings);
         for (command, out, rejects) in s.commands() {
