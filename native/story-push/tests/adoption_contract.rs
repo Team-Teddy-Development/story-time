@@ -589,14 +589,12 @@ fn legacy_story_with_prose_before_its_first_section_is_preserved_byte_for_byte()
 
 #[test]
 fn setup_routes_use_the_native_contract_and_init_is_unchanged() {
-    let source = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
     let installed = Project {
         root: temp("installed"),
         outside: temp("installed-state"),
     };
     let home = installed.root.clone();
-    let install = Command::new("node")
-        .arg(source.join("scripts/install.mjs"))
+    let install = Command::new(env!("CARGO_BIN_EXE_story-install-skills"))
         .args(["--agent", "codex", "--scope", "project", "--project"])
         .arg(&home)
         .output()

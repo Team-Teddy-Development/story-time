@@ -61,8 +61,7 @@ fn real_installer_ships_both_entry_points_and_executes_their_documented_native_i
     let temp = std::env::temp_dir().join(format!("ST018-install-{}", std::process::id()));
     fs::create_dir(&temp).unwrap();
     let _cleanup = Installation(temp.clone());
-    let out = Command::new("node")
-        .arg(source.join("scripts/install.mjs"))
+    let out = Command::new(env!("CARGO_BIN_EXE_story-install-skills"))
         .args(["--agent", "all", "--scope", "user"])
         .env("HOME", &temp)
         .env_remove("CODEX_HOME")

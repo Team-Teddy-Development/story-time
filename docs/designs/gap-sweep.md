@@ -445,7 +445,7 @@ green, pattern.
     `cargo test --manifest-path native/story-push/Cargo.toml --test gap_sweep_skill`.
     The red commit fails only on the new test and registry entry. The green
     commit passes everything.
-*   **Install**: `node scripts/install.mjs --agent claude --scope project --project <tmp>`,
+*   **Install**: `cargo run --locked --manifest-path native/story-push/Cargo.toml --bin story-install-skills -- --agent claude --scope project --project <tmp>`,
     then check that `<tmp>/.claude/skills/gap-sweep/SKILL.md` exists. Delete
     `<tmp>` and the Cargo target directory afterward.
 *   **Dry run**: run the skill on this repository. It passes when every row's
