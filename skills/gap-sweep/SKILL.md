@@ -69,7 +69,8 @@ candidates, and check each one:
 
 1. **Evidence.** Open the cited excerpt. Drop the candidate if the excerpt does
    not show the claimed gap, for example a `.skip(` that is not a test, or a
-   flag the help output does list.
+   flag the help output does list. If the check reproduces a defect, such as an
+   unlabeled issue whose steps still fail, set the kind to `defect`.
 2. **Stories.** Compare it with the stories whose title or statement is
    closest. "Covered" means a story's criteria already describe this work.
    - Covered by an archived story: drop it.
@@ -85,7 +86,8 @@ stay empty go to gaps.
 
 ## 5. Propose
 
-Show one table. Gaps come first, then features.
+Show one table. Gaps come first, ordered again by kind after the walk, then
+features.
 
 | # | Kind | Proposed story | Persona, benefit | Evidence | Match |
 |---|---|---|---|---|---|
