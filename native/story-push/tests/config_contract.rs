@@ -260,3 +260,48 @@ fn usage_errors_match_node() {
         assert_eq!(out.status.code(), Some(2), "{args:?} is a usage error");
     }
 }
+
+/// Intended divergence (ST-071): native config shares push's tracker URL checks, so it rejects these settings although Node accepts them.
+#[test]
+fn tracker_url_checks_reject_settings_node_accepts() {
+    for (text, field) in [
+        (
+            r#"{"gitea":{"baseUrl":"https://robot:hunter2@h","owner":"o","repo":"r"}}"#,
+            "gitea.baseUrl",
+        ),
+        (
+            r#"{"gitea":{"baseUrl":"https://h/?token=hunter2","owner":"o","repo":"r"}}"#,
+            "gitea.baseUrl",
+        ),
+        (
+            r#"{"gitea":{"baseUrl":"https://h/#hunter2","owner":"o","repo":"r"}}"#,
+            "gitea.baseUrl",
+        ),
+        (
+            r#"{"gitea":{"baseUrl":"https://h","owner":"..","repo":"r"}}"#,
+            "gitea.owner",
+        ),
+        (
+            r#"{"gitea":{"baseUrl":"https://h","owner":"o","repo":"."}}"#,
+            "gitea.repo",
+        ),
+        (r#"{"github":{"repo":"acme/.."}}"#, "github.repo"),
+    ] {
+        let s = Sandbox::new();
+        s.write(".story-time/settings.json", text);
+        assert_eq!(
+            s.run(false, &["--json"], &[]).status.code(),
+            Some(0),
+            "Node accepts {text}"
+        );
+        let native = s.run(true, &["--json"], &[]);
+        let stderr = String::from_utf8_lossy(&native.stderr);
+        assert_eq!(native.status.code(), Some(1), "native accepts {text}");
+        assert!(native.stdout.is_empty());
+        assert!(stderr.contains(field), "{text}: {stderr}");
+        assert!(
+            !stderr.contains("hunter2"),
+            "{text} echoes a secret: {stderr}"
+        );
+    }
+}
