@@ -68,8 +68,12 @@ each story in the skeleton and the next slice with the **story-create**
 skill, passing `--epic EP-003`. Record its slice under `## Notes`. Leave
 later slices on the map, not in the backlog: they will change.
 
-Save the map as `backlog/EP-003.map.md` so later grooming can see it. The
-CLI ignores files that aren't story files.
+Save the map as `backlog/EP-003.map.md` so later grooming can see it. No
+command reads a `.map.md` file as a story. `story list`, `lint`, and `stats`
+read only files named for a story ID, such as `ST-012.md`. `story plan` and
+`story adopt` read every other `.md` file in the backlog directory as a story
+and stop with an error on one that is not. Keep other notes out of the backlog
+directory.
 
 ## 7. Report
 
