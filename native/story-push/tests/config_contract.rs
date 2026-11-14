@@ -260,6 +260,17 @@ fn settings_numbers_echo_as_node_prints_them() {
         r#"{"sync":5e-324}"#,
         r#"{"sync":-5e-324}"#,
         r#"{"tracker":1e21}"#,
+        r#"{"tracker":9007199254740993}"#,
+        r#"{"tracker":18446744073709551615}"#,
+        r#"{"tracker":-9223372036854775808}"#,
+        r#"{"tracker":1e400}"#,
+        r#"{"tracker":-1e400}"#,
+        r#"{"sync":[1e400,null,18446744073709551615]}"#,
+        r#"{"jev":{"model":1e400}}"#,
+        r#"{"ado":{"organization":"o","project":"p","process":-1e400}}"#,
+        r#"{"team":{"wipLimit":1e400}}"#,
+        r#"{"team":{"sprintDays":18446744073709551615.5e300}}"#,
+        r#"{"team":{"velocity":-1e400}}"#,
     ] {
         let s = Sandbox::new();
         s.write(".story-time/settings.json", text);
@@ -272,6 +283,18 @@ fn settings_numbers_echo_as_node_prints_them() {
             "stderr differs for {text}"
         );
     }
+}
+
+#[test]
+fn settings_numbers_print_as_node_prints_them() {
+    let s = Sandbox::new();
+    s.write(
+        ".story-time/settings.json",
+        r#"{"team":{"velocity":1e400,"sprintDays":9007199254740993,"wipLimit":18446744073709551615},
+            "jira":{"a":[1e400,-1e400,1e21,5e-324,-5e-324,12345678901234567890123,-0,0.1e1,9223372036854775807]},
+            "linear":{"x":-9223372036854775808,"y":1E+2}}"#,
+    );
+    successes(&s, &[], &[]);
 }
 
 #[test]

@@ -1,6 +1,5 @@
-//! JavaScript Numbers held in a `serde_json::Value`, printed as `String(n)` and
-//! `JSON.stringify(n)` print them. Only the `model_` functions read the Infinity mark, because only a
-//! model file's TOML integers can overflow to Infinity, and they never produce the mark themselves.
+//! JavaScript Numbers held in a `serde_json::Value`, as `JSON.parse` builds them and `String(n)` and
+//! `JSON.stringify(n)` print them.
 
 use serde::Serialize;
 use serde_json::{
@@ -11,13 +10,19 @@ use std::io;
 
 const MAX_SAFE: f64 = 9_007_199_254_740_992.0;
 
-/// A `Value` cannot hold a non-finite number, so ±Infinity is stored as ±the smallest subnormal.
-const INFINITY_MARK: f64 = 5e-324;
+/// A `Value` cannot hold a non-finite number, so ±Infinity is stored as an integer that no JavaScript
+/// Number becomes: `number` stores every other integer beyond ±2^53 as an f64.
+const INFINITY: u64 = u64::MAX;
+const NEGATIVE_INFINITY: i64 = i64::MIN;
 
-/// The Number JavaScript holds, as a `Value`: safe integers as integers, Infinity as its mark.
+/// The Number JavaScript holds, as a `Value`: safe integers as integers, ±Infinity as its mark.
 pub(crate) fn number(n: f64) -> Value {
     if n.is_infinite() {
-        return Value::from(INFINITY_MARK.copysign(n));
+        return if n > 0.0 {
+            Value::from(INFINITY)
+        } else {
+            Value::from(NEGATIVE_INFINITY)
+        };
     }
     if n.fract() == 0.0 && n.abs() < MAX_SAFE {
         return Value::from(n as i64);
@@ -25,11 +30,104 @@ pub(crate) fn number(n: f64) -> Value {
     Number::from_f64(n).map_or(Value::Null, Value::Number)
 }
 
-fn decode(n: f64) -> f64 {
-    if n.abs() == INFINITY_MARK {
-        f64::INFINITY.copysign(n)
+/// The Number a `Value` number holds.
+pub(crate) fn value(n: &Number) -> f64 {
+    if n.as_u64() == Some(INFINITY) {
+        f64::INFINITY
+    } else if n.as_i64() == Some(NEGATIVE_INFINITY) {
+        f64::NEG_INFINITY
     } else {
-        n
+        n.as_f64().expect("a JSON number is an f64")
+    }
+}
+
+/// `JSON.parse(text)`'s Numbers: every literal is read as the nearest f64, so integers beyond 2^53
+/// round and literals beyond the f64 range become ±Infinity, where serde_json keeps the exact integer
+/// or rejects the text.
+pub(crate) fn parse(text: &str) -> serde_json::Result<Value> {
+    let mut numbers = Vec::new();
+    let mut rewritten = String::with_capacity(text.len());
+    let mut rest = text;
+    while let Some(start) = rest.find(|c: char| c == '"' || c == '-' || c.is_ascii_digit()) {
+        rewritten.push_str(&rest[..start]);
+        rest = &rest[start..];
+        let end = if rest.starts_with('"') {
+            string_end(rest)
+        } else {
+            rest.find(|c: char| !matches!(c, '0'..='9' | '-' | '+' | '.' | 'e' | 'E'))
+                .unwrap_or(rest.len())
+        };
+        let token = &rest[..end];
+        if is_number(token) {
+            let index = numbers.len().to_string();
+            numbers.push(
+                token
+                    .parse::<f64>()
+                    .expect("a JSON number is an f64 literal"),
+            );
+            rewritten.push_str(&index);
+            rewritten.push_str(&" ".repeat(token.len().saturating_sub(index.len())));
+        } else {
+            rewritten.push_str(token);
+        }
+        rest = &rest[end..];
+    }
+    rewritten.push_str(rest);
+    let mut value = serde_json::from_str(&rewritten)?;
+    restore(&mut value, &numbers);
+    Ok(value)
+}
+
+/// The length of the string literal `text` starts with, or all of `text` when it is unterminated.
+fn string_end(text: &str) -> usize {
+    let mut escaped = false;
+    for (i, c) in text.char_indices().skip(1) {
+        match c {
+            _ if escaped => escaped = false,
+            '\\' => escaped = true,
+            '"' => return i + 1,
+            _ => (),
+        }
+    }
+    text.len()
+}
+
+/// `-?(0|[1-9]\d*)(\.\d+)?([eE][+-]?\d+)?`.
+fn is_number(token: &str) -> bool {
+    fn digits(s: &str) -> (&str, &str) {
+        let end = s.find(|c: char| !c.is_ascii_digit()).unwrap_or(s.len());
+        s.split_at(end)
+    }
+    let unsigned = token.strip_prefix('-').unwrap_or(token);
+    let (whole, rest) = digits(unsigned);
+    if whole.is_empty() || (whole.len() > 1 && whole.starts_with('0')) {
+        return false;
+    }
+    let rest = match rest.strip_prefix('.') {
+        Some(fraction) => match digits(fraction) {
+            ("", _) => return false,
+            (_, rest) => rest,
+        },
+        None => rest,
+    };
+    match rest.strip_prefix(['e', 'E']) {
+        Some(exponent) => {
+            let exponent = exponent.strip_prefix(['+', '-']).unwrap_or(exponent);
+            matches!(digits(exponent), (d, "") if !d.is_empty())
+        }
+        None => rest.is_empty(),
+    }
+}
+
+fn restore(value: &mut Value, numbers: &[f64]) {
+    match value {
+        Value::Number(n) => {
+            let index = n.as_u64().expect("every number was rewritten to its index") as usize;
+            *value = number(numbers[index]);
+        }
+        Value::Array(items) => items.iter_mut().for_each(|v| restore(v, numbers)),
+        Value::Object(entries) => entries.values_mut().for_each(|v| restore(v, numbers)),
+        _ => (),
     }
 }
 
@@ -72,13 +170,8 @@ pub(crate) fn to_string(n: f64) -> String {
     }
 }
 
-/// `String(value)` for a value read from a model file.
-pub(crate) fn model_string(value: &Value) -> String {
-    crate::config::js_string_with(value, |n| to_string(decode(n)))
-}
-
-/// `JSON.stringify(value)`, or `JSON.stringify(value, null, 2)` when `pretty`, for a value read from a model file.
-pub(crate) fn model_stringify(value: &impl Serialize, pretty: bool) -> String {
+/// `JSON.stringify(value)`, or `JSON.stringify(value, null, 2)` when `pretty`.
+pub(crate) fn stringify(value: &impl Serialize, pretty: bool) -> String {
     let mut out = Vec::new();
     let result = if pretty {
         value.serialize(&mut serde_json::Serializer::with_formatter(
@@ -99,13 +192,21 @@ struct JsFormatter<F>(F);
 
 impl<F: Formatter> Formatter for JsFormatter<F> {
     fn write_f64<W: ?Sized + io::Write>(&mut self, writer: &mut W, value: f64) -> io::Result<()> {
-        let n = decode(value);
-        let text = if n.is_finite() {
-            to_string(n)
+        writer.write_all(to_string(value).as_bytes())
+    }
+    fn write_u64<W: ?Sized + io::Write>(&mut self, writer: &mut W, value: u64) -> io::Result<()> {
+        if value == INFINITY {
+            writer.write_all(b"null")
         } else {
-            "null".into()
-        };
-        writer.write_all(text.as_bytes())
+            self.0.write_u64(writer, value)
+        }
+    }
+    fn write_i64<W: ?Sized + io::Write>(&mut self, writer: &mut W, value: i64) -> io::Result<()> {
+        if value == NEGATIVE_INFINITY {
+            writer.write_all(b"null")
+        } else {
+            self.0.write_i64(writer, value)
+        }
     }
     fn begin_array<W: ?Sized + io::Write>(&mut self, w: &mut W) -> io::Result<()> {
         self.0.begin_array(w)
@@ -166,17 +267,17 @@ mod tests {
         for (literal, expected) in cases {
             let value = number(literal.parse().unwrap());
             assert!(value.is_number(), "{literal} is not a number");
-            assert_eq!(model_string(&value), expected, "String({literal})");
+            assert_eq!(
+                crate::config::js_string(&value),
+                expected,
+                "String({literal})"
+            );
             let json = if expected.ends_with("Infinity") {
                 "null"
             } else {
                 expected
             };
-            assert_eq!(
-                model_stringify(&value, false),
-                json,
-                "JSON.stringify({literal})"
-            );
+            assert_eq!(stringify(&value, false), json, "JSON.stringify({literal})");
         }
         assert_eq!(to_string(0.5), "0.5");
         assert_eq!(to_string(1e-7), "1e-7");
@@ -184,8 +285,51 @@ mod tests {
         assert_eq!(to_string(5e-324), "5e-324");
         assert_eq!(to_string(-5e-324), "-5e-324");
         assert_eq!(
-            model_stringify(&serde_json::json!({"a": [1, 2.5]}), true),
+            stringify(&serde_json::json!({"a": [1, 2.5]}), true),
             "{\n  \"a\": [\n    1,\n    2.5\n  ]\n}"
+        );
+    }
+
+    #[test]
+    fn parse_reads_numbers_as_json_parse_does() {
+        let value = parse(
+            r#"{"a\"1": "-2 \\\"3", "n": [5e-324, 18446744073709551615, -9223372036854775808, 1e400, -1E+400, 9007199254740993, -0, 0.5]}"#,
+        )
+        .unwrap();
+        assert_eq!(value["a\"1"], "-2 \\\"3");
+        let printed: Vec<_> = value["n"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(crate::config::js_string)
+            .collect();
+        assert_eq!(
+            printed,
+            [
+                "5e-324",
+                "18446744073709552000",
+                "-9223372036854776000",
+                "Infinity",
+                "-Infinity",
+                "9007199254740992",
+                "0",
+                "0.5"
+            ]
+        );
+        assert_eq!(
+            stringify(&value["n"], false),
+            "[5e-324,18446744073709552000,-9223372036854776000,null,null,9007199254740992,0,0.5]"
+        );
+        for text in [
+            "01", "1.", ".5", "-", "1e", "1e+", "+1", "1.5.5", "--1", "[1,]",
+        ] {
+            assert!(parse(text).is_err(), "{text} is not JSON");
+        }
+        assert_eq!(
+            parse("[1, 2,\n 3 x]").unwrap_err().to_string(),
+            serde_json::from_str::<Value>("[1, 2,\n 3 x]")
+                .unwrap_err()
+                .to_string()
         );
     }
 }
