@@ -5,7 +5,10 @@ use std::{
 };
 
 fn main() -> ExitCode {
-    let args: Vec<String> = std::env::args().skip(1).collect();
+    let mut args: Vec<String> = std::env::args().skip(1).collect();
+    if args.is_empty() {
+        args.push("help".into());
+    }
     if args.len() == 2 && args[0] == "new" && matches!(args[1].as_str(), "--help" | "-h") {
         println!(
             "Usage: story new --title TITLE [--statement TEXT] [--ac CRITERION]...\n\

@@ -1,0 +1,41 @@
+story — agile backlog toolkit (story-time)
+
+Usage: story <command> [args] [--json]
+
+Commands:
+  new    --title T [--type story|spike|bug|chore] [--statement S] [--ac A]... [--epic E]
+         [--persona P] [--size N] [--value N] [--time-criticality N] [--risk-reduction N]
+         [--timebox 2d] [--question Q] [--prefix ST]
+  list   [--status S]                      List stories
+  show   <id>                              Print a story file
+  lint   [id...]                           INVEST / Definition of Ready check (exit 1 on errors)
+  rank   [--limit N] [--include-refined]   WSJF-ranked ready stories, with exclusions
+  set    <id> key=value... [--note N] [--force]
+                                           Update fields; status=ready is lint-gated
+  note   <id> "what changed and why"       Log a prose edit in the changelog
+  split  <id> --from children.json         Split into children (saga: all or nothing)
+  stats  [--stale-days 30]                 Backlog health summary
+  export <id> [--format github|ado|gitea|markdown] [--command]
+                                           Copy-paste card for your tracker, or the gh/az create command
+  push   <id...> | --all [--dry-run]       Create/update items in GitHub or ADO (only if sync is not "off")
+  judge  [id...]                           Judgement calls: need vs solution, real benefit, testable criteria,
+                                           type, size, split pattern. Jev with a key, code heuristics without
+  secret set|status|clear <github|ado|gitea|jev> Store a token or API key in .story-time/.<name>.env (0600, git-ignored)
+  machine check|criteria|diagram <file>    Check a state machine (model/state/<entity>.toml), or print its
+                                           Given/When/Then criteria or its Mermaid diagram (exit 1 on defects)
+  table  check|criteria <file>             Check a decision table for gaps and overlaps, or print its criteria
+                                           as one parameterized rule table (exit 1 on defects)
+  init   [--from answers.json] [--force]   Write a validated .story-time/settings.json (see the story-setup skill)
+  plan   --from request.json [--output docs/planning/name.json]
+                                           Native: generate a local planning proposal (JSON, plus Markdown with --output)
+  plan   --snapshot                        Native: capture a planning request with current source hashes; read-only
+  adopt  preview                           Native: preview adopting an existing backlog; writes nothing
+  issues --state open [--limit 200] [--json]
+                                           Native: list open Gitea tracker issues (GET only; never prints the token)
+  metrics --from YYYY-MM-DD --to YYYY-MM-DD [--json]
+                                           Native: throughput, WIP, and cycle time from changelog status events; read-only
+  config                                  Show the effective project config
+  help                                     This text
+
+Config: --config, else $STORY_TIME_CONFIG, else ./.story-time/settings.json, else ./.story-time.json (optional).
+Backlog directory: --dir, else $STORY_TIME_DIR, else config backlogDir, else ./backlog.

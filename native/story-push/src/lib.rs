@@ -3,6 +3,7 @@ mod adoption_apply;
 pub mod config;
 pub mod export;
 pub mod gateway;
+pub mod help;
 pub mod init;
 mod js_number;
 pub mod judge;
@@ -62,6 +63,7 @@ pub const NATIVE_COMMANDS: &[(&str, Native)] = &[
     ("judge", judge::run),
     ("set", |args| set::run(args).map(|out| (out, 0))),
     ("split", |args| split::run(args).map(|out| (out, 0))),
+    ("help", |args| help::run(args).map(|out| (out, 0))),
 ];
 
 pub fn legacy_required_message() -> String {
