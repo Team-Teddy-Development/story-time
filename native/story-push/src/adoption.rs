@@ -172,13 +172,21 @@ impl Inventory {
             let parsed = if Path::new(&name).extension().is_some_and(|e| e == "md") {
                 std::str::from_utf8(&bytes)
                     .ok()
-                    .and_then(|text| crate::lenient_story::parse_noting_nested(text).ok())
-                    .filter(|(_, nested)| nested.is_empty())
-                    .map(|(story, _)| story.to_value())
+                    .and_then(|text| crate::lenient_story::read(text).ok())
+                    .filter(|read| read.nested.is_empty())
             } else {
                 None
             };
-            if let Some(story) = parsed {
+            if let Some(read) = parsed {
+                for key in &read.conflicting {
+                    let code = if key == "id" {
+                        "duplicate_id"
+                    } else {
+                        "remote_conflict"
+                    };
+                    self.conflict(code, &relative, "Keep one value for each identity key through a reviewed mapping; the last value does not win automatically.");
+                }
+                let story = read.story.to_value();
                 if let Some(id) = story["id"].as_str().filter(|id| safe_identity(id)) {
                     row["id"] = json!(id);
                     if ids.insert(id.to_owned(), relative.clone()).is_some() {

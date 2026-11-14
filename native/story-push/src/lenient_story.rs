@@ -232,19 +232,19 @@ pub(crate) fn parse_noting_drops(text: &str) -> Result<(Js, Vec<String>), String
     read(text).map(|r| (r.story, r.dropped))
 }
 
-/// [`parse`], plus the frontmatter keys whose value is nested YAML data (a flow mapping or an
-/// array inside an array), which `parseStory` flattens into a string or a one-level array.
-pub(crate) fn parse_noting_nested(text: &str) -> Result<(Js, Vec<String>), String> {
-    read(text).map(|r| (r.story, r.nested))
-}
-
-struct Read {
-    story: Js,
+pub(crate) struct Read {
+    pub(crate) story: Js,
     dropped: Vec<String>,
-    nested: Vec<String>,
+    /// Frontmatter keys whose value is nested YAML data (a flow mapping or an array inside an
+    /// array), which `parseStory` flattens into a string or a one-level array.
+    pub(crate) nested: Vec<String>,
+    /// Identity keys (`id`, `remote`) given twice with different values; `parseStory` keeps the
+    /// last one, so the story's identity is ambiguous.
+    pub(crate) conflicting: Vec<String>,
 }
 
-fn read(text: &str) -> Result<Read, String> {
+/// [`parse`], plus notes on what the result leaves out or flattens.
+pub(crate) fn read(text: &str) -> Result<Read, String> {
     const MISSING: &str = "Story is missing YAML frontmatter (--- ... ---)";
     let start = ["---\r\n", "---\n"]
         .iter()
@@ -267,9 +267,10 @@ fn read(text: &str) -> Result<Read, String> {
     body = body.strip_prefix('\r').unwrap_or(body);
     body = body.strip_prefix('\n').unwrap_or(body);
 
-    let mut story = Vec::new();
+    let mut story: Vec<(String, Js)> = Vec::new();
     let mut dropped = Vec::new();
     let mut nested = Vec::new();
+    let mut conflicting = Vec::new();
     for line in lines(&text[start..end]) {
         if trim(line).is_empty() || trim_start(line).starts_with('#') {
             continue;
@@ -292,7 +293,10 @@ fn read(text: &str) -> Result<Read, String> {
             nested.push(key.to_owned());
         }
         let value = value(raw)?;
-        if story.iter().any(|(k, _)| k == key) {
+        if let Some((_, prev)) = story.iter().find(|(k, _)| k == key) {
+            if matches!(key, "id" | "remote") && !prev.same(&value) {
+                conflicting.push(key.to_owned());
+            }
             dropped.push(format!("duplicate frontmatter key {key}"));
         } else if matches!(key, "sections" | "__proto__") {
             dropped.push(format!("frontmatter key {key}"));
@@ -337,6 +341,7 @@ fn read(text: &str) -> Result<Read, String> {
         story: Js::Obj(story),
         dropped,
         nested,
+        conflicting,
     })
 }
 
@@ -521,14 +526,14 @@ pub(crate) fn append_changelog(story: &Js, note: &str, date: &str) -> Js {
 
 #[cfg(test)]
 mod tests {
-    use super::{number, parse_noting_nested};
+    use super::{number, read};
 
     #[test]
     fn nested_values_are_named_and_flat_ones_are_not() {
         let text = "---\nid: ST-1\na: {b: 2}\nc: [[1]]\nd: [x, {y}]\ne: \"{quoted}\"\nf: [x, y]\ng: x {y}\n---\n";
-        let (story, nested) = parse_noting_nested(text).unwrap();
-        assert_eq!(nested, ["a", "c", "d"]);
-        assert_eq!(story.get("a").string(), "{b: 2}");
+        let r = read(text).unwrap();
+        assert_eq!(r.nested, ["a", "c", "d"]);
+        assert_eq!(r.story.get("a").string(), "{b: 2}");
     }
 
     #[test]
