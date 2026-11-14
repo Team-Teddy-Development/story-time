@@ -84,8 +84,15 @@ Then open the file it reports and add `## Out of Scope` and `## Notes`.
 Leave scores empty unless the user gave them. Estimation happens in the
 **story-estimate** skill.
 
+If the input is an open tracker issue that no story's `remote` names, the new
+story takes it over. Copy the issue's original title and body under `## Notes`,
+then run `story set <id> remote=<n>`. The next push updates that issue,
+replacing its title and body, instead of creating a second one. Tell the user
+before that push.
+
 When creating several stories from one source, show the list of titles and
-statements first and wait for approval before writing.
+statements first and wait for approval before writing. Rows the user already
+approved in a **gap-sweep** table count as that approval.
 
 ## 5. Report
 

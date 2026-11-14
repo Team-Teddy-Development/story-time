@@ -19,6 +19,7 @@ idea ──► story-create ──► acceptance-criteria ──► story-estima
             └─ unknown? ──► spike                             story-pick ──► story-kickoff ──► build ──► story-accept ──► [done]
 
 refinement owns single-story and backlog modes; backlog-groom is its compatibility alias.
+gap-sweep finds work with no story and hands approved rows to story-create.
 sprint-planning consumes ordered ready candidates and produces local proposals.
 story-edit changes any story at any stage.
 state-machine and decision-table write checked models that acceptance-criteria and story-kickoff build on.
@@ -35,6 +36,7 @@ state-machine and decision-table write checked models that acceptance-criteria a
 | "is this ready?" | **story-ready** skill |
 | "refine ST-012", "groom / refine the backlog" | **refinement** skill |
 | "backlog-groom" | **backlog-groom** skill, alias to refinement |
+| "sweep for gaps", "what are we missing" | **gap-sweep** skill |
 | "plan a sprint", goal and capacity planning | **sprint-planning** skill |
 | "what should I work on next?" | **story-pick** skill |
 | "map out this epic / feature" | **story-map** skill |

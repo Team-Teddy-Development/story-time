@@ -1,0 +1,4 @@
+interface:
+  display_name: "Gap Sweep"
+  short_description: "Find unfiled work and evidence-backed features"
+  default_prompt: "Use $gap-sweep to find work the backlog is missing."
