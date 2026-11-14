@@ -185,6 +185,7 @@ fn retry_after_a_create_that_landed_but_timed_out_links_the_existing_issue() {
         String::from_utf8_lossy(&second.stderr)
     );
     let result: Value = serde_json::from_slice(&second.stdout).unwrap();
+    assert_eq!(result["pushed"][0]["action"], "link");
     assert_eq!(result["pushed"][0]["remoteId"], "1");
     let issues = tracker.issues.lock().unwrap();
     assert_eq!(issues.open, vec![(1, "ST-001: Native push".to_owned())]);

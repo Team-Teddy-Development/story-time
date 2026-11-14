@@ -363,11 +363,15 @@ fn context(args: &Args) -> Result<Context, String> {
 }
 
 pub trait Tracker {
+    fn find(&mut self, story: &Value) -> Result<Option<Remote>, String>;
     fn create(&mut self, story: &Value) -> Result<Remote, String>;
     fn update(&mut self, story: &Value) -> Result<Remote, String>;
     fn remove(&mut self, id: &str) -> Result<(), String>;
 }
 impl Tracker for Gateway {
+    fn find(&mut self, s: &Value) -> Result<Option<Remote>, String> {
+        Gateway::find(self, s)
+    }
     fn create(&mut self, s: &Value) -> Result<Remote, String> {
         Gateway::create(self, s)
     }
@@ -521,51 +525,78 @@ fn atomic_write(path: &Path, bytes: &[u8]) -> Result<(), String> {
     result
 }
 
+const PENDING_CREATE: &str = "pending_create";
+
+fn step(
+    p: &Planned,
+    gateway: &mut dyn Tracker,
+    date: &str,
+) -> Result<(&'static str, Remote, Vec<u8>), String> {
+    if p.action == "update" {
+        return Ok(("update", gateway.update(&p.story)?, p.original.clone()));
+    }
+    if p.story.get(PENDING_CREATE).is_some_and(|v| !v.is_null()) {
+        if let Some(remote) = gateway.find(&p.story)? {
+            return Ok(("link", remote, p.original.clone()));
+        }
+        return Ok(("create", gateway.create(&p.story)?, p.original.clone()));
+    }
+    unchanged(p, &p.original)?;
+    let mut marked = p.story.clone();
+    marked[PENDING_CREATE] = json!(date);
+    let bytes = story::serialize(&marked)?.into_bytes();
+    atomic_write(&p.path, &bytes)?;
+    Ok(("create", gateway.create(&p.story)?, bytes))
+}
+fn unchanged(p: &Planned, expected: &[u8]) -> Result<(), String> {
+    if fs::read(&p.path).map_err(|_| "Could not re-read story.")? != expected {
+        return Err(format!(
+            "Story {} changed during push; refusing to overwrite it.",
+            p.id
+        ));
+    }
+    Ok(())
+}
+
 fn execute(plan: &[Planned], gateway: &mut dyn Tracker, date: &str) -> Result<Value, String> {
-    let mut remote_results: Vec<(&Planned, Remote)> = Vec::new();
-    let mut linked: Vec<&Planned> = Vec::new();
+    let mut remote_results: Vec<(&Planned, &'static str, Remote, Vec<u8>)> = Vec::new();
+    let mut linked = 0;
     let operation = (|| -> Result<(), String> {
         for p in plan.iter().filter(|p| p.action != "skip") {
-            let r = if p.action == "create" {
-                gateway.create(&p.story)
-            } else {
-                gateway.update(&p.story)
-            }
-            .map_err(|e| format!("{}: {e}", p.id))?;
-            remote_results.push((p, r));
+            let (action, r, expected) =
+                step(p, gateway, date).map_err(|e| format!("{}: {e}", p.id))?;
+            remote_results.push((p, action, r, expected));
         }
-        for (p, r) in &remote_results {
-            if fs::read(&p.path).map_err(|_| "Could not re-read story before linking.")?
-                != p.original
-            {
-                return Err(format!(
-                    "Story {} changed during push; refusing to overwrite it.",
-                    p.id
-                ));
-            }
-            let value = story::link(&p.story, &r.remote_id, &r.url, date, p.action)?;
+        for (p, action, r, expected) in &remote_results {
+            unchanged(p, expected)?;
+            let value = story::link(&p.story, &r.remote_id, &r.url, date, action)?;
             let bytes = story::serialize(&value)?;
             atomic_write(&p.path, bytes.as_bytes())?;
-            linked.push(p);
+            linked += 1;
         }
         Ok(())
     })();
     if let Err(error) = operation {
         let mut undone = Vec::new();
         let mut stuck = Vec::new();
-        for p in linked.iter().rev() {
-            match atomic_write(&p.path, &p.original) {
+        for (p, _, _, expected) in remote_results[..linked].iter().rev() {
+            match atomic_write(&p.path, expected) {
                 Ok(()) => undone.push(format!("link {}", p.id)),
                 Err(_) => stuck.push(format!("link {}", p.id)),
             }
         }
-        for (p, r) in remote_results
+        for (p, _, r, expected) in remote_results
             .iter()
             .rev()
-            .filter(|(p, _)| p.action == "create")
+            .filter(|(_, action, _, _)| *action == "create")
         {
             match gateway.remove(&r.remote_id) {
-                Ok(()) => undone.push(format!("create {}", p.id)),
+                Ok(()) => {
+                    if unchanged(p, expected).is_ok() {
+                        let _ = atomic_write(&p.path, &p.original);
+                    }
+                    undone.push(format!("create {}", p.id))
+                }
                 Err(_) => stuck.push(format!("create {}", p.id)),
             }
         }
@@ -582,7 +613,7 @@ fn execute(plan: &[Planned], gateway: &mut dyn Tracker, date: &str) -> Result<Va
         return Err(message);
     }
     Ok(
-        json!({"ok":true,"pushed":remote_results.iter().map(|(p,r)|json!({"id":p.id,"action":p.action,"remoteId":r.remote_id,"url":r.url})).collect::<Vec<_>>(),"skipped":plan.iter().filter(|p|p.action=="skip").map(|p|p.id.clone()).collect::<Vec<_>>()}),
+        json!({"ok":true,"pushed":remote_results.iter().map(|(p,action,r,_)|json!({"id":p.id,"action":action,"remoteId":r.remote_id,"url":r.url})).collect::<Vec<_>>(),"skipped":plan.iter().filter(|p|p.action=="skip").map(|p|p.id.clone()).collect::<Vec<_>>()}),
     )
 }
 
