@@ -203,7 +203,10 @@ fn project_status_places_every_other_status() {
         position(&text, status);
     }
     position(&text, "one `open` count per status");
-    position(&text, "These counts include blocked stories");
+    position(
+        &text,
+        "The `open` counts are a separate summary that overlaps the state rows",
+    );
     position(&text, "excluded, with their counts");
     let rows = assert_every_row_cites_a_record(&text, "| Work | State | Claim | Record |");
     assert!(rows.iter().any(|row| row[1] == "`open`"));
@@ -253,4 +256,72 @@ fn project_status_records_absence_and_never_cites_itself() {
     position(&text, "A Record that cites a missing file records absence");
     position(&text, "name the missing path in Gaps");
     position(&text, "A Record never cites the report itself");
+}
+
+#[test]
+fn project_status_gives_each_story_one_state_by_precedence() {
+    let text = skill("project-status");
+    assert!(!flowed(&text).contains("These counts include blocked stories"));
+    position(&text, "Each story in scope has one state");
+    position(
+        &text,
+        "`released`, then `accepted`, then `blocked`, then `forecast`",
+    );
+    position(&text, "An epic map's slice order is a scope basis");
+}
+
+#[test]
+fn project_status_groups_accepted_and_released_work_by_epic() {
+    let text = skill("project-status");
+    position(
+        &text,
+        "Group `accepted` and `released` stories into one row per epic",
+    );
+    let rows = assert_every_row_cites_a_record(&text, "| Work | State | Claim | Record |");
+    assert!(
+        rows.iter()
+            .any(|row| row[1] == "`accepted`" && row[0].contains(", ")),
+        "the work table groups accepted stories"
+    );
+}
+
+#[test]
+fn project_status_puts_an_unknown_owner_in_owner_and_its_assignment_in_next_actions() {
+    let text = skill("project-status");
+    assert!(!flowed(&text).contains("the next action is \"lead assigns an owner\""));
+    position(&text, "write `unknown` in Owner");
+    position(&text, "add one Next actions row, \"Lead assigns an owner\"");
+}
+
+#[test]
+fn project_status_allows_comparing_two_copied_numbers() {
+    let text = skill("project-status");
+    position(&text, "Comparing two copied and cited numbers is allowed");
+}
+
+#[test]
+fn project_status_writes_unknown_metrics_when_the_command_fails() {
+    let text = skill("project-status");
+    position(
+        &text,
+        "When `story metrics` fails, write each figure `unknown`",
+    );
+    position(&text, "name the failing command and its error in Gaps");
+}
+
+#[test]
+fn project_status_default_window_is_14_inclusive_days_ending_on_the_report_date() {
+    let text = skill("project-status");
+    assert!(!flowed(&text).contains("use the last 14 days"));
+    position(&text, "the 14 days ending on the report date, inclusive");
+    position(&text, "`--from` is 13 days before the report date");
+}
+
+#[test]
+fn project_status_dates_a_decision_only_when_its_log_does_not_disclaim_the_time() {
+    let text = skill("project-status");
+    position(
+        &text,
+        "Use a decision log row's date only when the log does not disclaim that row's timestamp",
+    );
 }
