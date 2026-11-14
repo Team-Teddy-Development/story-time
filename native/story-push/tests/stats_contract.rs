@@ -272,6 +272,8 @@ fn legacy_date_forms_match_node() {
         "Dec 31 2999 23:59:59.999 UTC",
         "Nov 14 2026 garbage",
         "2026/13/01",
+        "275760/1/1",
+        "+275760-01-01T00:00",
     ]
     .iter()
     .enumerate()
@@ -284,7 +286,7 @@ fn legacy_date_forms_match_node() {
             ),
         );
     }
-    for days in ["30", "0", "-1"] {
+    for days in ["30", "0", "-1", "-100000000"] {
         s.both_forms(&["--stale-days", days], &[], 0);
         for zone in [
             "UTC",
