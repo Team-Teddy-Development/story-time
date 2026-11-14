@@ -1,4 +1,3 @@
-use serde_json::Value;
 use std::{
     fs,
     os::unix::fs::PermissionsExt,
@@ -62,10 +61,7 @@ impl Sandbox {
 
         let home = root.join("home");
         write(&home.join(".local/bin/story"), "old binary\n");
-        write(
-            &home.join(".config/story-time/runtime.json"),
-            "{\"legacyCli\":\"/old/story.mjs\"}\n",
-        );
+        write(&home.join(".config/story-time/runtime.json"), OLD_RUNTIME);
         Self { root, commit }
     }
 
@@ -131,10 +127,10 @@ fn git(dir: &Path, args: &[&str]) -> Output {
     output
 }
 
-fn legacy_cli(home: &Path) -> String {
-    let runtime: Value =
-        serde_json::from_str(&read(&home.join(".config/story-time/runtime.json"))).unwrap();
-    runtime["legacyCli"].as_str().unwrap().to_string()
+const OLD_RUNTIME: &str = "{\"legacyCli\":\"/old/story.mjs\"}\n";
+
+fn runtime(home: &Path) -> PathBuf {
+    home.join(".config/story-time/runtime.json")
 }
 
 fn tree(dir: &Path) -> Vec<(PathBuf, String)> {
@@ -155,7 +151,7 @@ fn tree(dir: &Path) -> Vec<(PathBuf, String)> {
 }
 
 #[test]
-fn binary_skills_and_runtime_all_come_from_the_committed_release() {
+fn binary_and_skills_come_from_the_committed_release_and_no_runtime_is_left() {
     let sandbox = Sandbox::new("install");
     sandbox.install(&["--agent", "all"]);
     let home = sandbox.home();
@@ -177,9 +173,25 @@ fn binary_skills_and_runtime_all_come_from_the_committed_release() {
         );
         assert!(!skills.join("story-time/scripts/test").exists());
     }
-    let cli = PathBuf::from(legacy_cli(&home));
-    assert_eq!(cli, release.join("skills/story-time/scripts/story.mjs"));
-    assert!(cli.is_file());
+    assert!(release
+        .join("skills/story-time/scripts/story.mjs")
+        .is_file());
+    assert!(!runtime(&home).exists());
+}
+
+#[test]
+fn a_fresh_machine_gets_no_runtime_and_rollback_leaves_none() {
+    let sandbox = Sandbox::new("fresh");
+    let home = sandbox.home();
+    fs::remove_file(runtime(&home)).unwrap();
+    let output = sandbox.install(&["--agent", "all"]);
+    let printed = String::from_utf8(output.stdout).unwrap();
+    assert!(!printed.contains("legacyCli"), "{printed}");
+    assert!(!runtime(&home).exists());
+
+    sandbox.install(&["--rollback"]);
+    assert_eq!(read(&home.join(".local/bin/story")), "old binary\n");
+    assert!(!runtime(&home).exists());
 }
 
 #[test]
@@ -189,9 +201,11 @@ fn rollback_restores_the_previous_binary_and_runtime() {
     let home = sandbox.home();
     assert_ne!(read(&home.join(".local/bin/story")), "old binary\n");
 
+    assert!(!runtime(&home).exists());
+
     sandbox.install(&["--rollback"]);
     assert_eq!(read(&home.join(".local/bin/story")), "old binary\n");
-    assert_eq!(legacy_cli(&home), "/old/story.mjs");
+    assert_eq!(read(&runtime(&home)), OLD_RUNTIME);
 }
 
 #[test]
@@ -217,7 +231,7 @@ fn a_failed_build_changes_nothing_and_leaves_nothing_to_roll_back() {
     assert!(!failed.status.success());
     let home = sandbox.home();
     assert_eq!(read(&home.join(".local/bin/story")), "old binary\n");
-    assert_eq!(legacy_cli(&home), "/old/story.mjs");
+    assert_eq!(read(&runtime(&home)), OLD_RUNTIME);
 
     let rollback = sandbox.run(&["--rollback"]);
     assert!(!rollback.status.success());
