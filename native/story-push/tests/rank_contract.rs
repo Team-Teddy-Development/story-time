@@ -71,6 +71,10 @@ impl Sandbox {
             .unwrap()
     }
     fn compare(&self, args: &[&str]) -> Output {
+        self.compare_streams(args, true)
+    }
+    /// `with_stderr` is false where Node's stderr is V8's own text, such as a JSON parse error.
+    fn compare_streams(&self, args: &[&str], with_stderr: bool) -> Output {
         let before = self.files();
         let node = self.run(false, args);
         assert_eq!(before, self.files(), "Node changed files for {args:?}");
@@ -83,11 +87,13 @@ impl Sandbox {
             String::from_utf8_lossy(&native.stderr),
             String::from_utf8_lossy(&node.stderr)
         );
-        assert_eq!(
-            String::from_utf8_lossy(&native.stderr),
-            String::from_utf8_lossy(&node.stderr),
-            "stderr differs for {args:?}"
-        );
+        if with_stderr {
+            assert_eq!(
+                String::from_utf8_lossy(&native.stderr),
+                String::from_utf8_lossy(&node.stderr),
+                "stderr differs for {args:?}"
+            );
+        }
         assert_eq!(
             native.status.code(),
             node.status.code(),
@@ -256,7 +262,9 @@ fn errors_match_node() {
     );
     s.both_forms(&[], 1);
     s.write(".story-time/settings.json", "{ not json");
-    s.compare(&[]);
+    let out = s.compare_streams(&[], false);
+    assert_eq!(out.status.code(), Some(1));
+    assert!(String::from_utf8_lossy(&out.stderr).contains("settings.json: "));
 }
 
 #[test]

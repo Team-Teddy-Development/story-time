@@ -134,7 +134,7 @@ fn truthy(v: &Js) -> bool {
 }
 
 /// `Number(string)`.
-fn number(s: &str) -> f64 {
+pub(crate) fn number(s: &str) -> f64 {
     let s = s.trim_matches(|c| js_space(c) || crate::lenient_story::line_terminator(c));
     if s.is_empty() {
         return 0.0;

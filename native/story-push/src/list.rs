@@ -66,12 +66,12 @@ pub(crate) fn stories(dir: &Path, status: Option<&str>) -> Result<Vec<Js>, Strin
             });
         }
     }
-    stories.sort_by_cached_key(|s| collation_key(&s.get("id").string()));
+    stories.sort_by_cached_key(|s| collation_key(&s.get("id").string(), true));
     Ok(stories)
 }
 
 #[derive(PartialEq, Eq, PartialOrd, Ord)]
-enum Primary {
+pub(crate) enum Primary {
     Symbol(usize),
     Digits(usize, String),
     Letter(u8),
@@ -81,18 +81,23 @@ enum Primary {
 /// The order ICU's root collation gives ASCII whitespace, punctuation, and symbols.
 const SYMBOLS: &str = "\t\n\u{b}\u{c}\r _-,;:!?.'\"()[]{}@*/\\&#%`^+<=>|~$";
 
-/// Primary weights, then case (lowercase first), with each digit run compared as a number.
-fn collation_key(id: &str) -> (Vec<Primary>, Vec<bool>) {
+/// Primary weights, then case (lowercase first). With `numeric`, each digit run compares as a
+/// number, as `localeCompare(…, { numeric: true })` does; without it, digit by digit.
+pub(crate) fn collation_key(id: &str, numeric: bool) -> (Vec<Primary>, Vec<bool>) {
     let mut primary = Vec::new();
     let mut tertiary = Vec::new();
     let mut chars = id.chars().peekable();
     while let Some(c) = chars.next() {
         if c.is_ascii_digit() {
             let mut run = c.to_string();
-            while let Some(d) = chars.next_if(char::is_ascii_digit) {
+            while let Some(d) = chars.next_if(|d| numeric && d.is_ascii_digit()) {
                 run.push(d);
             }
-            let run = run.trim_start_matches('0').to_owned();
+            let run = if numeric {
+                run.trim_start_matches('0').to_owned()
+            } else {
+                run
+            };
             primary.push(Primary::Digits(run.len(), run));
             tertiary.push(false);
         } else if let Some(rank) = SYMBOLS.find(c) {
