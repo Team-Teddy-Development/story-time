@@ -228,6 +228,38 @@ fn malformed_nested_duplicates_and_remote_conflicts_are_visible() {
     conflict(&p, "nested_source");
 }
 #[test]
+fn conflicting_duplicate_id_or_remote_is_a_conflict_for_that_file() {
+    for (extra, code) in [
+        ("id: PAY-009\r\n", "duplicate_id"),
+        ("remote: 7\r\nremote: 8\r\n", "remote_conflict"),
+    ] {
+        let p = Project::new();
+        p.config(false);
+        p.story("work/a.md", "PAY-001", "done", extra);
+        let r = conflict(&p, code);
+        assert!(
+            r["diagnostics"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|d| d["code"] == code && d["path"] == "work/a.md"),
+            "{r}"
+        );
+    }
+    let p = Project::new();
+    p.config(false);
+    p.story(
+        "work/a.md",
+        "PAY-001",
+        "done",
+        "id: PAY-001\r\nremote: 7\r\nremote: 7\r\nstatus: ready\r\n",
+    );
+    let (out, r) = p.preview();
+    assert_eq!(out.status.code(), Some(0), "{r}");
+    assert_eq!(r["backlog"]["files"][0]["id"], "PAY-001");
+    assert_eq!(r["backlog"]["files"][0]["remote"], 7);
+}
+#[test]
 fn config_conflicts_unknown_versions_tracker_only_and_path_boundaries() {
     let p = Project::new();
     p.config(false);
