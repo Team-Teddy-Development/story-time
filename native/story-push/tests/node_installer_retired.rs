@@ -1,10 +1,11 @@
 use std::{fs, path::PathBuf, process::Command};
 
-const HISTORICAL: [&str; 4] = [
+const HISTORICAL: [&str; 5] = [
     "backlog/",
     "docs/verification/",
     "docs/planning/verification.md",
     "docs/designs/gap-sweep-review/",
+    "native/story-push/tests/install_skills_contract.rs",
 ];
 
 fn repo() -> PathBuf {
