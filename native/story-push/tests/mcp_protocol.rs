@@ -1463,3 +1463,41 @@ fn story_create_never_replaces_a_racing_story_and_a_second_collision_is_id_taken
     );
     server.finish();
 }
+
+#[test]
+fn write_tools_wait_for_a_writer_that_finishes() {
+    let fixture = Fixture::new().with_stories(3);
+    let mut server = fixture.writer();
+    let hold = |root: &Path| {
+        let held = fs::File::open(root).unwrap();
+        held.try_lock().unwrap();
+        std::thread::spawn(move || {
+            std::thread::sleep(std::time::Duration::from_millis(300));
+            drop(held);
+        })
+    };
+
+    let sha = sha256(&fixture, "ST-001");
+    let release = hold(&fixture.root);
+    let result = server.tool(
+        "story_update",
+        json!({"id": "ST-001", "expected_sha256": sha, "set": {"status": "refined"}}),
+    );
+    release.join().unwrap();
+    assert_eq!(structured(&result)["status"], "updated", "{result}");
+
+    let sha = sha256(&fixture, "ST-002");
+    let release = hold(&fixture.root);
+    let result = server.tool(
+        "story_note",
+        json!({"id": "ST-002", "expected_sha256": sha, "note": "waited"}),
+    );
+    release.join().unwrap();
+    assert_eq!(structured(&result)["status"], "updated", "{result}");
+
+    let release = hold(&fixture.root);
+    let result = server.tool("story_create", json!({"title": "Filed after a wait"}));
+    release.join().unwrap();
+    assert_eq!(structured(&result)["status"], "created", "{result}");
+    server.finish();
+}
