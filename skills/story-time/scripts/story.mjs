@@ -3,8 +3,8 @@
 // and the only boundary: it parses argv, picks the adapter, calls use cases,
 // and formats output. No business rules live here.
 import { readFile, writeFile, access, mkdir } from 'node:fs/promises';
-import { existsSync, readFileSync } from 'node:fs';
-import { basename, dirname, join, resolve } from 'node:path';
+import { lstatSync, readFileSync, readlinkSync, realpathSync } from 'node:fs';
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { FileSystemStoryRepository } from './src/adapters/fs-story-repository.mjs';
 import { gitReservedIds } from './src/adapters/git-reserved-ids.mjs';
 import { lintStory } from './src/domain/invest.mjs';
@@ -353,8 +353,42 @@ function table(headers, rows) {
 
 const exists = (p) => access(p).then(() => true, () => false);
 
-// Story fields that name a file (state_machine) are relative to the project root.
-const inRepo = (ctx) => (path) => existsSync(resolve(ctx.root, path));
+// Story fields that name a file (state_machine) are relative to the project root. Symlinks are
+// read, never followed, so nothing outside the root is examined and an outside path answers
+// 'outside' whether or not it exists.
+const inRepo = (ctx) => (path) => {
+  let root = ctx.root;
+  try {
+    root = realpathSync(root);
+  } catch {}
+  const inside = (p) => {
+    const rest = relative(root, p);
+    if (rest === '..' || rest.startsWith(`..${sep}`) || isAbsolute(rest)) return null;
+    return rest.split(sep).filter(Boolean).reverse();
+  };
+  let pending = inside(resolve(root, path));
+  if (!pending) return 'outside';
+  let current = root;
+  let hops = 0;
+  while (pending.length) {
+    const next = join(current, pending.pop());
+    let link;
+    try {
+      if (!lstatSync(next).isSymbolicLink()) {
+        current = next;
+        continue;
+      }
+      if (++hops > 40) return false;
+      link = readlinkSync(next);
+    } catch {
+      return false;
+    }
+    pending = inside(resolve(current, link, ...[...pending].reverse()));
+    if (!pending) return 'outside';
+    current = root;
+  }
+  return true;
+};
 
 const modelName = (file) => basename(file).replace(/\.toml$/, '');
 
