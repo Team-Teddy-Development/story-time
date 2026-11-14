@@ -81,6 +81,7 @@ export STORY_TIME_LEGACY_CLI="$PWD/skills/story-time/scripts/story.mjs"
 ```
 
 `story list` runs in Rust and needs no Node.
+`story new` runs in Rust and needs no Node.
 Use `story push`, not `node story.mjs push`. Push planning, tracker operations,
 and local linking run in Rust. An empty `story push --all --dry-run --json`
 returns an empty plan without credentials or network access. Sync off still

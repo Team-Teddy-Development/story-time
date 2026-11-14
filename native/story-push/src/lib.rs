@@ -9,8 +9,11 @@ pub mod machine;
 pub mod metrics;
 mod models;
 pub mod note;
+pub mod new_story;
+mod next_id;
 pub mod planning;
 pub mod secret;
+mod serialize_story;
 pub mod show;
 pub mod story;
 pub mod table;
@@ -44,6 +47,7 @@ pub const NATIVE_COMMANDS: &[(&str, Native)] = &[
     ("table", table::run),
     ("metrics", |args| metrics::run(args).map(|out| (out, 0))),
     ("note", |args| note::run(args).map(|out| (out, 0))),
+    ("new", |args| new_story::run(args).map(|out| (out, 0))),
 ];
 
 pub fn legacy_required_message() -> String {

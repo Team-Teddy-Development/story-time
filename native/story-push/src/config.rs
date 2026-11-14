@@ -106,7 +106,7 @@ pub fn load(flag: Option<&str>) -> Result<Loaded, String> {
 /// Arguments parsed the way the Node CLI parses them: a boolean flag takes no value, and every other `--flag` takes the next argument.
 pub struct Flags {
     pub positional: Vec<String>,
-    named: HashMap<String, Option<String>>,
+    named: HashMap<String, Vec<Option<String>>>,
 }
 impl Flags {
     pub fn parse(args: &[String]) -> Result<Self, Failure> {
@@ -127,22 +127,32 @@ impl Flags {
                 continue;
             };
             if BOOLEAN.contains(&key) {
-                named.insert(key.to_owned(), None);
+                named.insert(key.to_owned(), vec![None]);
                 continue;
             }
             let value = args.next().ok_or_else(|| Failure {
                 code: 2,
                 message: format!("Flag --{key} needs a value."),
             })?;
-            named.insert(key.to_owned(), Some(value.clone()));
+            named
+                .entry(key.to_owned())
+                .or_insert_with(Vec::new)
+                .push(Some(value.clone()));
         }
         Ok(Self { positional, named })
     }
     pub fn has(&self, key: &str) -> bool {
         self.named.contains_key(key)
     }
+    /// The last value given for `key`, as Node keeps for a non-repeatable flag.
     pub fn value(&self, key: &str) -> Option<&str> {
-        self.named.get(key)?.as_deref()
+        self.named.get(key)?.last()?.as_deref()
+    }
+    /// Every value given for `key`, in order, as Node collects a repeatable flag such as `--ac`.
+    pub fn values(&self, key: &str) -> Option<Vec<&str>> {
+        self.named
+            .get(key)
+            .map(|v| v.iter().filter_map(Option::as_deref).collect())
     }
 }
 
