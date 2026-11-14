@@ -313,6 +313,40 @@ fn graph_tools_appear_only_with_the_graph_flag() {
         "{tools:?}"
     );
     plain.finish();
+
+    let root = fixture.roots[0].to_str().unwrap();
+    let args = [
+        "--root",
+        root,
+        "--graph",
+        "--neo4j-url",
+        "http://127.0.0.1:9",
+        "--neo4j-user",
+        "neo4j",
+        "--neo4j-password-env",
+        PASSWORD_ENV,
+    ]
+    .map(String::from);
+    let mut graph = Server::start(&args, &fixture.base, &[(PASSWORD_ENV, PASSWORD)]);
+    let listed = graph.send("tools/list", json!({}))["result"]["tools"].clone();
+    let open_world: Vec<(String, bool)> = listed
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|t| {
+            (
+                t["name"].as_str().unwrap().to_owned(),
+                t["annotations"]["openWorldHint"].as_bool().unwrap(),
+            )
+        })
+        .collect();
+    assert!(
+        open_world
+            .iter()
+            .all(|(name, open)| *open == name.starts_with("story_graph")),
+        "only the Neo4j tools reach outside the repository: {open_world:?}"
+    );
+    graph.finish();
 }
 
 #[test]
