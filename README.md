@@ -57,8 +57,7 @@ of them.
 ## Install
 
 Native `story init`, `story push`, `story adopt preview`, `story plan`,
-`story config`, `story show`, `story list`, `story lint`, `story stats`, `story secret`, `story issues`, `story note`, `story set`, `story split`, `story new`, `story rank`, `story machine`, `story export`, `story table`, `story judge`, `story help`, and `story metrics` require Rust and Cargo. Other commands still require Node 20+ and use the
-existing dependency-free Node CLI.
+`story config`, `story show`, `story list`, `story lint`, `story stats`, `story secret`, `story issues`, `story note`, `story set`, `story split`, `story new`, `story rank`, `story machine`, `story export`, `story table`, `story judge`, `story help`, and `story metrics` require Rust and Cargo. No command requires Node.
 
 To install a release on a machine in one step, run this from the repository root:
 
@@ -73,12 +72,10 @@ agents, and points `runtime.json` at the export. Uncommitted changes are not
 installed. Use `--dry-run` to print the plan. Use `--rollback` to restore the
 saved binary and `runtime.json`.
 
-To install by hand instead, install the native executable and configure the
-retained entry point for other commands:
+To install by hand instead, install the native executable:
 
 ```bash
 cargo install --path native/story-push --locked
-export STORY_TIME_LEGACY_CLI="$PWD/skills/story-time/scripts/story.mjs"
 ```
 
 `story list` runs in Rust and needs no Node.

@@ -66,22 +66,6 @@ pub const NATIVE_COMMANDS: &[(&str, Native)] = &[
     ("help", |args| help::run(args).map(|out| (out, 0))),
 ];
 
-pub fn legacy_required_message() -> String {
-    let names: Vec<&str> = NATIVE_COMMANDS.iter().map(|(name, _)| *name).collect();
-    let list = match names.as_slice() {
-        [] => String::new(),
-        [only] => only.to_string(),
-        [first, second] => format!("{first} and {second}"),
-        [init @ .., last] => format!("{}, and {last}", init.join(", ")),
-    };
-    let mut capitalized = list.chars();
-    let capitalized = capitalized
-        .next()
-        .map(|first| first.to_uppercase().chain(capitalized).collect::<String>())
-        .unwrap_or_default();
-    format!("Commands other than {list} require STORY_TIME_LEGACY_CLI or ~/.config/story-time/runtime.json with legacyCli. {capitalized} are fully native and need neither Node nor this setting.")
-}
-
 #[derive(Debug)]
 pub struct Failure {
     pub code: i32,

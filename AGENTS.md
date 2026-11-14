@@ -6,11 +6,8 @@ Use this repository's installed native `story` executable for `init`, `push`,
 `adopt`, `plan`, `config`, `show`, `secret`, `issues` (a read-only list of open Gitea issues), `list`, `lint`, `stats`, `note`, `set`, `split`, `machine`, `export`, `new`, `rank`, `table`, `judge`, `help`, and
 `metrics` (read-only delivery figures from changelog status events).
 Build it with `cargo install --path native/story-push --locked`.
-Other commands remain in the Node CLI. Inside this checkout, native `story`
-dispatches them to this checkout's `skills/story-time/scripts/story.mjs`;
-`STORY_TIME_LEGACY_CLI`, when set, still takes precedence.
-Direct `node skills/story-time/scripts/story.mjs <command>` remains valid
-for commands other than `init`, `push`, `adopt`, `plan`, `config`, `show`, `secret`, `issues`, `list`, `lint`, `stats`, `note`, `set`, `split`, `machine`, `export`, `new`, `rank`, `table`, `judge`, `help`, and `metrics`. Retain the old init source as
+Native `story` runs every command and needs no Node or
+`STORY_TIME_LEGACY_CLI`. Retain the Node CLI and the old init source as
 history; exercise setup through native `story init`.
 
 1. Read `.story-time/settings.json` with `story config --json`.

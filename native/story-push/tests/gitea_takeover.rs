@@ -134,11 +134,6 @@ fn story(f: &Fixture, args: &[&str]) -> std::process::Output {
         .current_dir(&f.0)
         .env_clear()
         .env("PATH", std::env::var_os("PATH").unwrap_or_default())
-        .env(
-            "STORY_TIME_LEGACY_CLI",
-            PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-                .join("../../skills/story-time/scripts/story.mjs"),
-        )
         .env("GITEA_TOKEN", "test-only")
         .output()
         .unwrap();

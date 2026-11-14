@@ -26,12 +26,9 @@ impl Sandbox {
         cmd.current_dir(&self.0)
             .env_remove("STORY_TIME_CONFIG")
             .env_remove("STORY_TIME_DIR")
-            .env_remove("STORY_TIME_LEGACY_CLI")
             .env("HOME", &self.0);
         if native {
             cmd.env("PATH", "/nonexistent");
-        } else {
-            cmd.env("STORY_TIME_LEGACY_CLI", legacy());
         }
         cmd
     }

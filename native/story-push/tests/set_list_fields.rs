@@ -28,11 +28,8 @@ impl Drop for Sandbox {
 }
 
 fn story(dir: &Path, args: &[&str]) -> Output {
-    let legacy =
-        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../skills/story-time/scripts/story.mjs");
     let output = Command::new(env!("CARGO_BIN_EXE_story"))
         .args(args)
-        .env("STORY_TIME_LEGACY_CLI", legacy)
         .current_dir(dir)
         .output()
         .unwrap();

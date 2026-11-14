@@ -16,10 +16,7 @@ Install from a Story Time source checkout, not from a copied skill directory:
 cargo install --path native/story-push --locked
 ```
 
-The skill installer does not install the binary. Node remains necessary for
-retained commands such as `story config`; it is not necessary for `story plan`.
-Set `STORY_TIME_LEGACY_CLI` to the absolute installed
-`story-time/scripts/story.mjs` path for retained commands.
+The skill installer does not install the binary. No `story` command needs Node.
 
 These commands produce and execute a complete, valid request without placeholders:
 
