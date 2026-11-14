@@ -30,6 +30,16 @@ const INTERNAL: &[&str] = &[
 ];
 
 pub fn parse(text: &str) -> Result<Value, String> {
+    parse_with(text, false)
+}
+
+/// Reads a legacy story for adoption, which keeps the original bytes and
+/// never renders the result, so prose before the first section is skipped.
+pub fn parse_legacy(text: &str) -> Result<Value, String> {
+    parse_with(text, true)
+}
+
+fn parse_with(text: &str, skip_preamble: bool) -> Result<Value, String> {
     let normalized = text.replace("\r\n", "\n");
     let rest = normalized
         .strip_prefix("---\n")
@@ -80,7 +90,7 @@ pub fn parse(text: &str) -> Result<Value, String> {
             current = Some(name.into());
         } else if current.is_some() {
             lines.push(line);
-        } else if !line.trim().is_empty() {
+        } else if !skip_preamble && !line.trim().is_empty() {
             return Err("Content outside a named story section is unsupported".into());
         }
     }
