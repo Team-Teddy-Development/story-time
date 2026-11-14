@@ -269,8 +269,8 @@ fn each_install_builds_in_a_fresh_target_directory_that_is_removed_afterwards() 
         "cargo must build in a target directory that did not exist before the install: {calls}"
     );
     assert!(
-        !Path::new(target).exists(),
-        "the install removes its target directory: {target}"
+        !Path::new(target).exists() && !Path::new(target).parent().unwrap().exists(),
+        "the install removes its target directory and the private directory around it: {target}"
     );
     assert_eq!(
         read(&sandbox.home().join(".local/bin/story")),

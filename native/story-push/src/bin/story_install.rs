@@ -1,5 +1,6 @@
 use std::{
     fs, io,
+    os::unix::fs::DirBuilderExt,
     path::{Path, PathBuf},
     process::{Command, ExitCode, Stdio},
     time::{SystemTime, UNIX_EPOCH},
@@ -105,14 +106,19 @@ impl Step {
             Step::Build { crate_dir } => {
                 // A shared target directory can hold a newer build of an older release: exported
                 // files carry the commit time, so cargo would judge that build fresh.
-                let target = std::env::temp_dir().join(format!(
-                    "story-install-target-{}-{}",
+                let scratch = std::env::temp_dir().join(format!(
+                    "story-install-{}-{}",
                     std::process::id(),
                     SystemTime::now()
                         .duration_since(UNIX_EPOCH)
                         .unwrap_or_default()
                         .as_nanos()
                 ));
+                fs::DirBuilder::new()
+                    .mode(0o700)
+                    .create(&scratch)
+                    .map_err(|e| format!("could not create {}: {e}", scratch.display()))?;
+                let target = scratch.join("target");
                 let status = Command::new("cargo")
                     .arg("install")
                     .arg("--path")
@@ -122,7 +128,7 @@ impl Step {
                     .arg("--target-dir")
                     .arg(&target)
                     .status();
-                let _ = fs::remove_dir_all(&target);
+                let _ = fs::remove_dir_all(&scratch);
                 let status = status.map_err(|e| format!("could not start cargo: {e}"))?;
                 if status.success() {
                     Ok(())
