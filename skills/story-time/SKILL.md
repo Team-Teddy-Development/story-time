@@ -62,7 +62,7 @@ The **principle-invest** skill holds the quality bar all of them apply.
 
 ## The `story` tool
 
-Use installed Rust `story` for `init`, `push`, `adopt preview`, `plan`, `config`, `show`, `list`, `secret`, `note`, `machine`, `new`, `table`, and `metrics`.
+Use installed Rust `story` for `init`, `push`, `adopt preview`, `plan`, `config`, `show`, `list`, `stats`, `secret`, `note`, `machine`, `new`, `table`, and `metrics`.
 The skill installer copies skills only; install the executable separately.
 Read `.story-time/settings.json` before selecting a tracker. Install the native
 command from the repository root:
@@ -72,7 +72,7 @@ cargo install --path native/story-push --locked
 ```
 
 `story push` runs entirely in Rust. Do not invoke the historical Node push
-handler. Planning, `story config`, `story show`, `story list`, `story secret`, `story note`, `story machine`, `story new`, `story table`, and `story metrics` also run entirely in Rust. Other commands
+handler. Planning, `story config`, `story show`, `story list`, `story stats`, `story secret`, `story note`, `story machine`, `story new`, `story table`, and `story metrics` also run entirely in Rust. Other commands
 still use Node 20+.
 Set `STORY_TIME_LEGACY_CLI` to
 this skill's absolute `scripts/story.mjs` path, or configure `legacyCli` in
@@ -103,7 +103,7 @@ part of either Rust push execution path.
 | `story set <id> key=value... [--note N]` | Update fields with a changelog entry. `status=ready` is lint-gated |
 | `story note <id> "why"` | Log a prose edit (sections) in the changelog. Native Rust |
 | `story split <id> --from children.json` | Split into children atomically. A failure rolls everything back |
-| `story stats` | Counts, points, unestimated and stale stories |
+| `story stats [--stale-days 30] [--json]` | Counts, points, unestimated and stale stories. Native Rust; read-only |
 | `story export <id> [--format github\|ado\|markdown] [--command]` | Copy-paste card for the tracker, or the `gh` / `az boards` command that creates it |
 | `story push <id...> \| --all [--dry-run]` | Create or update items in GitHub, ADO, or Gitea. Native Rust; refuses when `sync` is `off` |
 | `story judge [id...]` | Judgement calls: need vs. solution, real benefit, testable criteria, type, size, split pattern. Jev with a key, code heuristics without |
