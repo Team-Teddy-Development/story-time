@@ -6,6 +6,7 @@ pub mod init;
 mod lenient_story;
 pub mod list;
 pub mod planning;
+pub mod secret;
 pub mod show;
 pub mod story;
 

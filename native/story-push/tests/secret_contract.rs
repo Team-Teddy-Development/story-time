@@ -98,12 +98,11 @@ impl Sandbox {
             .stderr(Stdio::piped())
             .spawn()
             .unwrap();
-        child
-            .stdin
-            .take()
-            .unwrap()
-            .write_all(case.stdin.as_bytes())
-            .unwrap();
+        let written = child.stdin.take().unwrap().write_all(case.stdin.as_bytes());
+        // A command that rejects its arguments exits without reading stdin.
+        if let Err(e) = written {
+            assert_eq!(e.kind(), std::io::ErrorKind::BrokenPipe);
+        }
         child.wait_with_output().unwrap()
     }
     /// Runs Node and then native on identical fixtures; requires equal stdout, stderr, exit code, and resulting tree.
