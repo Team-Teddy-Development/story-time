@@ -34,7 +34,7 @@ is the report date. When `story metrics` fails, write each figure `unknown`
 and name the failing command and its error in Gaps.
 
 `story list --json` is the only story source. The default scope is every
-story in `story list --json` except `archived` ones; use a narrower scope
+story in `story list --json` except `split` and `archived` ones; use a narrower scope
 (an epic, a sprint) only when the user names it. The report states its scope.
 State the scope as the `story list --json` count and each excluded count
 separately.
