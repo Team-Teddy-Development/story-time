@@ -1,7 +1,7 @@
 use std::{
     collections::BTreeMap,
     fs,
-    os::unix::fs::PermissionsExt,
+    os::unix::fs::{symlink, PermissionsExt},
     path::{Path, PathBuf},
     process::{Command, Output},
     sync::atomic::{AtomicUsize, Ordering},
@@ -10,9 +10,11 @@ use std::{
 static NEXT: AtomicUsize = AtomicUsize::new(0);
 
 type Tree = BTreeMap<PathBuf, (u32, Option<Vec<u8>>)>;
-type Fixture = fn(&Path);
+type Fixture<'a> = &'a dyn Fn(&Path);
 
-struct Sandbox(PathBuf);
+/// The sandbox path, and the PATH native runs with: `/nonexistent` by default, or a directory
+/// holding only `git`, so native can never reach Node.
+struct Sandbox(PathBuf, PathBuf);
 impl Sandbox {
     fn new() -> Self {
         let path = std::env::temp_dir().join(format!(
@@ -20,7 +22,17 @@ impl Sandbox {
             std::process::id(),
             NEXT.fetch_add(1, Ordering::Relaxed)
         ));
-        Self(path)
+        Self(path, PathBuf::from("/nonexistent"))
+    }
+    fn with_git(mut self, bin: &Path) -> Self {
+        fs::create_dir_all(bin).unwrap();
+        let git = std::env::split_paths(&std::env::var_os("PATH").unwrap())
+            .map(|dir| dir.join("git"))
+            .find(|p| p.is_file())
+            .expect("git on PATH");
+        symlink(git, bin.join("git")).unwrap();
+        self.1 = bin.to_owned();
+        self
     }
     fn rebuild(&self, fixture: Fixture) {
         let _ = fs::remove_dir_all(&self.0);
@@ -49,7 +61,7 @@ impl Sandbox {
     fn run(&self, native: bool, args: &[&str], env: &[(&str, &str)]) -> Output {
         let mut cmd = if native {
             let mut cmd = Command::new(env!("CARGO_BIN_EXE_story"));
-            cmd.env_clear().env("PATH", "/nonexistent");
+            cmd.env_clear().env("PATH", &self.1);
             cmd
         } else {
             let mut cmd = Command::new("node");
@@ -221,7 +233,7 @@ fn splits_a_story_like_node() {
             if json {
                 args.push("--json");
             }
-            let (out, tree) = s.compare(stories, &args, &[], true);
+            let (out, tree) = s.compare(&stories, &args, &[], true);
             assert_eq!(out.status.code(), Some(0), "{args:?}");
             let written = if id == "ST-005" { "ST-020" } else { id };
             let parent = &tree[&PathBuf::from(format!("backlog/{written}.md"))];
@@ -229,7 +241,7 @@ fn splits_a_story_like_node() {
             assert!(text.contains("status: split\n"), "{text}");
         }
     }
-    let (out, tree) = s.compare(stories, &["ST-001", "--from", "two.json"], &[], true);
+    let (out, tree) = s.compare(&stories, &["ST-001", "--from", "two.json"], &[], true);
     assert_eq!(
         String::from_utf8_lossy(&out.stdout),
         "ST-001 split into ST-021, ST-022.\n"
@@ -257,16 +269,111 @@ fn failures_and_rollback_match_node() {
         (&["ST-001", "--from", "badac.json"][..], 1),
         (&["ST-004", "--from", "two.json", "--json"][..], 1),
     ] {
-        let (out, _) = s.compare(stories, args, &[], true);
+        let (out, _) = s.compare(&stories, args, &[], true);
         assert_eq!(out.status.code(), Some(code), "{args:?}");
         assert!(out.stdout.is_empty(), "{args:?} printed to stdout");
     }
-    let (out, tree) = s.compare(stories, &["ST-004", "--from", "full.json"], &[], true);
+    let (out, tree) = s.compare(&stories, &["ST-004", "--from", "full.json"], &[], true);
     assert_eq!(
         String::from_utf8_lossy(&out.stderr),
         "Split failed at \"mark ST-004 split\": Invalid story id: not-valid\n"
     );
     assert!(!tree.contains_key(Path::new("backlog/ST-021.md")));
-    let (out, _) = s.compare(stories, &["ST-001", "--from", "bad.json"], &[], false);
+    let (out, _) = s.compare(&stories, &["ST-001", "--from", "bad.json"], &[], false);
     assert_eq!(out.status.code(), Some(1));
+}
+
+fn git(dir: &Path, args: &[&str]) {
+    let out = Command::new("git")
+        .arg("-C")
+        .arg(dir)
+        .args(args)
+        .env("GIT_CONFIG_NOSYSTEM", "1")
+        .env("GIT_CONFIG_GLOBAL", "/dev/null")
+        .env("GIT_AUTHOR_NAME", "Fixture")
+        .env("GIT_AUTHOR_EMAIL", "fixture@example.invalid")
+        .env("GIT_COMMITTER_NAME", "Fixture")
+        .env("GIT_COMMITTER_EMAIL", "fixture@example.invalid")
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "git {args:?}: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+}
+
+fn copy_tree(from: &Path, to: &Path) {
+    fs::create_dir_all(to).unwrap();
+    fs::set_permissions(to, fs::metadata(from).unwrap().permissions()).unwrap();
+    for entry in fs::read_dir(from).unwrap() {
+        let path = entry.unwrap().path();
+        let target = to.join(path.file_name().unwrap());
+        if path.is_dir() {
+            copy_tree(&path, &target);
+        } else {
+            fs::copy(&path, &target).unwrap();
+        }
+    }
+}
+
+/// main holds ST-001 to ST-090; branch `other` also holds ST-200. The repository is built once
+/// and copied byte for byte before each run, so Node and native see the same git objects.
+#[test]
+fn children_skip_ids_reserved_on_other_branches() {
+    let base = std::env::temp_dir().join(format!(
+        "story-split-git-{}-{}",
+        std::process::id(),
+        NEXT.fetch_add(1, Ordering::Relaxed)
+    ));
+    let template = base.join("template");
+    fs::create_dir_all(template.join("backlog")).unwrap();
+    git(&template, &["init", "-q", "-b", "main"]);
+    for n in 1..=90 {
+        put(
+            &template,
+            &format!("backlog/ST-{n:03}.md"),
+            &format!("---\nid: ST-{n:03}\ntitle: Story {n}\nstatus: ready\n---\n"),
+        );
+    }
+    put(&template, "two.json", CHILDREN[1].1);
+    git(&template, &["add", "-A"]);
+    git(&template, &["commit", "-q", "-m", "main"]);
+    git(&template, &["checkout", "-q", "-b", "other"]);
+    put(
+        &template,
+        "backlog/ST-200.md",
+        "---\nid: ST-200\ntitle: Reserved\nstatus: draft\n---\n",
+    );
+    git(&template, &["add", "-A"]);
+    git(&template, &["commit", "-q", "-m", "other"]);
+    git(&template, &["checkout", "-q", "main"]);
+
+    let s = Sandbox::new().with_git(&base.join("bin"));
+    let fixture = |root: &Path| copy_tree(&template, root);
+    for args in [
+        &["ST-001", "--from", "two.json"][..],
+        &["ST-002", "--from", "two.json", "--json"],
+    ] {
+        let (out, tree) = s.compare(&fixture, args, &[], true);
+        assert_eq!(out.status.code(), Some(0), "{args:?}");
+        assert!(
+            tree.contains_key(Path::new("backlog/ST-201.md")),
+            "{args:?}"
+        );
+        assert!(
+            tree.contains_key(Path::new("backlog/ST-202.md")),
+            "{args:?}"
+        );
+        assert!(
+            !tree.contains_key(Path::new("backlog/ST-091.md")),
+            "{args:?}"
+        );
+    }
+    let (out, _) = s.compare(&fixture, &["ST-001", "--from", "two.json"], &[], true);
+    assert_eq!(
+        String::from_utf8_lossy(&out.stdout),
+        "ST-001 split into ST-201, ST-202.\n"
+    );
+    let _ = fs::remove_dir_all(&base);
 }
