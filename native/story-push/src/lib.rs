@@ -458,8 +458,11 @@ fn plans(ctx: &Context, args: &Args) -> Result<Vec<Planned>, Failure> {
         let closed = story["status"]
             .as_str()
             .is_some_and(|s| ["done", "split", "archived"].contains(&s));
+        let pending = story.get(PENDING_CREATE).is_some_and(|v| !v.is_null());
         let action = if remote.is_some() {
             "update"
+        } else if closed && pending {
+            "reconcile"
         } else if closed {
             "skip"
         } else {
@@ -528,26 +531,41 @@ fn atomic_write(path: &Path, bytes: &[u8]) -> Result<(), String> {
 
 const PENDING_CREATE: &str = "pending_create";
 
-fn step(
-    p: &Planned,
-    gateway: &mut dyn Tracker,
-    date: &str,
-) -> Result<(&'static str, Remote, Vec<u8>), String> {
+type Pushed = (&'static str, Remote, Vec<u8>);
+
+fn step(p: &Planned, gateway: &mut dyn Tracker, date: &str) -> Result<Option<Pushed>, String> {
     if p.action == "update" {
-        return Ok(("update", gateway.update(&p.story)?, p.original.clone()));
+        return Ok(Some((
+            "update",
+            gateway.update(&p.story)?,
+            p.original.clone(),
+        )));
+    }
+    if p.action == "reconcile" {
+        let Some(remote) = gateway.find(&p.story)? else {
+            return Ok(None);
+        };
+        let mut linked = p.story.clone();
+        linked["remote"] = json!(remote.remote_id);
+        gateway.update(&linked)?;
+        return Ok(Some(("link", remote, p.original.clone())));
     }
     if p.story.get(PENDING_CREATE).is_some_and(|v| !v.is_null()) {
         if let Some(remote) = gateway.find(&p.story)? {
-            return Ok(("link", remote, p.original.clone()));
+            return Ok(Some(("link", remote, p.original.clone())));
         }
-        return Ok(("create", gateway.create(&p.story)?, p.original.clone()));
+        return Ok(Some((
+            "create",
+            gateway.create(&p.story)?,
+            p.original.clone(),
+        )));
     }
     unchanged(p, &p.original)?;
     let mut marked = p.story.clone();
     marked[PENDING_CREATE] = json!(date);
     let bytes = story::serialize(&marked)?.into_bytes();
     atomic_write(&p.path, &bytes)?;
-    Ok(("create", gateway.create(&p.story)?, bytes))
+    Ok(Some(("create", gateway.create(&p.story)?, bytes)))
 }
 fn unchanged(p: &Planned, expected: &[u8]) -> Result<(), String> {
     if fs::read(&p.path).map_err(|_| "Could not re-read story.")? != expected {
@@ -561,12 +579,18 @@ fn unchanged(p: &Planned, expected: &[u8]) -> Result<(), String> {
 
 fn execute(plan: &[Planned], gateway: &mut dyn Tracker, date: &str) -> Result<Value, String> {
     let mut remote_results: Vec<(&Planned, &'static str, Remote, Vec<u8>)> = Vec::new();
+    let mut skipped: Vec<String> = plan
+        .iter()
+        .filter(|p| p.action == "skip")
+        .map(|p| p.id.clone())
+        .collect();
     let mut linked = 0;
     let operation = (|| -> Result<(), String> {
         for p in plan.iter().filter(|p| p.action != "skip") {
-            let (action, r, expected) =
-                step(p, gateway, date).map_err(|e| format!("{}: {e}", p.id))?;
-            remote_results.push((p, action, r, expected));
+            match step(p, gateway, date).map_err(|e| format!("{}: {e}", p.id))? {
+                Some((action, r, expected)) => remote_results.push((p, action, r, expected)),
+                None => skipped.push(p.id.clone()),
+            }
         }
         for (p, action, r, expected) in &remote_results {
             unchanged(p, expected)?;
@@ -614,7 +638,7 @@ fn execute(plan: &[Planned], gateway: &mut dyn Tracker, date: &str) -> Result<Va
         return Err(message);
     }
     Ok(
-        json!({"ok":true,"pushed":remote_results.iter().map(|(p,action,r,_)|json!({"id":p.id,"action":action,"remoteId":r.remote_id,"url":r.url})).collect::<Vec<_>>(),"skipped":plan.iter().filter(|p|p.action=="skip").map(|p|p.id.clone()).collect::<Vec<_>>()}),
+        json!({"ok":true,"pushed":remote_results.iter().map(|(p,action,r,_)|json!({"id":p.id,"action":action,"remoteId":r.remote_id,"url":r.url})).collect::<Vec<_>>(),"skipped":skipped}),
     )
 }
 
