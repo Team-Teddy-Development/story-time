@@ -451,10 +451,11 @@ fn a_flag_value_that_starts_with_dashes_is_read_as_node_reads_it() {
         assert!(out.status.success());
         assert!(String::from_utf8_lossy(&out.stdout).contains("github"));
     }
-    same_as_node(
-        &["--config", "--y", "--from", "--x", "--json"],
+    let out = same_as_node(
+        &["--config", "--y/.story-time/settings.json", "--from", "--x"],
         &[("--x", answers)],
     );
+    assert!(String::from_utf8_lossy(&out.stdout).contains("--y/.story-time/settings.json"));
 }
 
 #[test]
