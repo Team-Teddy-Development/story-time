@@ -380,6 +380,10 @@ fn tree(root: &std::path::Path) -> std::collections::BTreeMap<PathBuf, (u32, Vec
 
 fn same_as_node(args: &[&str], fixture: &[(&str, &str)]) -> Output {
     let s = Sandbox::new();
+    let args: Vec<String> = args
+        .iter()
+        .map(|a| a.replace("{sandbox}", s.0.to_str().unwrap()))
+        .collect();
     let build = || {
         for entry in fs::read_dir(&s.0).unwrap() {
             let path = entry.unwrap().path();
@@ -397,7 +401,7 @@ fn same_as_node(args: &[&str], fixture: &[(&str, &str)]) -> Output {
     let node = Command::new("node")
         .arg(legacy())
         .arg("init")
-        .args(args)
+        .args(&args)
         .current_dir(&s.0)
         .env_remove("STORY_TIME_CONFIG")
         .env_remove("STORY_TIME_DIR")
@@ -411,7 +415,7 @@ fn same_as_node(args: &[&str], fixture: &[(&str, &str)]) -> Output {
             .unwrap_or_else(|| env!("CARGO_BIN_EXE_story").into()),
     )
     .arg("init")
-    .args(args)
+    .args(&args)
     .current_dir(&s.0)
     .env_clear()
     .env("PATH", "/nonexistent")
@@ -468,5 +472,20 @@ fn unknown_flags_and_positionals_are_ignored_as_node_ignores_them() {
         &["--unknown"],
     ] {
         same_as_node(args, &[("answers.json", "{}")]);
+    }
+}
+
+#[test]
+fn a_config_outside_story_time_creates_the_metadata_directory_as_node_does() {
+    for target in [
+        "settings.json",
+        "sub/dir/settings.json",
+        "custom/../settings.json",
+        "{sandbox}/abs/settings.json",
+    ] {
+        for args in [&["--config", target][..], &["--config", target, "--json"]] {
+            let out = same_as_node(args, &[]);
+            assert!(out.status.success(), "init {args:?}");
+        }
     }
 }
