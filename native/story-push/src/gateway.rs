@@ -477,6 +477,7 @@ impl Gateway {
                 process,
                 cli,
             } => {
+                let (card, tags) = split_ado_tags(&card)?;
                 let (_, content) = ado_content(&card)?;
                 let mut args = strings(&[
                     "boards",
@@ -493,6 +494,7 @@ impl Gateway {
                 }
                 args.extend(strings(&["--output", "json"]));
                 cli.run(&args, None)?;
+                merge_ado_tags(cli, organization, &id, &tags)?;
                 Ok(ado_remote(organization, project, id))
             }
             Backend::Gitea(gitea) => {
@@ -890,6 +892,150 @@ fn ado_state(story: &Value, process: &str) -> Option<&'static str> {
         (Some(_), _) => Some("Done"),
         _ => None,
     }
+}
+fn split_ado_tags(card: &Value) -> Result<(Value, Vec<String>), String> {
+    let mut card = card.clone();
+    let fields = card["fields"]
+        .as_array_mut()
+        .ok_or("Rendered ADO card has invalid fields.")?;
+    let mut tags = String::new();
+    fields.retain(|field| {
+        if field["ref"] != "System.Tags" {
+            return true;
+        }
+        tags = field["value"].as_str().unwrap_or_default().to_string();
+        false
+    });
+    Ok((card, ado_tag_list(&tags)))
+}
+fn ado_tag_list(tags: &str) -> Vec<String> {
+    tags.split(';')
+        .map(str::trim)
+        .filter(|t| !t.is_empty())
+        .map(String::from)
+        .collect()
+}
+fn read_ado_tags(cli: &Cli, organization: &str, id: &str) -> Result<(u64, Vec<String>), String> {
+    let item = parse_json(&cli.run(
+        &strings(&[
+            "boards",
+            "work-item",
+            "show",
+            "--id",
+            id,
+            "--org",
+            organization,
+            "--fields",
+            "System.Tags",
+            "--output",
+            "json",
+        ]),
+        None,
+    )?)?;
+    let rev = item["rev"]
+        .as_u64()
+        .ok_or("Azure DevOps returned a work item without a revision.")?;
+    Ok((
+        rev,
+        ado_tag_list(item["fields"]["System.Tags"].as_str().unwrap_or_default()),
+    ))
+}
+const ADO_TAG_ATTEMPTS: usize = 5;
+// Applies this push's tag change (story-time tags it adds or drops, judged against its
+// first read) to the latest tags, guarded by the work item revision. A plain
+// `System.Tags=` field update replaces the whole set and would drop a tag that a
+// concurrent push or a person changed after our read.
+fn merge_ado_tags(
+    cli: &Cli,
+    organization: &str,
+    id: &str,
+    wanted: &[String],
+) -> Result<(), String> {
+    let has = |tags: &[String], tag: &str| tags.iter().any(|t| t.eq_ignore_ascii_case(tag));
+    let (mut rev, mut current) = read_ado_tags(cli, organization, id)?;
+    let add: Vec<String> = wanted
+        .iter()
+        .filter(|t| !has(&current, t))
+        .cloned()
+        .collect();
+    let drop: Vec<String> = current
+        .iter()
+        .filter(|t| managed(&t.to_ascii_lowercase(), false) && !has(wanted, t))
+        .cloned()
+        .collect();
+    for _ in 0..ADO_TAG_ATTEMPTS {
+        let mut next: Vec<String> = current.iter().filter(|t| !has(&drop, t)).cloned().collect();
+        for tag in &add {
+            if !has(&next, tag) {
+                next.push(tag.clone());
+            }
+        }
+        if next == current {
+            return Ok(());
+        }
+        let patch = json!([
+            {"op":"test","path":"/rev","value":rev},
+            {"op":"add","path":"/fields/System.Tags","value":next.join("; ")}
+        ]);
+        let written = with_temp_file(&patch.to_string(), |path| {
+            cli.run(
+                &strings(&[
+                    "devops",
+                    "invoke",
+                    "--org",
+                    organization,
+                    "--area",
+                    "wit",
+                    "--resource",
+                    "workItems",
+                    "--route-parameters",
+                    &format!("id={id}"),
+                    "--http-method",
+                    "PATCH",
+                    "--media-type",
+                    "application/json-patch+json",
+                    "--api-version",
+                    "7.1",
+                    "--in-file",
+                    path,
+                    "--output",
+                    "json",
+                ]),
+                None,
+            )
+        });
+        let Err(error) = written else {
+            return Ok(());
+        };
+        let (fresh, tags) = read_ado_tags(cli, organization, id)?;
+        if fresh == rev {
+            return Err(error);
+        }
+        (rev, current) = (fresh, tags);
+    }
+    Err(format!(
+        "Azure DevOps work item {id} kept changing during {ADO_TAG_ATTEMPTS} tag updates; push it again."
+    ))
+}
+fn with_temp_file<T>(text: &str, run: impl FnOnce(&str) -> Result<T, String>) -> Result<T, String> {
+    static NEXT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+    let path = std::env::temp_dir().join(format!(
+        "story-push-{}-{}.json",
+        std::process::id(),
+        NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+    ));
+    let written = fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&path)
+        .and_then(|mut file| file.write_all(text.as_bytes()));
+    if written.is_err() {
+        let _ = fs::remove_file(&path);
+        return Err("Could not write the tracker request file.".into());
+    }
+    let result = run(&path.to_string_lossy());
+    let _ = fs::remove_file(&path);
+    result
 }
 fn encode_component(value: &str) -> String {
     let mut out = String::new();
@@ -1596,6 +1742,7 @@ mod tests {
                         _=>{}
                     }
                 } else if args.iter().any(|s|s=="create") && args.first().map(String::as_str)==Some("boards") { println!("{{\"id\":12}}"); }
+                else if args.get(2).map(String::as_str)==Some("show") { println!("{{\"id\":12,\"rev\":3,\"fields\":{{\"System.Tags\":\"story-time; ST-001; team; spike\"}}}}"); }
                 else if args.get(1).map(String::as_str)==Some("query") { println!("[{{\"id\":12,\"fields\":{{\"System.Title\":\"ST-001: Native tracker\"}}}},{{\"id\":15,\"fields\":{{\"System.Title\":\"ST-0011: Other\"}}}}]"); }
             }
         "#;
@@ -1734,6 +1881,12 @@ mod tests {
         );
         assert!(calls.contains("\"--state\", \"Closed\""));
         assert!(calls.contains("\"--state\", \"Removed\""));
+        assert!(calls.contains("\"show\", \"--id\", \"12\""));
+        assert!(calls.contains("\"--media-type\", \"application/json-patch+json\""));
+        assert!(calls
+            .lines()
+            .filter(|l| l.contains("\"update\""))
+            .all(|l| !l.contains("System.Tags=")));
         assert!(calls.contains("\"delete\", \"--id\", \"12\""));
         assert!(calls.contains("\"--yes\""));
         assert!(!calls.contains("private-cli-token"));
