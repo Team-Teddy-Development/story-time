@@ -1,5 +1,5 @@
 //! Stories read the way the Node CLI's `parseStory` reads them, which is more lenient than
-//! [`crate::story::parse`]: read commands (`show`, `list`) must match Node byte for byte,
+//! [`crate::story::parse`]: `show`, `list`, and `push` must read every file Node reads,
 //! including for files the strict parser rejects.
 
 use crate::{config::array_index, js_space};
@@ -61,6 +61,40 @@ impl Js {
                 .collect::<Vec<_>>()
                 .join(","),
             Js::Obj(_) => "[object Object]".into(),
+        }
+    }
+
+    /// The value as JSON data, with undefined as null and integral numbers as integers.
+    pub(crate) fn to_value(&self) -> serde_json::Value {
+        use serde_json::Value;
+        match self {
+            Js::Undefined => Value::Null,
+            Js::Bool(b) => Value::Bool(*b),
+            Js::Num(n) if n.fract() == 0.0 && n.abs() <= 9_007_199_254_740_991.0 => {
+                Value::from(*n as i64)
+            }
+            Js::Num(n) => serde_json::Number::from_f64(*n).map_or(Value::Null, Value::Number),
+            Js::Str(s) => Value::String(s.clone()),
+            Js::Arr(items) => Value::Array(items.iter().map(Js::to_value).collect()),
+            Js::Obj(entries) => Value::Object(
+                ordered(entries)
+                    .into_iter()
+                    .map(|(k, v)| (k.clone(), v.to_value()))
+                    .collect(),
+            ),
+        }
+    }
+
+    /// Equal as JavaScript data, where the order of an object's properties does not matter.
+    pub(crate) fn same(&self, other: &Js) -> bool {
+        match (self, other) {
+            (Js::Obj(a), Js::Obj(b)) => {
+                a.len() == b.len() && a.iter().all(|(k, v)| v.same(other.get(k)))
+            }
+            (Js::Arr(a), Js::Arr(b)) => {
+                a.len() == b.len() && a.iter().zip(b).all(|(x, y)| x.same(y))
+            }
+            _ => self == other,
         }
     }
 
@@ -189,6 +223,12 @@ fn lines(text: &str) -> Vec<&str> {
 
 /// Node's `parseStory`: frontmatter fields, then a `sections` object.
 pub(crate) fn parse(text: &str) -> Result<Js, String> {
+    parse_noting_drops(text).map(|(story, _)| story)
+}
+
+/// [`parse`], plus a description of each piece of text the result leaves out, which a
+/// rewrite of the story from the result would lose.
+pub(crate) fn parse_noting_drops(text: &str) -> Result<(Js, Vec<String>), String> {
     const MISSING: &str = "Story is missing YAML frontmatter (--- ... ---)";
     let start = ["---\r\n", "---\n"]
         .iter()
@@ -212,6 +252,7 @@ pub(crate) fn parse(text: &str) -> Result<Js, String> {
     body = body.strip_prefix('\n').unwrap_or(body);
 
     let mut story = Vec::new();
+    let mut dropped = Vec::new();
     for line in lines(&text[start..end]) {
         if trim(line).is_empty() || trim_start(line).starts_with('#') {
             continue;
@@ -229,7 +270,13 @@ pub(crate) fn parse(text: &str) -> Result<Js, String> {
         if raw.contains(line_terminator) {
             return Err(unsupported());
         }
-        Js::set(&mut story, key, value(strip_comment(raw))?);
+        let value = value(strip_comment(raw))?;
+        if story.iter().any(|(k, _)| k == key) {
+            dropped.push(format!("duplicate frontmatter key {key}"));
+        } else if matches!(key, "sections" | "__proto__") {
+            dropped.push(format!("frontmatter key {key}"));
+        }
+        Js::set(&mut story, key, value);
     }
 
     let mut sections = Vec::new();
@@ -244,10 +291,17 @@ pub(crate) fn parse(text: &str) -> Result<Js, String> {
                     Js::Str(trim(&buffer.join("\n")).into()),
                 );
             }
+            if name == "__proto__" {
+                dropped.push("section __proto__".into());
+            } else if sections.iter().any(|(k, _)| k == name) {
+                dropped.push(format!("duplicate section {name}"));
+            }
             current = Some(name);
             buffer.clear();
         } else if current.is_some() {
             buffer.push(line);
+        } else if !trim(line).is_empty() && !dropped.iter().any(|d| d == PREAMBLE) {
+            dropped.push(PREAMBLE.into());
         }
     }
     if let Some(name) = current {
@@ -258,8 +312,10 @@ pub(crate) fn parse(text: &str) -> Result<Js, String> {
         );
     }
     Js::set(&mut story, "sections", Js::Obj(sections));
-    Ok(Js::Obj(story))
+    Ok((Js::Obj(story), dropped))
 }
+
+const PREAMBLE: &str = "text before the first section";
 
 /// The name `/^##\s+(.+?)\s*$/` captures, if the line is a heading.
 fn heading(line: &str) -> Option<&str> {
