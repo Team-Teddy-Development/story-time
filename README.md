@@ -56,7 +56,7 @@ of them.
 ## Install
 
 Native `story init`, `story push`, `story adopt preview`, `story plan`,
-`story config`, `story show`, `story list`, `story secret`, `story machine`, `story table`, and `story metrics` require Rust and Cargo. Other commands still require Node 20+ and use the
+`story config`, `story show`, `story list`, `story secret`, `story note`, `story machine`, `story table`, and `story metrics` require Rust and Cargo. Other commands still require Node 20+ and use the
 existing dependency-free Node CLI.
 
 To install a release on a machine in one step, run this from the repository root:

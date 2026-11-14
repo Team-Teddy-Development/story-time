@@ -1,9 +1,9 @@
-//! `story list`: the read side of the backlog that later read commands share.
+//! `story list`, and the filesystem story repository that the other story commands share.
 
 use crate::{
     config::{self, Flags},
-    lenient_story::Js,
-    table, Failure,
+    lenient_story::{self, Js},
+    table, valid_id, Failure,
 };
 use std::{
     fs,
@@ -153,4 +153,31 @@ pub(crate) fn backlog_dir(
         },
     };
     config::resolve(&chosen)
+}
+
+/// `FileSystemStoryRepository.get(id)`: the parsed `<dir>/<id>.md`, or `None` when it is absent.
+pub(crate) fn get(dir: &Path, id: &str) -> Result<Option<Js>, String> {
+    if !valid_id(id) {
+        return Err(format!("Invalid story id: {id}"));
+    }
+    match fs::read(dir.join(format!("{id}.md"))) {
+        Ok(bytes) => lenient_story::parse(&String::from_utf8_lossy(&bytes)).map(Some),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(e) => Err(e.to_string()),
+    }
+}
+
+/// `FileSystemStoryRepository.save(story)`: `<dir>/<story.id>.md`, written to a temporary file
+/// and renamed into place, so the file takes the default mode the way Node's `writeFile` does.
+pub(crate) fn save(dir: &Path, story: &Js) -> Result<(), String> {
+    let id = match story.get("id") {
+        Js::Str(id) if valid_id(id) => id,
+        id => return Err(format!("Invalid story id: {}", id.string())),
+    };
+    let target = dir.join(format!("{id}.md"));
+    let tmp = dir.join(format!("{id}.md.{}.tmp", std::process::id()));
+    fs::create_dir_all(dir)
+        .and_then(|()| fs::write(&tmp, lenient_story::serialize(story)))
+        .and_then(|()| fs::rename(&tmp, &target))
+        .map_err(|e| format!("{}: {e}", target.display()))
 }

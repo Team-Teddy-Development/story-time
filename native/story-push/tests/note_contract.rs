@@ -166,7 +166,11 @@ fn put(root: &Path, relative: &str, text: &str) {
 
 fn stories(root: &Path) {
     put(root, "backlog/ST-001.md", RICH);
-    put(root, "backlog/ST-002.md", &RICH.replace('\n', "\r\n"));
+    put(
+        root,
+        "backlog/ST-002.md",
+        &RICH.replace("ST-001", "ST-002").replace('\n', "\r\n"),
+    );
     put(
         root,
         "backlog/PAY-7.md",
