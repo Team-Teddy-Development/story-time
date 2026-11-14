@@ -1125,7 +1125,7 @@ fn story_update_refusals_carry_their_codes_and_change_nothing_unintended() {
     );
     let sha = sha256(&fixture, "ST-002");
     let mut server = fixture.writer();
-    let mut refuse = |server: &mut Server, arguments: Value| -> Value {
+    let refuse = |server: &mut Server, arguments: Value| -> Value {
         let before = fixture.snapshot();
         let result = server.tool("story_update", arguments);
         assert_eq!(fixture.snapshot(), before);

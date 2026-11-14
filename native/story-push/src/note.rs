@@ -2,7 +2,7 @@
 
 use crate::{
     config::{self, Flags},
-    lenient_story::{append_changelog, trim},
+    lenient_story::{append_changelog, trim, Js},
     list, Failure,
 };
 use chrono::Utc;
@@ -23,16 +23,28 @@ pub fn run(args: &[String]) -> Result<String, Failure> {
         }
     };
     let note = words.join(" ");
-    let note = trim(&note);
-    if note.is_empty() {
+    if trim(&note).is_empty() {
         return Err("A note is required.".into());
     }
     let story = list::get(&dir, id)?.ok_or_else(|| format!("Story {id} not found."))?;
-    let next = append_changelog(&story, note, &Utc::now().format("%Y-%m-%d").to_string());
+    let next = append(&story, &note)?;
     list::save(&dir, &next)?;
     Ok(if flags.has("json") {
         format!("{}\n", next.json())
     } else {
         format!("{} noted.\n", next.get("id").string())
     })
+}
+
+/// The story with the trimmed note as one changelog line dated today.
+pub(crate) fn append(story: &Js, note: &str) -> Result<Js, String> {
+    let note = trim(note);
+    if note.is_empty() {
+        return Err("A note is required.".into());
+    }
+    Ok(append_changelog(
+        story,
+        note,
+        &Utc::now().format("%Y-%m-%d").to_string(),
+    ))
 }

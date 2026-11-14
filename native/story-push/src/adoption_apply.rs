@@ -226,11 +226,17 @@ fn resolve_state(state: &Path, root: &Path) -> Result<PathBuf, Stop> {
     Ok(resolved)
 }
 
-// The OS releases this exclusive lock when the holder exits, so a crash never leaves a stale lock.
+/// The repository write lock that adoption and the MCP write tools share. The OS releases this
+/// exclusive lock when the holder exits, so a crash never leaves a stale lock.
+pub(crate) fn lock_repository(root: &Path) -> Result<File, TryLockError> {
+    let file = File::open(root).map_err(TryLockError::Error)?;
+    file.try_lock()?;
+    Ok(file)
+}
+
 fn lock(root: &Path) -> Result<File, Stop> {
-    let file = File::open(root).map_err(io("lock_unavailable", root))?;
-    match file.try_lock() {
-        Ok(()) => Ok(file),
+    match lock_repository(root) {
+        Ok(file) => Ok(file),
         Err(TryLockError::WouldBlock) => Err(conflict("lock_held", root.display().to_string(), "Another adoption process holds the repository lock. Wait for it to exit, then rerun the command; the journal resumes or reverses its work.")),
         Err(TryLockError::Error(e)) => Err(io("lock_unavailable", root)(e)),
     }
