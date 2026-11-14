@@ -1003,6 +1003,25 @@ fn story_update(server: &Server, args: &Map<String, Value>) -> Result<Value, Too
         }
         return Err(conflict(id, expected, &before));
     }
+    if wanted
+        .iter()
+        .any(|(key, value)| *key == "status" && value.same(&Js::Str("done".into())))
+    {
+        let gaps = acceptance_gaps(&current);
+        if !gaps.is_empty() {
+            return Err(ToolError {
+                code: "lifecycle_refused",
+                message: format!("{id} has no acceptance evidence; only story-accept marks done."),
+                details: json!({
+                    "id": id,
+                    "findings": gaps
+                        .iter()
+                        .map(|(rule, message)| json!({"rule": rule, "message": message}))
+                        .collect::<Vec<_>>(),
+                }),
+            });
+        }
+    }
     let note = args.get("note").and_then(Value::as_str);
     let change = set::apply(&current, &changes, note, false, &repo.dir, &repo.root.path).map_err(
         |refusal| match refusal {
@@ -1036,6 +1055,39 @@ fn story_update(server: &Server, args: &Map<String, Value>) -> Result<Value, Too
         fields,
         Some(change.line),
     ))
+}
+
+/// What `story-accept` leaves behind that a story still lacks: every criterion checkbox ticked
+/// and a non-empty Evidence section.
+fn acceptance_gaps(story: &Js) -> Vec<(&'static str, String)> {
+    let mut gaps = Vec::new();
+    let boxes: Vec<bool> = lint::criteria(story)
+        .into_iter()
+        .filter_map(|(ticked, _)| ticked)
+        .collect();
+    let open = boxes.iter().filter(|ticked| !**ticked).count();
+    if boxes.is_empty() || open > 0 {
+        let message = if boxes.is_empty() {
+            "No acceptance criterion has a checkbox to tick.".to_owned()
+        } else {
+            format!(
+                "{open} of {} acceptance criteria are not ticked.",
+                boxes.len()
+            )
+        };
+        gaps.push(("accept.criteria_ticked", message));
+    }
+    let evidence = match story.get("sections").get("Evidence") {
+        Js::Undefined => String::new(),
+        v => v.string(),
+    };
+    if lenient_story::trim(&evidence).is_empty() {
+        gaps.push((
+            "accept.evidence_present",
+            "The ## Evidence section is missing or empty.".to_owned(),
+        ));
+    }
+    gaps
 }
 
 fn story_note(server: &Server, args: &Map<String, Value>) -> Result<Value, ToolError> {
@@ -1319,7 +1371,7 @@ const TOOLS: [Tool; 7] = [
             destructive: true,
             idempotent: true,
         },
-        description: "Set story fields as `story set` does, given the SHA-256 from story_show. Writes the local file only; publish.next names the push step.",
+        description: "Set story fields as `story set` does, given the SHA-256 from story_show. Refuses status=done until every criterion is ticked and ## Evidence is filled, as story-accept leaves it. Writes the local file only; publish.next names the push step.",
         fields: &[
             REPOSITORY,
             ID,

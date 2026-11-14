@@ -1221,6 +1221,93 @@ fn story_update_refusals_carry_their_codes_and_change_nothing_unintended() {
     server.finish();
 }
 
+fn accepting(kind: &str, criteria: &str, evidence: Option<&str>) -> String {
+    let heading = if kind == "spike" {
+        "Exit Criteria"
+    } else {
+        "Acceptance Criteria"
+    };
+    let evidence = evidence
+        .map(|e| format!("\n## Evidence\n{e}\n"))
+        .unwrap_or_default();
+    format!(
+        "---\nid: ST-009\ntitle: Nearly done\nstatus: in-progress\ntype: {kind}\nsize: 2\ndepends_on: []\ncreated: 2026-11-14\nupdated: 2026-11-14\n---\n\n## Story\nAs a planner, I want proof, so that done means accepted.\n\n## {heading}\n{criteria}\n{evidence}"
+    )
+}
+
+#[test]
+fn story_update_refuses_done_until_every_criterion_is_ticked_and_evidence_is_recorded() {
+    let ticked =
+        "- [x] Given one, when run, then it passes\n- [X] Given two, when run, then it passes";
+    let unticked =
+        "- [x] Given one, when run, then it passes\n- [ ] Given two, when run, then it passes";
+    for (criteria, evidence, rules) in [
+        (
+            unticked,
+            Some("cargo test passed"),
+            vec!["accept.criteria_ticked"],
+        ),
+        (ticked, Some("  \n\t"), vec!["accept.evidence_present"]),
+        (ticked, None, vec!["accept.evidence_present"]),
+        (
+            unticked,
+            None,
+            vec!["accept.criteria_ticked", "accept.evidence_present"],
+        ),
+    ] {
+        let fixture = Fixture::new().with_stories(1);
+        fixture.write("backlog/ST-009.md", &accepting("story", criteria, evidence));
+        let sha = sha256(&fixture, "ST-009");
+        let mut server = fixture.writer();
+        let before = fixture.snapshot();
+        let result = server.tool(
+            "story_update",
+            json!({"id": "ST-009", "expected_sha256": sha, "set": {"status": "done"}}),
+        );
+        assert_eq!(fixture.snapshot(), before, "{criteria} {evidence:?}");
+        let error = tool_error(&result).clone();
+        server.finish();
+        assert_eq!(error["code"], "lifecycle_refused", "{error}");
+        assert_eq!(error["details"]["id"], "ST-009");
+        let findings = error["details"]["findings"].as_array().unwrap();
+        let found: Vec<&str> = findings
+            .iter()
+            .map(|f| f["rule"].as_str().unwrap())
+            .collect();
+        assert_eq!(found, rules, "{error}");
+        assert!(findings
+            .iter()
+            .all(|f| !f["message"].as_str().unwrap().is_empty()));
+    }
+
+    for kind in ["story", "spike"] {
+        let fixture = Fixture::new().with_stories(1);
+        fixture.write(
+            "backlog/ST-009.md",
+            &accepting(kind, ticked, Some("cargo test: 2 passed")),
+        );
+        let sha = sha256(&fixture, "ST-009");
+        let mut server = fixture.writer();
+        let schemas = output_schemas(&mut server);
+        let result = server.tool(
+            "story_update",
+            json!({"id": "ST-009", "expected_sha256": sha, "set": {"status": "done"}, "note": "Accepted"}),
+        );
+        let content = structured(&result).clone();
+        server.finish();
+        conforms(&schemas["story_update"], &content, "story_update").unwrap();
+        assert_eq!(content["status"], "updated");
+        assert_eq!(content["story"]["status"], "done");
+        assert_eq!(content["sha256_before"], sha);
+        assert_eq!(content["sha256_after"], sha256(&fixture, "ST-009"));
+        assert_eq!(content["audit"]["operation"], "story_update");
+        assert_eq!(content["audit"]["id"], "ST-009");
+        assert_eq!(content["audit"]["fields"], json!(["status"]));
+        assert_eq!(content["audit"]["changelog"], "set status=done — Accepted");
+        assert!(fixture.read("backlog/ST-009.md").contains("status: done\n"));
+    }
+}
+
 #[test]
 fn story_note_appends_what_story_note_appends_and_a_stale_hash_is_a_conflict() {
     let by_cli = Fixture::new().with_stories(2);

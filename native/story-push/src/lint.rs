@@ -214,6 +214,11 @@ fn statement(s: &Js) -> String {
 
 /// `acceptanceCriteria(story)`: the item texts of Acceptance Criteria, else Exit Criteria.
 pub(crate) fn acceptance_criteria(s: &Js) -> Vec<String> {
+    criteria(s).into_iter().map(|(_, text)| text).collect()
+}
+
+/// Each criterion item with its checkbox: `Some(true)` ticked, `Some(false)` open, `None` none.
+pub(crate) fn criteria(s: &Js) -> Vec<(Option<bool>, String)> {
     let raw = match section(s, "Acceptance Criteria") {
         Js::Undefined => match section(s, "Exit Criteria") {
             Js::Undefined => String::new(),
@@ -224,7 +229,7 @@ pub(crate) fn acceptance_criteria(s: &Js) -> Vec<String> {
     lines(&raw)
         .into_iter()
         .filter_map(|line| LIST_ITEM.captures(line))
-        .map(|m| trim(&m[2]).to_owned())
+        .map(|m| (m.get(1).map(|b| b.as_str() != " "), trim(&m[2]).to_owned()))
         .collect()
 }
 
