@@ -2,6 +2,7 @@
 //! marks the parent split as a saga, removing the children it wrote when a later step fails.
 
 use crate::{
+    adoption_apply,
     config::{self, js_string, truthy, Flags},
     lenient_story::{append_changelog, Js},
     list,
@@ -35,6 +36,7 @@ pub fn run(args: &[String]) -> Result<String, Failure> {
     })?;
     let specs: Value =
         serde_json::from_str(&String::from_utf8_lossy(&text)).map_err(|e| e.to_string())?;
+    let _lock = adoption_apply::lock_for_write(&loaded.root)?;
     let child_ids = split(&dir, id, &specs, &Utc::now().format("%Y-%m-%d").to_string())?;
     Ok(if flags.has("json") {
         let ids = child_ids.iter().map(|c| Js::Str(c.clone())).collect();

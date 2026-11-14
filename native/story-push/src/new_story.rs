@@ -2,6 +2,7 @@
 //! Node, it never contacts a tracker; `story push` publishes the story afterwards.
 
 use crate::{
+    adoption_apply,
     config::{self, Flags},
     js_number,
     lenient_story::{trim, Js},
@@ -26,6 +27,7 @@ pub fn run(args: &[String]) -> Result<String, Failure> {
         None => std::env::var("STORY_TIME_PREFIX")
             .unwrap_or_else(|_| settings["prefix"].as_str().unwrap_or("ST").to_owned()),
     };
+    let _lock = adoption_apply::lock_for_write(&loaded.root)?;
     let story = create(
         &flags,
         &dir,

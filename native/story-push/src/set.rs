@@ -2,6 +2,7 @@
 //! field, gates a move to `ready` on the lint, and logs the change in the changelog.
 
 use crate::{
+    adoption_apply,
     config::{self, Flags},
     js_number,
     lenient_story::{append_changelog, ordered, trim, Js},
@@ -43,6 +44,7 @@ pub fn run(args: &[String]) -> Result<String, Failure> {
             _ => return Err(usage(format!("Expected key=value, got \"{pair}\"."))),
         }
     }
+    let _lock = adoption_apply::lock_for_write(&loaded.root)?;
     let current = list::get(&dir, id)?.ok_or_else(|| format!("Story {id} not found."))?;
     let note = flags.value("note");
     let change = apply(

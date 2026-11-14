@@ -1,6 +1,7 @@
 //! `story note <id> "what changed and why"`: log a prose edit in the story's changelog.
 
 use crate::{
+    adoption_apply,
     config::{self, Flags},
     lenient_story::{append_changelog, trim, Js},
     list, Failure,
@@ -26,6 +27,7 @@ pub fn run(args: &[String]) -> Result<String, Failure> {
     if trim(&note).is_empty() {
         return Err("A note is required.".into());
     }
+    let _lock = adoption_apply::lock_for_write(&loaded.root)?;
     let story = list::get(&dir, id)?.ok_or_else(|| format!("Story {id} not found."))?;
     let next = append(&story, &note)?;
     list::save(&dir, &next)?;
