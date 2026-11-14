@@ -148,18 +148,6 @@ fn parse(args: &[String]) -> Result<Args, Failure> {
     Ok(result)
 }
 
-fn env(name: &str) -> Option<String> {
-    std::env::var(name).ok().filter(|s| !s.is_empty())
-}
-fn absolute(path: impl AsRef<Path>) -> Result<PathBuf, String> {
-    let p = path.as_ref();
-    if p.is_absolute() {
-        Ok(p.to_owned())
-    } else {
-        Ok(std::env::current_dir().map_err(|e| e.to_string())?.join(p))
-    }
-}
-
 pub(crate) fn valid_id(s: &str) -> bool {
     let Some((prefix, n)) = s.rsplit_once('-') else {
         return false;
@@ -183,11 +171,7 @@ fn context(args: &Args) -> Result<Context, String> {
     let config =
         config::parse(&loaded.raw).map_err(|e| format!("{}: {e}", loaded.path.display()))?;
     let root = loaded.root;
-    let dir = if let Some(p) = args.dir.clone().or_else(|| env("STORY_TIME_DIR")) {
-        absolute(p)?
-    } else {
-        root.join(config["backlogDir"].as_str().unwrap())
-    };
+    let dir = list::backlog_dir(args.dir.as_deref(), &root, &config)?;
     Ok(Context { config, root, dir })
 }
 

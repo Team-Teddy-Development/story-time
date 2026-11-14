@@ -23,14 +23,7 @@ pub(crate) fn read(flags: &config::Flags) -> Result<(Value, Js), Failure> {
     let loaded = config::load(flags.value("config"))?;
     let settings =
         config::parse(&loaded.raw).map_err(|e| format!("{}: {e}", loaded.path.display()))?;
-    let dir = match flags
-        .value("dir")
-        .map(str::to_owned)
-        .or_else(|| std::env::var("STORY_TIME_DIR").ok())
-    {
-        Some(dir) => config::resolve(Path::new(&dir))?,
-        None => config::resolve(&loaded.root.join(settings["backlogDir"].as_str().unwrap()))?,
-    };
+    let dir = list::backlog_dir(flags.value("dir"), &loaded.root, &settings)?;
     let id = flags.positional.first().cloned().unwrap_or_default();
     let story = require_all(&dir, &[id])?.remove(0);
     Ok((settings, story))

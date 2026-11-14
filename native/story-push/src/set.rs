@@ -29,7 +29,7 @@ pub fn run(args: &[String]) -> Result<String, Failure> {
     let loaded = config::load(flags.value("config"))?;
     let settings =
         config::parse(&loaded.raw).map_err(|e| format!("{}: {e}", loaded.path.display()))?;
-    let dir = list::backlog_dir(&flags, &loaded.root, &settings)?;
+    let dir = list::backlog_dir(flags.value("dir"), &loaded.root, &settings)?;
     let (id, pairs) = match flags.positional.split_first() {
         Some((id, pairs)) if !id.is_empty() && !pairs.is_empty() => (id, pairs),
         _ => return Err(usage("Usage: story set <id> key=value...".into())),

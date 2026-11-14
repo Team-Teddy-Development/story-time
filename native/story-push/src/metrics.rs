@@ -1,6 +1,6 @@
 //! `story metrics --from YYYY-MM-DD --to YYYY-MM-DD [--json]`: read-only delivery figures from changelog status events.
 
-use crate::{config, lenient_story, Failure};
+use crate::{config, lenient_story, list, Failure};
 use chrono::NaiveDate;
 use serde_json::{json, Value};
 use std::{fs, path::Path};
@@ -39,14 +39,7 @@ pub fn run(args: &[String]) -> Result<String, Failure> {
     let loaded = config::load(flags.value("config"))?;
     let settings =
         config::parse(&loaded.raw).map_err(|e| format!("{}: {e}", loaded.path.display()))?;
-    let dir = match flags
-        .value("dir")
-        .map(str::to_owned)
-        .or_else(|| std::env::var("STORY_TIME_DIR").ok())
-    {
-        Some(dir) => config::resolve(Path::new(&dir))?,
-        None => config::resolve(&loaded.root.join(settings["backlogDir"].as_str().unwrap()))?,
-    };
+    let dir = list::backlog_dir(flags.value("dir"), &loaded.root, &settings)?;
     let report = report(&histories(&dir)?, from, to);
     Ok(if flags.has("json") {
         format!("{}\n", serde_json::to_string_pretty(&report).unwrap())

@@ -17,6 +17,14 @@ const COMMANDS: &[&[&str]] = &[
     &["push", "--all", "--dry-run", "--json"],
 ];
 
+/// The sandbox, the trailing arguments, the environment, and the title the chosen directory holds.
+type Case<'a> = (
+    &'a Sandbox,
+    &'a [&'a str],
+    &'a [(&'a str, &'a str)],
+    &'a str,
+);
+
 struct Sandbox(PathBuf);
 impl Sandbox {
     fn new(backlog_dir: Option<&str>) -> Self {
@@ -86,7 +94,7 @@ impl Drop for Sandbox {
 fn every_command_resolves_the_backlog_directory_like_node() {
     let configured = Sandbox::new(Some("stories"));
     let default = Sandbox::new(None);
-    let cases: &[(&Sandbox, &[&str], &[(&str, &str)], &str)] = &[
+    let cases: &[Case] = &[
         (&default, &[], &[], "From default"),
         (&configured, &[], &[], "From config"),
         (&configured, &[], &[("STORY_TIME_DIR", "env")], "From env"),

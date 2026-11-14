@@ -16,7 +16,7 @@ pub fn run(args: &[String]) -> Result<String, Failure> {
     let loaded = config::load(flags.value("config"))?;
     let settings =
         config::parse(&loaded.raw).map_err(|e| format!("{}: {e}", loaded.path.display()))?;
-    let dir = list::backlog_dir(&flags, &loaded.root, &settings)?;
+    let dir = list::backlog_dir(flags.value("dir"), &loaded.root, &settings)?;
     let stale_days = match flags.value("stale-days") {
         Some(days) if !days.is_empty() => number(days),
         _ => 30.0,

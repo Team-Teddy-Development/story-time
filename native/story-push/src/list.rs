@@ -120,7 +120,7 @@ pub fn run(args: &[String]) -> Result<String, Failure> {
     let loaded = config::load(flags.value("config"))?;
     let settings =
         config::parse(&loaded.raw).map_err(|e| format!("{}: {e}", loaded.path.display()))?;
-    let dir = backlog_dir(&flags, &loaded.root, &settings)?;
+    let dir = backlog_dir(flags.value("dir"), &loaded.root, &settings)?;
     let status = flags.value("status").filter(|s| !s.is_empty());
     let stories = stories(&dir, status)?;
     if flags.has("json") {
@@ -146,11 +146,11 @@ pub fn run(args: &[String]) -> Result<String, Failure> {
 
 /// --dir, else $STORY_TIME_DIR (even when empty), else the config's backlogDir under the project root.
 pub(crate) fn backlog_dir(
-    flags: &Flags,
+    dir: Option<&str>,
     root: &Path,
     settings: &serde_json::Value,
 ) -> Result<PathBuf, String> {
-    let chosen = match flags.value("dir") {
+    let chosen = match dir {
         Some(dir) => PathBuf::from(dir),
         None => match std::env::var_os("STORY_TIME_DIR") {
             Some(dir) => PathBuf::from(dir),
