@@ -64,23 +64,14 @@ fn prepare(root: &Path, setup: fn(&Path)) {
     setup(root);
 }
 
-fn run(root: &Path, node: bool, home: Home, setup: fn(&Path), args: &[&str]) -> Run {
+fn run(root: &Path, home: Home, setup: fn(&Path), args: &[&str]) -> Run {
     prepare(root, setup);
     let args: Vec<String> = args
         .iter()
         .map(|a| a.replace("{root}", &root.display().to_string()))
         .collect();
-    let mut cmd = if node {
-        let mut cmd = Command::new("node");
-        cmd.arg(repo().join("scripts/install.mjs"))
-            .env_clear()
-            .env("PATH", std::env::var_os("PATH").unwrap());
-        cmd
-    } else {
-        let mut cmd = Command::new(env!("CARGO_BIN_EXE_story-install-skills"));
-        cmd.env_clear().env("PATH", "/nonexistent");
-        cmd
-    };
+    let mut cmd = Command::new(env!("CARGO_BIN_EXE_story-install-skills"));
+    cmd.env_clear().env("PATH", "/nonexistent");
     match home {
         Home::Fixture => cmd.env("HOME", root.join("home")),
         Home::Unset => &mut cmd,
@@ -99,7 +90,7 @@ fn repo() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../..")
 }
 
-/// The skills a real install copies, in the sorted order both installers plan them.
+/// The skills a real install copies, in the sorted order the installer plans them.
 fn skills() -> Vec<String> {
     let mut names: Vec<String> = fs::read_dir(repo().join("skills"))
         .unwrap()
@@ -111,7 +102,7 @@ fn skills() -> Vec<String> {
     names
 }
 
-/// The account home both installers fall back to when HOME is unset: the passwd entry, not $HOME.
+/// The account home the installer falls back to when HOME is unset: the passwd entry, not $HOME.
 fn account_home() -> String {
     let probe = fixture_root();
     let uid = fs::metadata(&probe).unwrap().uid().to_string();
@@ -260,8 +251,8 @@ fn expected_tree(before: &Tree, effect: &Effect) -> Tree {
     tree
 }
 
-/// Checks the Rust installer against the values recorded from Node. Until scripts/install.mjs is
-/// removed, Node runs against the same values, which proves they are Node's.
+/// Checks the Rust installer against the values recorded from scripts/install.mjs before its
+/// removal; commit 447aff8 ran Node against these same values.
 fn expect(home: Home, setup: fn(&Path), args: &[&str], want: Want) {
     let root = fixture_root();
     prepare(&root, setup);
@@ -272,30 +263,31 @@ fn expect(home: Home, setup: fn(&Path), args: &[&str], want: Want) {
             .replace("{home}", &account)
     };
     let tree_want = expected_tree(&before, &want.effect);
-    for node in [true, false] {
-        let mut got = run(&root, node, home, setup, args);
-        if !node {
-            got.stdout = as_node_usage(&got.stdout);
-            got.stderr = as_node_usage(&got.stderr);
-        }
-        let who = if node { "node" } else { "native" };
-        assert_eq!(got.stdout, fill(&want.stdout), "{who} stdout for {args:?}");
-        assert_eq!(got.stderr, fill(&want.stderr), "{who} stderr for {args:?}");
-        assert_eq!(got.code, Some(want.code), "{who} exit code for {args:?}");
-        let only = |a: &Tree, b: &Tree| -> Vec<PathBuf> {
-            a.iter()
-                .filter(|(k, v)| b.get(*k) != Some(v))
-                .map(|(k, _)| k.clone())
-                .collect()
-        };
-        assert!(
-            got.tree == tree_want,
-            "{who} tree for {args:?}: unexpected or changed {:?}; missing or changed {:?}",
-            only(&got.tree, &tree_want),
-            only(&tree_want, &got.tree)
-        );
-    }
+    let got = run(&root, home, setup, args);
     fs::remove_dir_all(&root).unwrap();
+    assert_eq!(
+        as_node_usage(&got.stdout),
+        fill(&want.stdout),
+        "stdout for {args:?}"
+    );
+    assert_eq!(
+        as_node_usage(&got.stderr),
+        fill(&want.stderr),
+        "stderr for {args:?}"
+    );
+    assert_eq!(got.code, Some(want.code), "exit code for {args:?}");
+    let only = |a: &Tree, b: &Tree| -> Vec<PathBuf> {
+        a.iter()
+            .filter(|(k, v)| b.get(*k) != Some(v))
+            .map(|(k, _)| k.clone())
+            .collect()
+    };
+    assert!(
+        got.tree == tree_want,
+        "tree for {args:?}: unexpected or changed {:?}; missing or changed {:?}",
+        only(&got.tree, &tree_want),
+        only(&tree_want, &got.tree)
+    );
 }
 
 fn empty(_: &Path) {}
@@ -574,13 +566,7 @@ fn untouched(run: &Run) {
 #[test]
 fn empty_home_never_installs_into_relative_folders() {
     let root = fixture_root();
-    let run = run(
-        &root,
-        false,
-        Home::Empty,
-        empty,
-        &["--agent", "all", "--dry-run"],
-    );
+    let run = run(&root, Home::Empty, empty, &["--agent", "all", "--dry-run"]);
     fs::remove_dir_all(&root).unwrap();
     untouched(&run);
     let text = format!("{}{}", run.stdout, run.stderr);
@@ -602,7 +588,6 @@ fn source_selects_the_skills_folder() {
     let root = fixture_root();
     let run = run(
         &root,
-        false,
         Home::Fixture,
         skills_source,
         &["--agent", "claude", "--source", "release"],
@@ -634,7 +619,7 @@ fn missing_skills_folder_fails_clearly_and_writes_nothing() {
         &["--agent", "codex", "--source", "project", "--dry-run"],
     ] {
         let root = fixture_root();
-        let run = run(&root, false, Home::Fixture, empty, args);
+        let run = run(&root, Home::Fixture, empty, args);
         let missing = if args[3].starts_with('{') {
             root.join("gone/skills")
         } else {

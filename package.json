@@ -8,7 +8,7 @@
   "engines": { "node": ">=20" },
   "scripts": {
     "test": "node scripts/run-tests.mjs",
-    "install:codex": "node scripts/install.mjs --agent codex",
-    "install:claude": "node scripts/install.mjs --agent claude"
+    "install:codex": "cargo run --locked --manifest-path native/story-push/Cargo.toml --bin story-install-skills -- --agent codex",
+    "install:claude": "cargo run --locked --manifest-path native/story-push/Cargo.toml --bin story-install-skills -- --agent claude"
   }
 }

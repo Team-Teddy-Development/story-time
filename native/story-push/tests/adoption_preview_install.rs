@@ -10,12 +10,10 @@ impl Drop for Installation {
 
 #[test]
 fn disposable_skill_install_routes_before_gitea_and_native_commands_need_no_node() {
-    let source = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
     let temp = std::env::temp_dir().join(format!("ST022-installed-{}", std::process::id()));
     fs::create_dir(&temp).unwrap();
     let _cleanup = Installation(temp.clone());
-    let install = Command::new("node")
-        .arg(source.join("scripts/install.mjs"))
+    let install = Command::new(env!("CARGO_BIN_EXE_story-install-skills"))
         .args(["--agent", "codex", "--scope", "project", "--project"])
         .arg(&temp)
         .output()

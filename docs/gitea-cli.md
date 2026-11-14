@@ -101,7 +101,7 @@ The scoped CLI execution chain is Rust throughout. The broader Story Time Rust c
 | Gitea REST API and JSON input/output | External interface and data | Remote service protocol | Live compatibility remains unverified. |
 | `skills/story-time/scripts/story.mjs` and its `src/` tree | JavaScript | Active Story Time CLI, domain logic, adapters, and configuration | Out of delegated scope, not converted, not called by this Rust CLI. |
 | `skills/story-time/scripts/test/`, root `test/`, `scripts/run-tests.mjs` | JavaScript | Existing Story Time test chain | Out of delegated scope, not converted, not run as proof for this CLI. |
-| `scripts/install.mjs` | JavaScript | Existing skill installation entry point | Out of delegated scope, not converted, no Rust binary installation added. |
+| `scripts/install.mjs` | JavaScript | Former skill installation entry point | Removed by ST-109. The Rust binary `story-install-skills` (ST-106, ST-107) replaces it. |
 | `package.json`, skill markdown, JSON fixtures, and repository documentation | Configuration and data | Packaging, agent instructions, test inputs | Not Rust conversion targets by themselves. |
 
 The missing application integration is concrete:
