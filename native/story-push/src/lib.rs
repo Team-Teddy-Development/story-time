@@ -199,6 +199,8 @@ struct Planned {
     original: Vec<u8>,
     story: Value,
     action: &'static str,
+    /// Why linking this story would rewrite its file with less than it holds.
+    loss: Option<String>,
 }
 fn plans(ctx: &Context, args: &Args) -> Result<Vec<Planned>, Failure> {
     let ids = if args.all {
@@ -256,7 +258,9 @@ fn plans(ctx: &Context, args: &Args) -> Result<Vec<Planned>, Failure> {
         let original = fs::read(&path).map_err(|_| format!("Could not read story {id}."))?;
         let text =
             std::str::from_utf8(&original).map_err(|_| format!("Story {id} is not UTF-8."))?;
-        let story = story::parse(text)?;
+        let (parsed, dropped) = lenient_story::parse_noting_drops(text)?;
+        let story = parsed.to_value();
+        let loss = rewrite_loss(&id, &parsed, &story, dropped);
         if story["id"].as_str() != Some(&id) {
             return Err(format!("Story {id} has mismatched frontmatter id.").into());
         }
@@ -282,9 +286,31 @@ fn plans(ctx: &Context, args: &Args) -> Result<Vec<Planned>, Failure> {
             original,
             story,
             action,
+            loss,
         });
     }
     Ok(result)
+}
+
+fn rewrite_loss(
+    id: &str,
+    parsed: &lenient_story::Js,
+    story: &Value,
+    dropped: Vec<String>,
+) -> Option<String> {
+    if !dropped.is_empty() {
+        return Some(format!(
+            "Story {id} has {}, which push would drop when it links the story; move or remove that text, then push again.",
+            dropped.join(", ")
+        ));
+    }
+    match story::serialize(story).and_then(|text| lenient_story::parse(&text)) {
+        Err(e) => Some(format!("Story {id} cannot be rewritten: {e}")),
+        Ok(reread) if !reread.same(parsed) => Some(format!(
+            "Story {id} has frontmatter that push cannot rewrite without changing it."
+        )),
+        Ok(_) => None,
+    }
 }
 fn summary(plan: &[Planned]) -> Value {
     Value::Array(
@@ -392,6 +418,13 @@ fn execute(plan: &[Planned], gateway: &mut dyn Tracker, date: &str) -> Result<Va
         .filter(|p| p.action == "skip")
         .map(|p| p.id.clone())
         .collect();
+    if let Some(loss) = plan
+        .iter()
+        .filter(|p| p.action != "skip")
+        .find_map(|p| p.loss.clone())
+    {
+        return Err(loss);
+    }
     let mut linked = 0;
     let operation = (|| -> Result<(), String> {
         for p in plan.iter().filter(|p| p.action != "skip") {
