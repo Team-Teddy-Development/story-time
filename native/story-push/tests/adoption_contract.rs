@@ -567,7 +567,11 @@ fn legacy_stories_keep_missing_data_explicit_and_terminal_status_unchanged() {
 #[test]
 fn setup_routes_use_the_native_contract_and_init_is_unchanged() {
     let source = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
-    let home = temp("installed");
+    let installed = Project {
+        root: temp("installed"),
+        outside: temp("installed-state"),
+    };
+    let home = installed.root.clone();
     let install = Command::new("node")
         .arg(source.join("scripts/install.mjs"))
         .args(["--agent", "codex", "--scope", "project", "--project"])
@@ -687,7 +691,6 @@ fn setup_routes_use_the_native_contract_and_init_is_unchanged() {
             );
         }
     }
-    fs::remove_dir_all(&home).unwrap();
 }
 
 #[test]
