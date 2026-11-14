@@ -565,6 +565,29 @@ fn legacy_stories_keep_missing_data_explicit_and_terminal_status_unchanged() {
 }
 
 #[test]
+fn legacy_story_with_prose_before_its_first_section_is_preserved_byte_for_byte() {
+    let p = Project::new();
+    p.legacy_config();
+    let story = "---\nid: PAY-001\nstatus: ready\n---\nWritten before sections existed.\n\nSecond paragraph.\n\n## Story\nRetain prose.\n";
+    p.put("work/legacy.md", story);
+    let (out, preview) = p.story_cmd(&["adopt", "preview"], &[]);
+    assert!(out.status.success(), "{preview}");
+    assert_eq!(preview["status"], "preview");
+    assert!(preview["diagnostics"].as_array().unwrap().is_empty());
+    let row = &preview["backlog"]["files"][0];
+    assert_eq!(row["path"], "work/legacy.md");
+    assert_eq!(
+        (&row["id"], &row["status"]),
+        (&json!("PAY-001"), &json!("ready"))
+    );
+    assert_eq!(row["sha256"], sha(story.as_bytes()));
+    let plan = p.plan();
+    let (out, r) = p.adopt("apply", &plan);
+    assert!(out.status.success(), "{r}");
+    assert_eq!(p.read("work/legacy.md"), story.as_bytes());
+}
+
+#[test]
 fn setup_routes_use_the_native_contract_and_init_is_unchanged() {
     let source = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
     let installed = Project {
