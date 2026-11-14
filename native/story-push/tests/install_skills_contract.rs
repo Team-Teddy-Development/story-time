@@ -116,16 +116,9 @@ fn account_home() -> String {
         .expect("account in /etc/passwd")
 }
 
-/// Node's program name, split so the doc check that no live file says to run it ignores this record.
-macro_rules! node_usage_head {
-    () => {
-        concat!("Usage: node ", "scripts/install.mjs")
-    };
-}
-
 /// Node's usage text, recorded from scripts/install.mjs before its removal.
 const NODE_USAGE: &str = concat!(
-    node_usage_head!(),
+    "Usage: node scripts/install.mjs",
     " --agent codex|claude|all [--scope user|project]
                                 [--project DIR] [--codex-home DIR] [--force] [--dry-run] [--uninstall]
 
@@ -146,7 +139,10 @@ const NATIVE_ONLY_USAGE: &str = "
 fn as_node_usage(native: &str) -> String {
     native
         .replace(NATIVE_ONLY_USAGE, "")
-        .replace("Usage: story-install-skills", node_usage_head!())
+        .replace(
+            "Usage: story-install-skills",
+            "Usage: node scripts/install.mjs",
+        )
         .replace(
             &format!("\n{}[", " ".repeat(28)),
             &format!("\n{}[", " ".repeat(32)),
