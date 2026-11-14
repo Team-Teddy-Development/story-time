@@ -130,6 +130,24 @@ If the team keeps its backlog in GitHub Issues, Jira, or Linear, follow
 [backends.md](references/backends.md). The skills stay the same; only the
 storage adapter changes.
 
+## MCP server
+
+Register `story mcp` with your agent. Replace `<repo>` with the repository path. Add `--write` for a server that can change stories.
+
+- Claude Code, read-only: `claude mcp add --transport stdio --scope local story-time -- story mcp --root <repo>`
+- Claude Code, writes: `claude mcp add --transport stdio --scope local story-time -- story mcp --root <repo> --write`. Claude Code asks before each write tool unless it is allowed.
+- Codex, read-only: `codex mcp add story-time -- story mcp --root <repo>`
+- Codex, writes: `codex mcp add story-time -- story mcp --root <repo> --write`
+
+Codex asks before a write only when `default_tools_approval_mode = "writes"` is set. With its default mode, a write ran with no prompt (verified on Codex 0.157.1). `codex mcp add` creates the `[mcp_servers.story-time]` table in `~/.codex/config.toml`. Add the `default_tools_approval_mode` line to that table, or skip `codex mcp add` and write the whole table yourself:
+
+```toml
+[mcp_servers.story-time]
+command = "story"
+args = ["mcp", "--root", "<repo>", "--write"]
+default_tools_approval_mode = "writes"
+```
+
 ## Project config
 
 `.story-time/settings.json` at the project root (committed) records what

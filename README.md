@@ -329,6 +329,45 @@ story secret status          # shows only the last 4 characters
 Use a fine-grained PAT. For GitHub: Issues read/write on the one repo.
 For ADO: Work Items (Read & write), with an expiry date.
 
+## MCP server
+
+`story mcp` serves a repository's stories over MCP on stdio. Register it with your agent. Replace `<repo>` with the repository path. The server is read-only unless you pass `--write`.
+
+Claude Code, read-only:
+
+```sh
+claude mcp add --transport stdio --scope local story-time -- story mcp --root <repo>
+```
+
+Claude Code, with writes:
+
+```sh
+claude mcp add --transport stdio --scope local story-time -- story mcp --root <repo> --write
+```
+
+Claude Code asks before each write tool unless you allow it.
+
+Codex, read-only:
+
+```sh
+codex mcp add story-time -- story mcp --root <repo>
+```
+
+Codex, with writes:
+
+```sh
+codex mcp add story-time -- story mcp --root <repo> --write
+```
+
+Codex asks before a write only when `default_tools_approval_mode = "writes"` is set. With its default mode, a write ran with no prompt (verified on Codex 0.157.1). `codex mcp add` creates the `[mcp_servers.story-time]` table in `~/.codex/config.toml`. Add the `default_tools_approval_mode` line to that table, or skip `codex mcp add` and write the whole table yourself:
+
+```toml
+[mcp_servers.story-time]
+command = "story"
+args = ["mcp", "--root", "<repo>", "--write"]
+default_tools_approval_mode = "writes"
+```
+
 ## The backlog
 
 Stories are markdown files in `./backlog/` of the project you're planning,
