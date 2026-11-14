@@ -19,6 +19,7 @@ export const EXPECTED = [
   'project-discovery',
   'retrospective',
   'release-planning',
+  'project-status',
   'story-pick',
   'story-map',
   'spike',

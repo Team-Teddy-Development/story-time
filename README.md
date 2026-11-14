@@ -31,6 +31,7 @@ script. Here the subject is the story lifecycle, from idea to accepted.
 | `retrospective` | "run a retro" | Revisits every previous improvement action first, then proposes at most three owned actions with the observed problem, proposed change, expected effect, follow-up date, and outcome measure. Writes `docs/retrospectives/<date>.md` and changes no policy; stories go through story-create with approval. |
 | `release-planning` | "plan a release" | Writes `docs/releases/<release>.md`: planned, accepted, and released work kept apart, a rollout and recovery plan, and delivery evidence or a specific handoff. Uses only deployment capabilities the repository or user names and claims no release without evidence. |
 | `agile-metrics` | "what is our cycle time?" | Throughput, WIP, and cycle time for a date window from the native `story metrics` command. Every figure names its source, window, and units; missing history and velocity without a sprint record stay `unknown`. |
+| `project-status` | "project status report" | Writes `docs/status/<date>.md`: accepted, released, blocked, and forecast work kept apart, with risks, decisions, owners, and next actions. Every status claim links to its record (story section, release manifest, `story metrics`, PR); a claim with no record is `unknown`. Changes no story. |
 | `story-pick` | "what's next?" | WSJF-ranked pick, checked against WIP, capacity, dependencies, and risk, with alternatives. |
 | `story-map` | "map this epic" | User story map (backbone → steps → stories) sliced into a walking skeleton and outcome-named releases. |
 | `spike` | "we need to investigate" | A time-boxed, single-question spike with exit criteria, which ends in estimated follow-up stories. |
@@ -47,7 +48,7 @@ story-setup (once) → idea → story-create → acceptance-criteria → story-e
 project-discovery writes a project brief for a project with no direction and hands proposed epics to story-map.
 refinement runs in single-story or backlog mode; backlog-groom is its alias.
 gap-sweep finds work with no story and hands approved rows to story-create.
-sprint-planning consumes ordered ready stories; flow-review reports stuck work; sprint-review closes the sprint; release-planning ships accepted work with evidence; retrospective turns delivery problems into at most three owned actions; agile-metrics reports delivery figures; story-edit applies anywhere.
+sprint-planning consumes ordered ready stories; flow-review reports stuck work; sprint-review closes the sprint; release-planning ships accepted work with evidence; retrospective turns delivery problems into at most three owned actions; agile-metrics reports delivery figures; project-status reports status with a record for every claim; story-edit applies anywhere.
 ```
 
 Every skill depends on `story-time`, which holds the CLI. Install it with any

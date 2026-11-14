@@ -27,6 +27,7 @@ sprint-review records the goal outcome, links feedback, and decides unfinished w
 release-planning writes a release manifest and uses only approved deployment capabilities; it can run before sprint review.
 retrospective revisits previous improvement actions and proposes at most three owned ones; it changes no policy.
 agile-metrics reports throughput, WIP, and cycle time from `story metrics`; missing history stays unknown.
+project-status writes a dated status report; every claim links to its record, and a claim with no record is unknown.
 story-edit changes any story at any stage.
 state-machine and decision-table write checked models that acceptance-criteria and story-kickoff build on.
 ```
@@ -50,6 +51,7 @@ state-machine and decision-table write checked models that acceptance-criteria a
 | "plan a release", "what is in this release?" | **release-planning** skill |
 | "retrospective", "retro", "how do we work better?" | **retrospective** skill |
 | "metrics", "cycle time", "throughput", "velocity" | **agile-metrics** skill |
+| "project status", "status report", "where are we?" | **project-status** skill |
 | "what should I work on next?" | **story-pick** skill |
 | "map out this epic / feature" | **story-map** skill |
 | "we don't know enough to estimate" | **spike** skill |
