@@ -4,6 +4,7 @@ pub mod config;
 pub mod export;
 pub mod gateway;
 pub mod init;
+mod js_number;
 mod lenient_story;
 pub mod list;
 pub mod machine;

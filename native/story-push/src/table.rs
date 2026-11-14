@@ -118,7 +118,7 @@ fn is_scalar(value: &Value) -> bool {
 }
 
 fn stringify(value: &Value) -> String {
-    serde_json::to_string(value).expect("a parsed value serializes")
+    crate::js_number::stringify(value, false)
 }
 
 fn defect(code: &'static str, message: String, extra: Map<String, Value>) -> Defect {

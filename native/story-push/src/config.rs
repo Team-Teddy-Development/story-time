@@ -493,6 +493,7 @@ pub(crate) fn js_string(value: &Value) -> String {
             .collect::<Vec<_>>()
             .join(","),
         Value::Object(_) => "[object Object]".into(),
+        Value::Number(n) => crate::js_number::to_string(n),
         other => other.to_string(),
     }
 }
@@ -538,14 +539,7 @@ pub(crate) fn js_value(value: &Value) -> Value {
             Value::Object(entries.into_iter().collect())
         }
         Value::Array(a) => Value::Array(a.iter().map(js_value).collect()),
-        Value::Number(n) if n.is_f64() => {
-            let f = n.as_f64().unwrap();
-            if f.fract() == 0.0 && f.abs() < 9_007_199_254_740_992.0 {
-                json!(f as i64)
-            } else {
-                value.clone()
-            }
-        }
+        Value::Number(n) if n.is_f64() => crate::js_number::number(n.as_f64().unwrap()),
         _ => value.clone(),
     }
 }

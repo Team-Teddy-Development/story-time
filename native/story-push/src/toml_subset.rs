@@ -3,6 +3,7 @@
 //! `[table]` and `[[array]]` headers. Anything else (dates, floats, dotted keys, multi-line strings)
 //! is rejected with its line number, so a model never parses to something its author did not write.
 
+use crate::js_number;
 use serde_json::{Map, Value};
 use std::collections::HashSet;
 
@@ -237,14 +238,12 @@ impl Parser {
         Ok(match word.as_str() {
             "true" => Value::Bool(true),
             "false" => Value::Bool(false),
-            digits => {
-                let n: f64 = digits.replace('_', "").parse().unwrap_or(f64::NAN);
-                if n.fract() == 0.0 && n.abs() < 9_007_199_254_740_992.0 {
-                    Value::from(n as i64)
-                } else {
-                    Value::from(n)
-                }
-            }
+            digits => js_number::number(
+                digits
+                    .replace('_', "")
+                    .parse()
+                    .expect("word() only matches a signed decimal integer"),
+            ),
         })
     }
 

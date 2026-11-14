@@ -261,21 +261,20 @@ fn check(doc: &Value, name: &str) -> (Option<Machine>, Vec<Defect>) {
         }
     }
 
-    // Grouped by JSON.stringify([from, event, guard ?? null]), in first-seen order.
-    let mut groups: Vec<(String, Value, Value, usize)> = Vec::new();
+    // Grouped by JSON.stringify([from, event, guard ?? null]), in first-seen order, and named by
+    // JSON.parse of that key, so Infinity reads back as null.
+    let mut groups: Vec<(String, usize)> = Vec::new();
     for t in m.transitions.iter().filter(|t| truthy(t.event.as_ref())) {
-        let parts =
-            [&t.from, &t.event, &t.guard].map(|v| js_value(v.as_ref().unwrap_or(&Value::Null)));
-        let key = serde_json::to_string(&parts).expect("a key serializes");
+        let parts = [&t.from, &t.event, &t.guard].map(|v| v.as_ref().unwrap_or(&Value::Null));
+        let key = crate::js_number::stringify(&parts, false);
         match groups.iter_mut().find(|g| g.0 == key) {
-            Some(group) => group.3 += 1,
-            None => {
-                let [from, event, _] = parts;
-                groups.push((key, from, event, 1));
-            }
+            Some(group) => group.1 += 1,
+            None => groups.push((key, 1)),
         }
     }
-    for (_, from, event, count) in groups.into_iter().filter(|g| g.3 > 1) {
+    for (key, count) in groups.into_iter().filter(|g| g.1 > 1) {
+        let [from, event, _]: [Value; 3] =
+            serde_json::from_str(&key).expect("a group key is a JSON triple");
         defects.push(defect(
             "ambiguous",
             format!(
