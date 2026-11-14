@@ -255,11 +255,11 @@ fn edge_values_match_node() {
 #[test]
 fn settings_numbers_echo_as_node_prints_them() {
     for text in [
-        r#"{"prefix":5e-324}"#,
-        r#"{"prefix":-5e-324}"#,
         r#"{"tracker":5e-324}"#,
+        r#"{"tracker":-5e-324}"#,
+        r#"{"sync":5e-324}"#,
         r#"{"sync":-5e-324}"#,
-        r#"{"prefix":1e21}"#,
+        r#"{"tracker":1e21}"#,
     ] {
         let s = Sandbox::new();
         s.write(".story-time/settings.json", text);
