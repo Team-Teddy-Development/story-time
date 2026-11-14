@@ -172,7 +172,7 @@ impl Inventory {
             let parsed = if Path::new(&name).extension().is_some_and(|e| e == "md") {
                 std::str::from_utf8(&bytes)
                     .ok()
-                    .and_then(|text| crate::story::parse(text).ok())
+                    .and_then(|text| crate::story::parse_legacy(text).ok())
             } else {
                 None
             };
