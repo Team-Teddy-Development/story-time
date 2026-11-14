@@ -48,6 +48,25 @@ test('push refuses when sync is off, and calls no tracker CLI', async () => {
   assert.deepEqual((await bin.readState()).calls, []);
 });
 
+test('push --all on an empty backlog plans and pushes nothing, without a tracker credential', async () => {
+  const bin = await makeFakeBin();
+  const dir = await makeTempDir('story-push-empty-');
+  await mkdir(join(dir, '.story-time'), { recursive: true });
+  await writeFile(
+    join(dir, '.story-time', 'settings.json'),
+    JSON.stringify({ tracker: 'gitea', sync: 'ask', gitea: { baseUrl: 'http://127.0.0.1:1', owner: 'o', repo: 'r' } }),
+  );
+  const plan = await story(dir, bin.dir, ['push', '--all', '--dry-run', '--json']);
+  assert.equal(plan.code, 0, plan.stderr);
+  assert.deepEqual(JSON.parse(plan.stdout), { ok: true, plan: [] });
+  const pushed = await story(dir, bin.dir, ['push', '--all']);
+  assert.equal(pushed.code, 0, pushed.stderr);
+  assert.equal(pushed.stdout, 'Nothing to push.\n');
+  const usage = await story(dir, bin.dir, ['push', '--dry-run']);
+  assert.equal(usage.code, 2);
+  assert.match(usage.stderr, /^Usage: story push <id\.\.\.> \| --all \[--dry-run\]$/m);
+});
+
 test('push creates the GitHub issue and links it in the story file', async () => {
   const bin = await makeFakeBin();
   const dir = await project({ ...GITHUB, sync: 'auto' });
