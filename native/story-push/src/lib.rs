@@ -495,10 +495,23 @@ pub fn issues(args: &[String]) -> Result<String, Failure> {
     ))
 }
 
+const PUSH_FLAGS: [&str; 5] = ["all", "dry-run", "json", "config", "dir"];
+
 pub fn push(args: &[String]) -> Result<String, Failure> {
     let flags = config::Flags::parse(args)?;
     let dry = flags.has("dry-run");
     let ctx = context(&flags)?;
+    let usage = |message: String| Failure { code: 2, message };
+    if let Some(name) = flags
+        .names()
+        .iter()
+        .find(|n| !PUSH_FLAGS.contains(&n.as_str()))
+    {
+        return Err(usage(format!("Unknown push flag --{name}.")));
+    }
+    if flags.has("all") && !flags.positional.is_empty() {
+        return Err(usage("Use --all or explicit story IDs, not both.".into()));
+    }
     if ctx.config["sync"] == "off" {
         return Err("Pushing is off for this project (sync: \"off\" in .story-time/settings.json). Use story export for a copyable card, or run the story-setup skill to set sync to \"ask\" or \"auto\".".into());
     }
