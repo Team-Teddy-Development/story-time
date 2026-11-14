@@ -728,6 +728,9 @@ fn days_from_civil(year: i64, month: i64) -> i64 {
 }
 
 #[cfg(test)]
+mod date_fuzz;
+
+#[cfg(test)]
 mod tests {
     use super::*;
 
