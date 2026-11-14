@@ -1,0 +1,55 @@
+name: telemetry-smoke
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+  id-token: write
+jobs:
+  logs:
+    runs-on: ubuntu-latest
+    env:
+      AUDIENCE: https://xanthos.teamteddy.net
+      LOGS_URL: https://xanthos.teamteddy.net/v1/logs
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - run: cargo build --release --locked --manifest-path native/story-push/Cargo.toml
+      - name: Run story commands with log export
+        run: |
+          set -u
+          story="$GITHUB_WORKSPACE/native/story-push/target/release/story"
+          fixture="$(mktemp -d)"
+          mkdir -p "$fixture/backlog"
+          printf -- '---\nid: ST-001\ntitle: Telemetry smoke fixture\nstatus: ready\nsize: 1\n---\n## Story\nAs an operator, I want a fixture.\n\n## Acceptance Criteria\n- [ ] Given A, when B, then C\n' > "$fixture/backlog/ST-001.md"
+          cd "$fixture"
+
+          token="$(curl -sSf -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
+            "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=$(jq -rn --arg a "$AUDIENCE" '$a|@uri')" | jq -r .value)"
+          echo "::add-mask::$token"
+          header="Authorization=Bearer%20$token"
+          echo "::add-mask::$header"
+
+          status="$(curl -sS -o /dev/null -w '%{http_code}' -X POST "$LOGS_URL" \
+            -H "Authorization: Bearer $token" -H 'Content-Type: application/json' \
+            --data '{"resourceLogs":[]}')"
+          echo "gateway preflight HTTP $status (200 means the token and content type were accepted)"
+
+          echo "operation | expected | exit code | correlation id"
+          run() {
+            expected="$1"; shift
+            id="$(openssl rand -hex 16)"
+            set +e
+            TRACEPARENT="00-$id-$(openssl rand -hex 8)-01" \
+              OTEL_EXPORTER_OTLP_LOGS_ENDPOINT="$LOGS_URL" \
+              OTEL_EXPORTER_OTLP_HEADERS="$header" \
+              "$story" "$@" > /dev/null 2>&1
+            code=$?
+            set -e
+            echo "$* | $expected | $code | $id"
+          }
+          run success show ST-001
+          run success list
+          run success show ST-001 --json
+          run failure show ST-999
+          run failure not-a-command
+          echo "LogQL: {service_name=\"story-time\"} | trace_id=\"<correlation id>\""

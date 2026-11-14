@@ -17,6 +17,7 @@ mod models;
 pub mod new_story;
 mod next_id;
 pub mod note;
+pub mod otlp;
 pub mod planning;
 pub mod rank;
 pub mod secret;
