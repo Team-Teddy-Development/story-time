@@ -231,7 +231,7 @@ const commands = {
       return;
     }
     if (!['set', 'clear'].includes(action) || !tracker) throw new UsageError('Usage: story secret set|clear <github|ado|gitea|jev>, or story secret status');
-    if (!SECRET_SPECS[tracker]) throw new UsageError(`There is no token support for "${tracker}". Use: ${Object.keys(SECRET_SPECS).join(', ')}.`);
+    if (!Object.hasOwn(SECRET_SPECS, tracker)) throw new UsageError(`There is no token support for "${tracker}". Use: ${Object.keys(SECRET_SPECS).join(', ')}.`);
     if (action === 'clear') {
       const removed = await store.clear(tracker);
       console.log(removed ? `Removed the ${tracker} token.` : `No ${tracker} token was stored.`);
@@ -462,7 +462,7 @@ function out(flags, data, human) {
 
 async function main(argv) {
   const [command = 'help', ...rest] = argv;
-  const handler = commands[command];
+  const handler = Object.hasOwn(commands, command) ? commands[command] : undefined;
   if (!handler) {
     const problem = NATIVE_ONLY.has(command)
       ? `The "${command}" command runs only in the native story binary (native/story-push); this Node CLI cannot run it.`

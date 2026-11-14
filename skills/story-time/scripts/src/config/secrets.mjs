@@ -12,9 +12,8 @@ export const SECRET_SPECS = {
 export const SECRET_LABELS = { github: 'GitHub', ado: 'Azure DevOps', gitea: 'Gitea', jev: 'TypeSafe (Jev)' };
 
 export function secretSpec(tracker) {
-  const spec = SECRET_SPECS[tracker];
-  if (!spec) throw new Error(`There is no token support for "${tracker}". Use: ${Object.keys(SECRET_SPECS).join(', ')}.`);
-  return spec;
+  if (!Object.hasOwn(SECRET_SPECS, tracker)) throw new Error(`There is no token support for "${tracker}". Use: ${Object.keys(SECRET_SPECS).join(', ')}.`);
+  return SECRET_SPECS[tracker];
 }
 
 export function parseEnvFile(text) {

@@ -59,12 +59,17 @@ fn same(label: &str, node: &Output, native: &Output) {
 
 #[test]
 fn unknown_commands_and_help_flags_match_node_without_node() {
-    let cases: [(&str, &[&str], Option<&str>); 5] = [
+    let cases: [(&str, &[&str], Option<&str>); 10] = [
         ("unknown", &["no-such-command"], None),
         ("unknown-flags", &["no-such-command", "--json", "x"], None),
         ("help-long", &["--help"], None),
         ("help-short", &["-h"], None),
         ("bad-config", &["no-such-command"], Some("{ not json")),
+        ("constructor", &["constructor"], None),
+        ("to-string", &["toString"], None),
+        ("has-own-property", &["hasOwnProperty"], None),
+        ("proto", &["__proto__"], None),
+        ("value-of", &["valueOf"], None),
     ];
     for (name, args, settings) in cases {
         let dir = sandbox(name, settings);

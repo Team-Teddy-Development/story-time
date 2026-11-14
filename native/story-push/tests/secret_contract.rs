@@ -327,13 +327,16 @@ fn clear_removes_or_reports_like_node() {
 fn usage_and_value_failures_match_node() {
     let s = Sandbox::new();
     let stdin = format!("{FAKE}\n");
-    let cases: [(&[&str], &str, i32); 10] = [
+    let cases: [(&[&str], &str, i32); 13] = [
         (&[], "", 2),
         (&["rotate", "github"], "", 2),
         (&["set"], "", 2),
         (&["clear"], "", 2),
         (&["set", "jira"], &stdin, 2),
         (&["clear", "linear"], "", 2),
+        (&["clear", "constructor"], "", 2),
+        (&["clear", "__proto__"], "", 2),
+        (&["set", "toString"], &stdin, 2),
         (&["set", "github", "inline-arg"], &stdin, 2),
         (&["set", "github"], "", 1),
         (&["set", "ado"], "\n\n", 1),

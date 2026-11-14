@@ -72,5 +72,6 @@ test('clear removes the token file', async () => {
 test('rejects unknown trackers and empty tokens', async () => {
   const store = new FileSecretStore(await tmp(), { isTracked: notTracked });
   await assert.rejects(store.save('jira', 'x'), /no token support for "jira"/);
+  await assert.rejects(store.save('constructor', 'x'), /no token support for "constructor"/);
   await assert.rejects(store.save('github', '  '), /empty/);
 });
