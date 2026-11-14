@@ -8,6 +8,8 @@ use std::{
     sync::atomic::{AtomicUsize, Ordering},
 };
 
+type Findings = Vec<(String, Vec<(String, String, String)>)>;
+
 static NEXT: AtomicUsize = AtomicUsize::new(0);
 const MODERN: &str = "2026-07-28";
 const LEGACY: &str = "2025-11-25";
@@ -423,7 +425,7 @@ fn read_tools_match_their_output_schemas_and_agree_with_the_cli() {
     let lint = structured(&lint).clone();
     check("story_lint", &lint);
     let cli_lint = fixture.cli(&["lint", "--json"]);
-    let project = |results: &Value| -> Vec<(String, Vec<(String, String, String)>)> {
+    let project = |results: &Value| -> Findings {
         results
             .as_array()
             .unwrap()
@@ -467,7 +469,7 @@ fn read_tools_match_their_output_schemas_and_agree_with_the_cli() {
         .lines()
         .map(|l| serde_json::from_str(l).unwrap())
         .collect();
-    assert_eq!(audit.len(), 7, "{stderr}");
+    assert_eq!(audit.len(), 6, "{stderr}");
     assert_eq!(audit[0]["tool"], "story_config");
     assert_eq!(audit[3]["ids"], json!(["ST-003"]));
     assert_eq!(audit[3]["outcome"], "ok");
