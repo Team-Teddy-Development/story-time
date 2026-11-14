@@ -18,6 +18,7 @@ pub mod note;
 pub mod planning;
 pub mod rank;
 pub mod secret;
+pub mod set;
 pub mod show;
 pub mod stats;
 pub mod story;
@@ -58,6 +59,7 @@ pub const NATIVE_COMMANDS: &[(&str, Native)] = &[
     ("new", |args| new_story::run(args).map(|out| (out, 0))),
     ("rank", |args| rank::run(args).map(|out| (out, 0))),
     ("judge", judge::run),
+    ("set", |args| set::run(args).map(|out| (out, 0))),
 ];
 
 pub fn legacy_required_message() -> String {
