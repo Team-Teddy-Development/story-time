@@ -122,3 +122,11 @@ Story-time has no telemetry dependency today. `grep -E '^(tracing|opentelemetry|
 - Whether the Xanthos gateway accepts OTLP JSON or only protobuf, and whether it rewrites `service.name`. Only `server.ts:56-60` and `:333-338` were read.
 - Grafana users, teams, and folder permissions. They live in the Grafana database and need a signed-in query.
 - Whether NetworkPolicies are enforced in practice (see follow-up 4).
+
+## Decision
+
+Decided 2026-11-14 by Jev (jev-1.14.0) under the owner's "jev decide" instruction:
+
+- Route (0.85): story-time sends OTLP/HTTP only to the Xanthos gateway, `https://xanthos.teamteddy.net/v1/{logs,traces,metrics}`, from GitHub Actions with an OIDC token. It never sends to the in-cluster collector or the backends directly.
+- Scope (0.60): developer-machine CLI runs are out of scope. Telemetry is off unless an OTLP endpoint is configured, so a plain CLI run stays silent.
+- Metrics (0.64): story-time metrics use the `story_time_` prefix. The VictoriaMetrics keep regex in coffee-apps `k8s/drip/10-victoriametrics.yaml:88` must add that prefix. That change is a coffee-apps PR and a cluster deploy, so it is filed as its own story and ST-009's live acceptance depends on it.
