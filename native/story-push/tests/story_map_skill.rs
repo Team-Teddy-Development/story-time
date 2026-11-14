@@ -59,13 +59,21 @@ fn story_map_names_the_backlog_file_rules_the_cli_follows() {
     .unwrap();
     fs::write(root.join("backlog/EP-001.map.md"), "# EP-001 map\n").unwrap();
 
-    for args in [&["list", "--json"][..], &["stats", "--json"]] {
-        let out = story(root, args);
-        assert!(out.status.success(), "{args:?}: {out:?}");
-        let stdout = String::from_utf8(out.stdout).unwrap();
-        assert!(stdout.contains("ST-001"), "{args:?} lists the story");
-        assert!(!stdout.contains("EP-001.map"), "{args:?} skips the map");
-    }
+    let list: serde_json::Value =
+        serde_json::from_slice(&story(root, &["list", "--json"]).stdout).unwrap();
+    let ids: Vec<&str> = list
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|s| s["id"].as_str().unwrap())
+        .collect();
+    assert_eq!(ids, ["ST-001"], "list skips the map");
+    let stats: serde_json::Value =
+        serde_json::from_slice(&story(root, &["stats", "--json"]).stdout).unwrap();
+    assert_eq!(stats["total"], 1, "stats skips the map");
+    let lint = String::from_utf8(story(root, &["lint"]).stdout).unwrap();
+    assert!(lint.starts_with("ST-001"), "{lint}");
+    assert!(!lint.contains("map"), "lint skips the map: {lint}");
     for args in [&["plan", "--snapshot"][..], &["adopt", "preview"]] {
         let out = story(root, args);
         assert!(out.status.success(), "{args:?} accepts a map file: {out:?}");
