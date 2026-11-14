@@ -384,3 +384,16 @@ fn project_status_cites_the_missing_release_directory_in_the_released_none_row()
         "When `docs/releases/` does not exist, the `released` row keeps `none` in Work and Claim, its Record is the missing path `docs/releases/`, and Gaps names it",
     );
 }
+
+#[test]
+fn project_status_notes_blockers_and_entry_counts_are_mechanical() {
+    let text = skill("project-status");
+    position(
+        &text,
+        "A Notes blocker is a sentence that says \"blocked on\" or \"waits for\" (or \"waiting for\") and names the item",
+    );
+    position(
+        &text,
+        "A count from `story list --json` is the number of its entries with that status",
+    );
+}
