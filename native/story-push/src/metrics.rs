@@ -53,8 +53,7 @@ fn histories(dir: &Path) -> Result<Vec<History>, String> {
         .map_err(|e| format!("{}: {e}", dir.display()))?
         .filter_map(|entry| {
             let name = entry.ok()?.file_name().into_string().ok()?;
-            let id = name.strip_suffix(".md")?;
-            crate::valid_id(id).then(|| id.to_owned())
+            crate::story_file_id(&name).map(str::to_owned)
         })
         .collect();
     ids.sort();

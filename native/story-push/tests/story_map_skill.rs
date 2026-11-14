@@ -7,8 +7,8 @@ use std::{
 const OLD: &str = "The CLI ignores files that aren't story files.";
 const MAP_RULE: &str = "No command reads a `.map.md` file as a story.";
 const ID_RULE: &str =
-    "`story list`, `lint`, and `stats` read only files named for a story ID, such as `ST-012.md`.";
-const STRAY_RULE: &str = "`story plan` and `story adopt` read every other `.md` file in the backlog directory as a story and stop with an error on one that is not.";
+    "`story list`, `lint`, `stats`, and `plan` read only files named for a story ID, such as `ST-012.md`.";
+const STRAY_RULE: &str = "`story adopt` reads every other `.md` file in the backlog directory as a story and stops with an error on one that is not.";
 
 fn flowed(text: &str) -> String {
     text.split_whitespace().collect::<Vec<_>>().join(" ")
@@ -84,8 +84,8 @@ fn story_map_names_the_backlog_file_rules_the_cli_follows() {
     assert!(listed.status.success());
     assert!(!String::from_utf8_lossy(&listed.stdout).contains("notes"));
     let plan = story(root, &["plan", "--snapshot"]);
-    assert_eq!(plan.status.code(), Some(2), "{plan:?}");
-    assert!(String::from_utf8_lossy(&plan.stdout).contains("malformed_story: backlog/notes.md"));
+    assert!(plan.status.success(), "{plan:?}");
+    assert!(!String::from_utf8_lossy(&plan.stdout).contains("notes.md"));
     let adopt = story(root, &["adopt", "preview"]);
     assert_eq!(adopt.status.code(), Some(2), "{adopt:?}");
     let report: serde_json::Value = serde_json::from_slice(&adopt.stdout).unwrap();

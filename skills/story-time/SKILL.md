@@ -117,7 +117,9 @@ story status or tracker sprint fields. WIP limits pull, not total plan size.
 
 The backlog lives in `./backlog/` (override with `--dir` or `$STORY_TIME_DIR`),
 one markdown file per story. Ids default to `ST-001`; set `--prefix` or
-`$STORY_TIME_PREFIX` for team prefixes. The file format is in
+`$STORY_TIME_PREFIX` for team prefixes. Only `<PREFIX>-<digits>.md` files are stories.
+`list`, `lint`, `stats`, and `plan` skip every other `.md` file, such as `notes.md`, and
+read `*.map.md` epic maps as maps. The file format is in
 [story-format.md](references/story-format.md). Edit section prose directly in the
 file and log the edit with `story note`. Change frontmatter fields with `story set` so
 the change is validated and logged.

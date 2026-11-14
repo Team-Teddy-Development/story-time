@@ -413,7 +413,7 @@ fn duplicate_cycle_unknown_status_size_and_malformed_stories_fail_closed() {
     p.story("PAY-001", "ready", "3", "");
     let r = p.request();
     let bytes = fs::read(p.root.join("work/PAY-001.md")).unwrap();
-    p.put("work/duplicate.md", bytes);
+    p.put("work/PAY-002.md", bytes);
     p.conflict(&r, None, "duplicate_id");
     let p = Project::new();
     p.story("PAY-001", "ready", "3", "depends_on: [PAY-002]\r\n");

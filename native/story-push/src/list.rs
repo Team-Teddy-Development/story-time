@@ -10,18 +10,6 @@ use std::{
     path::{Path, PathBuf},
 };
 
-fn story_id(name: &str) -> bool {
-    let Some((prefix, number)) = name.rsplit_once('-') else {
-        return false;
-    };
-    prefix.starts_with(|c: char| c.is_ascii_uppercase())
-        && prefix
-            .bytes()
-            .all(|c| c.is_ascii_uppercase() || c.is_ascii_digit())
-        && !number.is_empty()
-        && number.bytes().all(|c| c.is_ascii_digit())
-}
-
 /// `FileSystemStoryRepository.list({ status })`: every `<ID>.md` in `dir`, parsed, filtered, and
 /// sorted by id the way `localeCompare(…, 'en', { numeric: true })` sorts.
 pub(crate) fn stories(dir: &Path, status: Option<&str>) -> Result<Vec<Js>, String> {
@@ -32,7 +20,7 @@ pub(crate) fn stories(dir: &Path, status: Option<&str>) -> Result<Vec<Js>, Strin
             .map_err(|e| format!("{}: {e}", dir.display()))?
             .into_iter()
             .filter_map(|name| name.into_string().ok())
-            .filter(|name| name.strip_suffix(".md").is_some_and(story_id))
+            .filter(|name| crate::story_file_id(name).is_some())
             .collect(),
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Vec::new(),
         Err(e) => return Err(format!("{}: {e}", dir.display())),
