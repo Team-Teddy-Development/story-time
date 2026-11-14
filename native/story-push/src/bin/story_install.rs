@@ -12,7 +12,7 @@ Installs the story-time release at the source checkout's HEAD commit:
   export the commit to ~/.local/share/story-time/releases/<commit>,
   save the current ~/.local/bin/story and ~/.config/story-time/runtime.json,
   cargo install the native story binary from the export,
-  copy the skills for the chosen agents, and point runtime.json at the export.
+  copy the skills for the chosen agents, and remove the unused runtime.json.
 --rollback restores the most recent saved binary and runtime.json.
 Run it from a checkout with:
   cargo run --locked --manifest-path native/story-push/Cargo.toml --bin story-install -- --agent all";
@@ -65,9 +65,7 @@ enum Step {
         from: PathBuf,
         to: PathBuf,
     },
-    Runtime {
-        legacy_cli: PathBuf,
-    },
+    RemoveRuntime,
 }
 
 impl Step {
@@ -90,11 +88,7 @@ impl Step {
             Step::Skills { from, to } => {
                 format!("copy skills from {} to {}", from.display(), to.display())
             }
-            Step::Runtime { legacy_cli } => format!(
-                "write {} with legacyCli {}",
-                layout.runtime.display(),
-                legacy_cli.display()
-            ),
+            Step::RemoveRuntime => format!("remove {}", layout.runtime.display()),
         }
     }
 
@@ -122,14 +116,7 @@ impl Step {
                 }
             }
             Step::Skills { from, to } => install_skills(from, to).map_err(|e| e.to_string()),
-            Step::Runtime { legacy_cli } => fs::create_dir_all(layout.runtime.parent().unwrap())
-                .and_then(|()| {
-                    fs::write(
-                        &layout.runtime,
-                        format!("{}\n", serde_json::json!({ "legacyCli": legacy_cli })),
-                    )
-                })
-                .map_err(|e| e.to_string()),
+            Step::RemoveRuntime => fs::remove_file(&layout.runtime).map_err(|e| e.to_string()),
         }
     }
 }
@@ -200,9 +187,9 @@ fn plan(options: &Options, layout: &Layout) -> Result<Vec<Step>, String> {
         from: release.join("skills"),
         to: layout.skills_dir(agent),
     }));
-    steps.push(Step::Runtime {
-        legacy_cli: release.join("skills/story-time/scripts/story.mjs"),
-    });
+    if layout.runtime.is_file() {
+        steps.push(Step::RemoveRuntime);
+    }
     Ok(steps)
 }
 

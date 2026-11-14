@@ -68,7 +68,7 @@ cargo run --locked --manifest-path native/story-push/Cargo.toml --bin story-inst
 It exports the checkout's HEAD commit to `~/.local/share/story-time/releases/<commit>`.
 It saves the current `~/.local/bin/story` and `~/.config/story-time/runtime.json`.
 Then it builds `story` from the export, installs the skills for the chosen
-agents, and points `runtime.json` at the export. Uncommitted changes are not
+agents, and removes `runtime.json`, which no command reads. Uncommitted changes are not
 installed. Use `--dry-run` to print the plan. Use `--rollback` to restore the
 saved binary and `runtime.json`.
 
