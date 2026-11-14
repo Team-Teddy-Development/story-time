@@ -119,7 +119,7 @@ fn create(flags: &Flags, dir: &Path, prefix: &str, date: &str) -> Result<Js, Str
 }
 
 /// JavaScript's `Number(string)`.
-fn js_number(s: &str) -> f64 {
+pub(crate) fn js_number(s: &str) -> f64 {
     let t = trim(s);
     if t.is_empty() {
         return 0.0;
