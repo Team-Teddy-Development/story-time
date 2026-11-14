@@ -317,7 +317,8 @@ fn size_estimated(s: &Js, _: &Context) -> Found {
 }
 
 fn size_small(s: &Js, _: &Context) -> Found {
-    if is_str(s.get("status"), "split") {
+    if is_str(s.get("status"), "split") && matches!(s.get("children"), Js::Arr(c) if !c.is_empty())
+    {
         return none();
     }
     let Some(size) = finite(s.get("size")) else {
