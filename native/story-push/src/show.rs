@@ -31,11 +31,8 @@ pub(crate) fn read(flags: &config::Flags) -> Result<(Value, Js), Failure> {
         Some(dir) => config::resolve(Path::new(&dir))?,
         None => config::resolve(&loaded.root.join(settings["backlogDir"].as_str().unwrap()))?,
     };
-    let id = flags.positional.first().ok_or(Failure {
-        code: 2,
-        message: "A story id is required.".into(),
-    })?;
-    let story = list::get(&dir, id)?.ok_or_else(|| format!("Story {id} not found."))?;
+    let id = flags.positional.first().cloned().unwrap_or_default();
+    let story = require_all(&dir, &[id])?.remove(0);
     Ok((settings, story))
 }
 

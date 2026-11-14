@@ -307,6 +307,8 @@ fn failures_match_node() {
     let bare = Sandbox::new(None);
     for (s, args, code) in [
         (&configured, &[][..], 2),
+        (&configured, &[""][..], 2),
+        (&configured, &["", "--format", "jira"][..], 2),
         (&configured, &["--json"][..], 2),
         (&configured, &["ST-001", "--format"][..], 2),
         (&configured, &["st-001"][..], 1),
