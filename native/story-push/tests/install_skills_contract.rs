@@ -50,7 +50,14 @@ fn tree(root: &Path) -> Tree {
     files
 }
 
-fn run(root: &Path, native: bool, setup: fn(&Path), args: &[&str]) -> Run {
+#[derive(Clone, Copy)]
+enum Home {
+    Fixture,
+    Unset,
+    Empty,
+}
+
+fn run(root: &Path, native: bool, home: Home, setup: fn(&Path), args: &[&str]) -> Run {
     let _ = fs::remove_dir_all(root);
     fs::create_dir_all(root.join("home")).unwrap();
     fs::create_dir_all(root.join("project")).unwrap();
@@ -70,12 +77,12 @@ fn run(root: &Path, native: bool, setup: fn(&Path), args: &[&str]) -> Run {
             .env("PATH", std::env::var_os("PATH").unwrap());
         cmd
     };
-    let output: Output = cmd
-        .args(&args)
-        .env("HOME", root.join("home"))
-        .current_dir(root)
-        .output()
-        .unwrap();
+    match home {
+        Home::Fixture => cmd.env("HOME", root.join("home")),
+        Home::Unset => &mut cmd,
+        Home::Empty => cmd.env("HOME", ""),
+    };
+    let output: Output = cmd.args(&args).current_dir(root).output().unwrap();
     Run {
         stdout: String::from_utf8(output.stdout).unwrap(),
         stderr: String::from_utf8(output.stderr).unwrap(),
@@ -85,9 +92,13 @@ fn run(root: &Path, native: bool, setup: fn(&Path), args: &[&str]) -> Run {
 }
 
 fn compare(setup: fn(&Path), args: &[&str]) -> Run {
+    compare_home(Home::Fixture, setup, args)
+}
+
+fn compare_home(home: Home, setup: fn(&Path), args: &[&str]) -> Run {
     let root = fixture_root();
-    let node = run(&root, false, setup, args);
-    let native = run(&root, true, setup, args);
+    let node = run(&root, false, home, setup, args);
+    let native = run(&root, true, home, setup, args);
     fs::remove_dir_all(&root).unwrap();
     assert_eq!(native.stdout, node.stdout, "stdout differs for {args:?}");
     assert_eq!(native.stderr, node.stderr, "stderr differs for {args:?}");
@@ -235,5 +246,111 @@ fn existing_skills_are_refused_without_force_and_replaced_with_it() {
     ] {
         let run = compare(installed, args);
         assert_eq!(run.code, Some(0), "{}", run.stderr);
+    }
+}
+
+fn untouched(run: &Run) {
+    let keys: Vec<&PathBuf> = run.tree.keys().collect();
+    assert_eq!(
+        keys,
+        [Path::new("home"), Path::new("project")],
+        "relative folders created"
+    );
+}
+
+#[test]
+fn unset_home_falls_back_to_the_account_home_like_node() {
+    for agent in ["codex", "claude", "all"] {
+        let run = compare_home(Home::Unset, empty, &["--agent", agent, "--dry-run"]);
+        untouched(&run);
+        let text = format!("{}{}", run.stdout, run.stderr);
+        assert!(
+            !text.contains(" .claude") && !text.contains(" .agents"),
+            "{text}"
+        );
+        assert!(
+            text.contains("/.claude/skills/") || text.contains("/.agents/skills/"),
+            "{text}"
+        );
+    }
+}
+
+#[test]
+fn empty_home_never_installs_into_relative_folders() {
+    let root = fixture_root();
+    let run = run(
+        &root,
+        true,
+        Home::Empty,
+        empty,
+        &["--agent", "all", "--dry-run"],
+    );
+    fs::remove_dir_all(&root).unwrap();
+    untouched(&run);
+    let text = format!("{}{}", run.stdout, run.stderr);
+    assert!(
+        !text.contains(" .claude") && !text.contains(" .agents"),
+        "{text}"
+    );
+}
+
+fn skills_source(root: &Path) {
+    let skill = root.join("release/skills/alpha");
+    fs::create_dir_all(skill.join("scripts/test")).unwrap();
+    fs::write(skill.join("SKILL.md"), "alpha").unwrap();
+    fs::write(skill.join("scripts/test/a.test.mjs"), "test").unwrap();
+}
+
+#[test]
+fn source_selects_the_skills_folder() {
+    let root = fixture_root();
+    let run = run(
+        &root,
+        true,
+        Home::Fixture,
+        skills_source,
+        &["--agent", "claude", "--source", "release"],
+    );
+    fs::remove_dir_all(&root).unwrap();
+    assert_eq!(run.code, Some(0), "{}", run.stderr);
+    assert_eq!(
+        run.tree
+            .get(Path::new("home/.claude/skills/alpha/SKILL.md"))
+            .and_then(|(_, b)| b.clone()),
+        Some(b"alpha".to_vec())
+    );
+    assert!(!run.tree.keys().any(|k| k.ends_with("scripts/test")));
+    let installed: Vec<&PathBuf> = run
+        .tree
+        .keys()
+        .filter(|k| k.starts_with("home/.claude/skills") && k.components().count() == 4)
+        .collect();
+    assert_eq!(installed, [Path::new("home/.claude/skills/alpha")]);
+}
+
+#[test]
+fn missing_skills_folder_fails_clearly_and_writes_nothing() {
+    for args in [
+        &["--agent", "all", "--source", "{root}/gone"][..],
+        &["--agent", "codex", "--source", "project", "--dry-run"],
+    ] {
+        let root = fixture_root();
+        let run = run(&root, true, Home::Fixture, empty, args);
+        let missing = if args[3].starts_with('{') {
+            root.join("gone/skills")
+        } else {
+            root.join("project/skills")
+        };
+        fs::remove_dir_all(&root).unwrap();
+        assert_eq!(run.code, Some(1), "{}", run.stderr);
+        assert!(run.stdout.is_empty(), "{}", run.stdout);
+        assert_eq!(
+            run.stderr,
+            format!(
+                "No story-time skills folder at {}.\nPass --source DIR with the story-time checkout or release that holds skills/.\n",
+                missing.display()
+            )
+        );
+        untouched(&run);
     }
 }
