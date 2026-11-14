@@ -13,7 +13,7 @@ fn the_legacy_required_message_names_exactly_the_dispatch_table() {
     let _ = fs::remove_dir_all(&root);
     fs::create_dir_all(root.join("home")).unwrap();
     let output = Command::new(env!("CARGO_BIN_EXE_story"))
-        .arg("stats")
+        .arg("no-such-command")
         .env_clear()
         .env("PATH", "/nonexistent")
         .env("HOME", root.join("home"))
