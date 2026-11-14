@@ -511,6 +511,13 @@ pub fn push(args: &[String]) -> Result<String, Failure> {
     if !["github", "ado", "gitea"].contains(&ctx.config["tracker"].as_str().unwrap_or("")) {
         return Err("story push supports github, ado, or gitea.".into());
     }
+    // Held from the read of each story through its write-back, so a waiting writer refuses
+    // before any tracker item changes and an MCP update is never overwritten with old bytes.
+    let _lock = if dry {
+        None
+    } else {
+        adoption_apply::lock_for_write(&ctx.root)?
+    };
     let plan = plans(&ctx, &flags)?;
     let result = if dry {
         json!({"ok":true,"plan":summary(&plan)})
