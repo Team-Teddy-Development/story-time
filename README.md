@@ -15,6 +15,7 @@ script. Here the subject is the story lifecycle, from idea to accepted.
 |---|---|---|
 | `story-time` | "story time" | Entry point. Lifecycle, file format, the `story` CLI, and routing to the right skill. |
 | `story-setup` | "set up story time" | One-time setup: detects repo, tracker, stack, and test tooling, asks the rest (including whether to push to the tracker), and writes `.story-time/settings.json`. |
+| `project-discovery` | "start a project" | Writes `docs/project-brief.md`: validated versus assumed facts, open decisions with owners, and proposed epics traced to an outcome or marked unresolved. No estimates or schedules; epics go to story-map. |
 | `story-create` | "write a story for…" | Turns ideas, bugs, PRDs, or notes into INVEST stories with persona, benefit, criteria, and scope. |
 | `story-edit` | "update ST-012" | Changes a story safely: classifies the change, guards done and in-progress work, catches scope creep, logs why. |
 | `story-split` | "this is too big" | Splits with SPIDR and the classic patterns into vertical slices, and writes them as an all-or-nothing saga. |
@@ -40,6 +41,7 @@ script. Here the subject is the story lifecycle, from idea to accepted.
 story-setup (once) → idea → story-create → acceptance-criteria → story-estimate → story-ready → story-pick → story-kickoff → build → story-accept
           ├─ too big → story-split      ├─ epic → story-map      └─ unknown → spike
           ├─ a lifecycle → state-machine      └─ a multi-input rule → decision-table   (both feed acceptance-criteria)
+project-discovery writes a project brief for a project with no direction and hands proposed epics to story-map.
 refinement runs in single-story or backlog mode; backlog-groom is its alias.
 gap-sweep finds work with no story and hands approved rows to story-create.
 sprint-planning consumes ordered ready stories; flow-review reports stuck work; sprint-review closes the sprint; story-edit applies anywhere.

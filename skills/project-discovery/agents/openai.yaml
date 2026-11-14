@@ -1,0 +1,4 @@
+interface:
+  display_name: "Project discovery"
+  short_description: "Write a project brief with goals, facts, decisions, and epics"
+  default_prompt: "Use $project-discovery to write a project brief before any backlog work."

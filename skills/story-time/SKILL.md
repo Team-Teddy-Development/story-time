@@ -18,6 +18,7 @@ idea ──► story-create ──► acceptance-criteria ──► story-estima
             ├─ an epic? ──► story-map                                                    ▼
             └─ unknown? ──► spike                             story-pick ──► story-kickoff ──► build ──► story-accept ──► [done]
 
+project-discovery writes a project brief before backlog work and hands proposed epics to story-map.
 refinement owns single-story and backlog modes; backlog-groom is its compatibility alias.
 gap-sweep finds work with no story and hands approved rows to story-create.
 sprint-planning consumes ordered ready candidates and produces local proposals.
@@ -30,6 +31,7 @@ state-machine and decision-table write checked models that acceptance-criteria a
 | Request | Skill |
 |---|---|
 | "set up story time", first use in a repo | **story-setup** skill |
+| "start a project", "project discovery", no stated goals | **project-discovery** skill |
 | "write a story for…", "turn this into stories" | **story-create** skill |
 | "change / update / rewrite ST-012" | **story-edit** skill |
 | "this is too big", "break this down" | **story-split** skill |
