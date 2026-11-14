@@ -902,3 +902,59 @@ fn story_mcp_refuses_an_unknown_option() {
     assert_eq!(output.status.code(), Some(2));
     assert!(output.stdout.is_empty());
 }
+
+#[test]
+fn story_lint_reads_an_outside_machine_the_same_whether_it_exists() {
+    let fixture = Fixture::new();
+    fs::write(fixture.base.join("present.toml"), "name = \"present\"\n").unwrap();
+    std::os::unix::fs::symlink(&fixture.base, fixture.root.join("away")).unwrap();
+    let base = fixture.base.to_str().unwrap();
+    let paths = [
+        ("ST-001", "../present.toml"),
+        ("ST-002", "../missing.toml"),
+        ("ST-003", &format!("{base}/present.toml")),
+        ("ST-004", &format!("{base}/missing.toml")),
+        ("ST-005", "away/present.toml"),
+        ("ST-006", "away/missing.toml"),
+    ];
+    for (id, path) in &paths {
+        let text = story(1, "ready", "story", None, "").replace("ST-001", id);
+        let text = text.replacen(
+            "depends_on",
+            &format!("state_machine: {path}\ndepends_on"),
+            1,
+        );
+        fixture.write(&format!("backlog/{id}.md"), &text);
+    }
+    let mut server = fixture.server();
+    let lint = server.tool("story_lint", json!({}));
+    let lint = structured(&lint).clone();
+    let cli = fixture.cli(&["lint", "--json"]);
+    for results in [&lint["results"], &cli] {
+        let machine: Vec<String> = paths
+            .iter()
+            .map(|(id, path)| {
+                let story = results
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .find(|r| r["id"] == *id)
+                    .unwrap();
+                story["findings"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .filter(|f| f["rule"] == "state_machine.exists")
+                    .map(|f| f["message"].as_str().unwrap().replace(path, "PATH"))
+                    .collect::<Vec<_>>()
+                    .join("\n")
+            })
+            .collect();
+        assert!(
+            machine.iter().all(|m| m
+                == "state_machine: PATH is outside the repository (paths are relative to the repo root). Keep the model inside the repository."),
+            "{machine:#?}"
+        );
+    }
+    server.finish();
+}

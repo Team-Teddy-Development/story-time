@@ -44,8 +44,12 @@ impl Sandbox {
         fn walk(dir: &Path, into: &mut BTreeMap<PathBuf, (u32, Vec<u8>)>) {
             for entry in fs::read_dir(dir).unwrap() {
                 let path = entry.unwrap().path();
-                let mode = fs::symlink_metadata(&path).unwrap().permissions().mode();
-                if path.is_dir() {
+                let meta = fs::symlink_metadata(&path).unwrap();
+                let mode = meta.permissions().mode();
+                if meta.file_type().is_symlink() {
+                    let target = fs::read_link(&path).unwrap();
+                    into.insert(path, (mode, target.into_os_string().into_encoded_bytes()));
+                } else if meta.is_dir() {
                     into.insert(path.clone(), (mode, Vec::new()));
                     walk(&path, into);
                 } else {
@@ -520,4 +524,84 @@ fn empty_and_malformed_backlogs_match_node() {
     s.write("backlog/ST-001.md", "no frontmatter\n");
     s.both_forms(&[], 1);
     s.both_forms(&["ST-001"], 1);
+}
+
+#[test]
+fn a_machine_outside_the_root_reads_the_same_whether_it_exists() {
+    let s = Sandbox::new();
+    let outside = Sandbox::new();
+    outside.write("present.toml", "name = \"present\"\n");
+    let away = outside.0.file_name().unwrap().to_str().unwrap();
+    let abs = outside.0.to_str().unwrap();
+    std::os::unix::fs::symlink(&outside.0, s.0.join("away")).unwrap();
+    fs::create_dir_all(s.0.join("model")).unwrap();
+    std::os::unix::fs::symlink(
+        outside.0.join("present.toml"),
+        s.0.join("model/present.toml"),
+    )
+    .unwrap();
+    std::os::unix::fs::symlink(
+        outside.0.join("missing.toml"),
+        s.0.join("model/missing.toml"),
+    )
+    .unwrap();
+    let pairs = [
+        format!("../{away}/NAME.toml"),
+        format!("{abs}/NAME.toml"),
+        "away/NAME.toml".to_owned(),
+        "model/NAME.toml".to_owned(),
+    ];
+    for (n, pattern) in pairs.iter().enumerate() {
+        for (k, name) in ["present", "missing"].iter().enumerate() {
+            s.story(
+                &format!("ST-0{}{}", n + 1, k),
+                &format!(
+                    "title: Outside\n{SCORED}\nstate_machine: {}",
+                    pattern.replace("NAME", name)
+                ),
+                &[("Story", GOOD_STORY), ("Acceptance Criteria", GOOD_AC)],
+            );
+        }
+    }
+    let out = s.compare(&["--json"]);
+    let results: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+    let findings = |id: &str, path: &str| -> Vec<(String, String, String)> {
+        results
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|r| r["id"] == id)
+            .unwrap()["findings"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|f| {
+                (
+                    f["rule"].as_str().unwrap().to_owned(),
+                    f["severity"].as_str().unwrap().to_owned(),
+                    f["message"].as_str().unwrap().replace(path, "PATH"),
+                )
+            })
+            .collect()
+    };
+    for (n, pattern) in pairs.iter().enumerate() {
+        let present = findings(
+            &format!("ST-0{}0", n + 1),
+            &pattern.replace("NAME", "present"),
+        );
+        let missing = findings(
+            &format!("ST-0{}1", n + 1),
+            &pattern.replace("NAME", "missing"),
+        );
+        assert_eq!(present, missing, "{pattern}");
+        assert_eq!(
+            present,
+            [(
+                "state_machine.exists".to_owned(),
+                "error".to_owned(),
+                "state_machine: PATH is outside the repository (paths are relative to the repo root). Keep the model inside the repository.".to_owned()
+            )],
+            "{pattern}"
+        );
+    }
 }
