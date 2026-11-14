@@ -13,6 +13,7 @@ export const EXPECTED = [
   'refinement',
   'sprint-planning',
   'gap-sweep',
+  'flow-review',
   'story-pick',
   'story-map',
   'spike',

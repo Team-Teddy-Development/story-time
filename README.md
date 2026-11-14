@@ -25,6 +25,7 @@ script. Here the subject is the story lifecycle, from idea to accepted.
 | `backlog-groom` | "groom the backlog" | Compatibility alias to refinement in backlog mode. |
 | `gap-sweep` | "what are we missing?" | Finds work with no story in code, tests, docs, stories, and open GitHub issues, plus up to 2 evidence-backed features. Proposes at most 10 rows and hands approved ones to story-create. |
 | `sprint-planning` | "plan a sprint" | Goal-based local JSON and Markdown proposals with explicit capacity, completed dependencies, deferred work, and forecast limits. |
+| `flow-review` | "what is stuck?" | Read-only report of blocked, aging, and over-WIP work, each with an owner and a next action, plus scope swaps with their capacity effect. Missing sprint and flow data stays `unknown`; pulls go to story-pick. |
 | `story-pick` | "what's next?" | WSJF-ranked pick, checked against WIP, capacity, dependencies, and risk, with alternatives. |
 | `story-map` | "map this epic" | User story map (backbone → steps → stories) sliced into a walking skeleton and outcome-named releases. |
 | `spike` | "we need to investigate" | A time-boxed, single-question spike with exit criteria, which ends in estimated follow-up stories. |
@@ -40,7 +41,7 @@ story-setup (once) → idea → story-create → acceptance-criteria → story-e
           ├─ a lifecycle → state-machine      └─ a multi-input rule → decision-table   (both feed acceptance-criteria)
 refinement runs in single-story or backlog mode; backlog-groom is its alias.
 gap-sweep finds work with no story and hands approved rows to story-create.
-sprint-planning consumes ordered ready stories; story-edit applies anywhere.
+sprint-planning consumes ordered ready stories; flow-review reports stuck work; story-edit applies anywhere.
 ```
 
 Every skill depends on `story-time`, which holds the CLI. Install it with any

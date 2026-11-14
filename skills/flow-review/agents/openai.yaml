@@ -1,0 +1,4 @@
+interface:
+  display_name: "Flow review"
+  short_description: "Report blocked, aging, and over-WIP work with owners"
+  default_prompt: "Use $flow-review to report blocked, aging, and over-WIP work without changing any story."
