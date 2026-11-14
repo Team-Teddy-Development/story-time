@@ -31,7 +31,8 @@ fn flow_review_reports_blocked_aging_and_over_wip_items_with_an_owner_and_next_a
     let rows = table_rows(&text, "| Kind | Story | Owner | Next action | Evidence |");
     for kind in ["`blocked`", "`aging`", "`over-wip`"] {
         assert!(
-            rows.iter().any(|row| row.starts_with(&format!("| {kind} |"))),
+            rows.iter()
+                .any(|row| row.starts_with(&format!("| {kind} |"))),
             "the report table has a {kind} row"
         );
     }
@@ -41,7 +42,10 @@ fn flow_review_reports_blocked_aging_and_over_wip_items_with_an_owner_and_next_a
 #[test]
 fn flow_review_records_each_scope_swap_with_its_capacity_effect() {
     let text = skill("flow-review");
-    position(&text, "| In | Out | Points in | Points out | Capacity effect |");
+    position(
+        &text,
+        "| In | Out | Points in | Points out | Capacity effect |",
+    );
     position(&text, "Record every scope swap");
 }
 
