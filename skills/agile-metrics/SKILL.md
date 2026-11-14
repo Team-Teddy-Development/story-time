@@ -20,7 +20,8 @@ story metrics --from 2026-11-01 --to 2026-11-14 --json
 ```
 
 `story metrics` is native Rust and read-only. It reads the `set status=`
-lines in each story's Changelog, at day resolution, and returns:
+and `split into` lines in each story's Changelog, at day resolution, and
+returns:
 
 - `throughput`: stories with a `done` event in the window. Units: stories.
 - `wip`: stories whose last status event at the window end is
@@ -40,8 +41,8 @@ command output into this table, one row per figure:
 
 | Metric | Value | Units | Window | Source |
 |---|---|---|---|---|
-| throughput | 3 | stories | 2026-11-01..2026-11-14 | changelog `set status=` lines |
-| cycle_time_median | `unknown` | days | 2026-11-01..2026-11-14 | changelog `set status=` lines |
+| throughput | 3 | stories | 2026-11-01..2026-11-14 | changelog `set status=` and `split into` lines |
+| cycle_time_median | `unknown` | days | 2026-11-01..2026-11-14 | changelog `set status=` and `split into` lines |
 | velocity | `unknown` | points per sprint | 2026-11-01..2026-11-14 | no sprint record is stored |
 
 Then list each entry of every figure's `unknown` array with its story and

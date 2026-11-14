@@ -7,7 +7,8 @@ use std::{
 };
 
 static NEXT: AtomicUsize = AtomicUsize::new(0);
-const SOURCE: &str = "changelog `set status=` lines in the backlog story files, day resolution";
+const SOURCE: &str =
+    "changelog `set status=` and `split into` lines in the backlog story files, day resolution";
 
 struct Backlog(PathBuf);
 impl Backlog {
