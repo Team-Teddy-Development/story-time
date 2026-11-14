@@ -22,6 +22,7 @@ refinement owns single-story and backlog modes; backlog-groom is its compatibili
 gap-sweep finds work with no story and hands approved rows to story-create.
 sprint-planning consumes ordered ready candidates and produces local proposals.
 flow-review reports blocked, aging, and over-WIP work and sends pulls to story-pick.
+sprint-review records the goal outcome, links feedback, and decides unfinished work; it marks no story done.
 story-edit changes any story at any stage.
 state-machine and decision-table write checked models that acceptance-criteria and story-kickoff build on.
 ```
@@ -40,6 +41,7 @@ state-machine and decision-table write checked models that acceptance-criteria a
 | "sweep for gaps", "what are we missing" | **gap-sweep** skill |
 | "plan a sprint", goal and capacity planning | **sprint-planning** skill |
 | "flow review", "what is stuck?", "are we over WIP?" | **flow-review** skill |
+| "sprint review", "close the sprint" | **sprint-review** skill |
 | "what should I work on next?" | **story-pick** skill |
 | "map out this epic / feature" | **story-map** skill |
 | "we don't know enough to estimate" | **spike** skill |
