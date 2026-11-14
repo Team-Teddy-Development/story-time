@@ -22,7 +22,7 @@ epic: ~
 tags: [b, \"c, d\", 'it''s', 2, true, , null, [x]]
 depends_on: []
 custom_note: \"quoted: value \\u00e9\\t\"
-quote_trailing: \"x\"
+quote_trailing: \"x\"\x20\x20
 single: 'a # b'
 created: 2026-11-14
 updated: 2026-11-14
@@ -35,7 +35,7 @@ small: 0.0000001
 big: 1234567890123456789012345
 flag: false
 plain: 42abc
-spaced:    padded value
+spaced:    padded value\x20\x20
 ---
 Preamble text is ignored.
 ## Story
@@ -140,9 +140,11 @@ impl Sandbox {
         native
     }
     fn both(&self, args: &[&str], env: &[(&str, &str)]) -> [Output; 2] {
-        let mut json: Vec<&str> = args.to_vec();
-        json.push("--json");
-        [self.compare(args, env, true), self.compare(&json, env, true)]
+        let json: Vec<&str> = ["--json"].iter().chain(args).copied().collect();
+        [
+            self.compare(args, env, true),
+            self.compare(&json, env, true),
+        ]
     }
 }
 impl Drop for Sandbox {
@@ -187,7 +189,10 @@ fn shows_a_story_like_node() {
 fn failures_match_node() {
     let s = Sandbox::new();
     s.write("backlog/ST-001.md", "no frontmatter\n");
-    s.write("backlog/ST-002.md", "---\nid: ST-002\nnot a key line\n---\n");
+    s.write(
+        "backlog/ST-002.md",
+        "---\nid: ST-002\nnot a key line\n---\n",
+    );
     s.write("backlog/ST-003.md", "---\ntitle: \"bad\"x\"\n---\n");
     fs::create_dir_all(s.0.join("backlog/ST-004.md")).unwrap();
     for (args, code) in [
@@ -219,24 +224,38 @@ fn backlog_directory_precedence_matches_node() {
         ".story-time/settings.json",
         r#"{"backlogDir":"stories","prefix":"PAY"}"#,
     );
-    s.write("stories/ST-001.md", "---\nid: ST-001\ntitle: From config\n---\n");
+    s.write(
+        "stories/ST-001.md",
+        "---\nid: ST-001\ntitle: From config\n---\n",
+    );
     s.write("flag/ST-001.md", "---\nid: ST-001\ntitle: From flag\n---\n");
     s.write("env/ST-001.md", "---\nid: ST-001\ntitle: From env\n---\n");
     s.write("ST-001.md", "---\nid: ST-001\ntitle: From root\n---\n");
     for (args, env, title) in [
         (&["ST-001"][..], &[][..], "From config"),
-        (&["ST-001"][..], &[("STORY_TIME_DIR", "env")][..], "From env"),
+        (
+            &["ST-001"][..],
+            &[("STORY_TIME_DIR", "env")][..],
+            "From env",
+        ),
         (&["ST-001"][..], &[("STORY_TIME_DIR", "")][..], "From root"),
         (
             &["ST-001", "--dir", "flag"][..],
             &[("STORY_TIME_DIR", "env")][..],
             "From flag",
         ),
-        (&["ST-001", "--dir", "./env/../flag"][..], &[][..], "From flag"),
+        (
+            &["ST-001", "--dir", "./env/../flag"][..],
+            &[][..],
+            "From flag",
+        ),
     ] {
         for out in s.both(args, env) {
             assert_eq!(out.status.code(), Some(0));
-            assert!(String::from_utf8_lossy(&out.stdout).contains(title), "{args:?} {env:?}");
+            assert!(
+                String::from_utf8_lossy(&out.stdout).contains(title),
+                "{args:?} {env:?}"
+            );
         }
     }
     let alt = Sandbox::new();

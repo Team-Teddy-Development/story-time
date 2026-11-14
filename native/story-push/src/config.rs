@@ -515,7 +515,7 @@ fn js_value(value: &Value) -> Value {
     }
 }
 
-fn array_index(key: &str) -> Option<u64> {
+pub(crate) fn array_index(key: &str) -> Option<u64> {
     let n: u64 = key.parse().ok()?;
     (n.to_string() == key && n < u32::MAX as u64).then_some(n)
 }
