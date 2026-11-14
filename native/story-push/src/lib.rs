@@ -98,60 +98,6 @@ impl From<&str> for Failure {
     }
 }
 
-#[derive(Default)]
-struct Args {
-    ids: Vec<String>,
-    all: bool,
-    dry: bool,
-    json: bool,
-    config: Option<String>,
-    dir: Option<String>,
-}
-
-fn parse(args: &[String]) -> Result<Args, Failure> {
-    let mut result = Args::default();
-    let mut index = 0;
-    while index < args.len() {
-        match args[index].as_str() {
-            "--all" => result.all = true,
-            "--dry-run" => result.dry = true,
-            "--json" => result.json = true,
-            "--config" | "--dir" => {
-                let flag = &args[index];
-                index += 1;
-                let value = args
-                    .get(index)
-                    .filter(|s| !s.starts_with("--"))
-                    .ok_or_else(|| Failure {
-                        code: 2,
-                        message: format!("Flag {flag} needs a value."),
-                    })?
-                    .clone();
-                if flag == "--config" {
-                    result.config = Some(value)
-                } else {
-                    result.dir = Some(value)
-                }
-            }
-            value if value.starts_with("--") => {
-                return Err(Failure {
-                    code: 2,
-                    message: format!("Unknown push flag {value}."),
-                })
-            }
-            value => result.ids.push(value.to_owned()),
-        }
-        index += 1;
-    }
-    if result.all && !result.ids.is_empty() {
-        return Err(Failure {
-            code: 2,
-            message: "Use --all or explicit story IDs, not both.".into(),
-        });
-    }
-    Ok(result)
-}
-
 pub(crate) fn valid_id(s: &str) -> bool {
     let Some((prefix, n)) = s.rsplit_once('-') else {
         return false;
@@ -170,12 +116,12 @@ struct Context {
     root: PathBuf,
     dir: PathBuf,
 }
-fn context(args: &Args) -> Result<Context, String> {
-    let loaded = config::load(args.config.as_deref())?;
+fn context(flags: &config::Flags) -> Result<Context, String> {
+    let loaded = config::load(flags.value("config"))?;
     let config =
         config::parse(&loaded.raw).map_err(|e| format!("{}: {e}", loaded.path.display()))?;
     let root = loaded.root;
-    let dir = list::backlog_dir(args.dir.as_deref(), &root, &config)?;
+    let dir = list::backlog_dir(flags.value("dir"), &root, &config)?;
     Ok(Context { config, root, dir })
 }
 
@@ -210,8 +156,9 @@ struct Planned {
     /// Why linking this story would rewrite its file with less than it holds.
     loss: Option<String>,
 }
-fn plans(ctx: &Context, args: &Args) -> Result<Vec<Planned>, Failure> {
-    let ids = if args.all {
+fn plans(ctx: &Context, flags: &config::Flags) -> Result<Vec<Planned>, Failure> {
+    let all = flags.has("all");
+    let ids = if all {
         let mut ids = Vec::new();
         match fs::read_dir(&ctx.dir) {
             Ok(entries) => {
@@ -235,9 +182,9 @@ fn plans(ctx: &Context, args: &Args) -> Result<Vec<Planned>, Failure> {
         ids.sort();
         ids
     } else {
-        args.ids.clone()
+        flags.positional.clone()
     };
-    if ids.is_empty() && !args.all {
+    if ids.is_empty() && !all {
         return Err(Failure {
             code: 2,
             message: USAGE.into(),
@@ -492,37 +439,29 @@ fn execute(plan: &[Planned], gateway: &mut dyn Tracker, date: &str) -> Result<Va
 }
 
 pub fn issues(args: &[String]) -> Result<String, Failure> {
-    let usage = |message: String| Failure { code: 2, message };
-    let (mut json, mut limit, mut rest) = (false, 200, Vec::new());
-    let mut index = 0;
-    while index < args.len() {
-        match args[index].as_str() {
-            "--json" => json = true,
-            "--state" => {
-                index += 1;
-                if args.get(index).map(String::as_str) != Some("open") {
-                    return Err(usage("story issues lists only --state open.".into()));
-                }
-            }
-            "--limit" => {
-                index += 1;
-                limit = args
-                    .get(index)
-                    .and_then(|n| n.parse::<usize>().ok())
-                    .filter(|n| *n > 0)
-                    .ok_or_else(|| usage("--limit needs a positive number.".into()))?;
-            }
-            _ => rest.push(args[index].clone()),
-        }
-        index += 1;
+    let usage = |message: &str| Failure {
+        code: 2,
+        message: message.into(),
+    };
+    let flags = config::Flags::parse(args)?;
+    if flags.value("state").is_some_and(|state| state != "open") {
+        return Err(usage("story issues lists only --state open."));
     }
-    let args = parse(&rest)?;
-    if !args.ids.is_empty() || args.all || args.dry {
+    let limit = match flags.value("limit") {
+        None => 200,
+        Some(n) => n
+            .parse::<usize>()
+            .ok()
+            .filter(|n| *n > 0)
+            .ok_or_else(|| usage("--limit needs a positive number."))?,
+    };
+    if !flags.positional.is_empty() || flags.has("all") || flags.has("dry-run") {
         return Err(usage(
-            "Usage: story issues --state open [--limit N] [--json]".into(),
+            "Usage: story issues --state open [--limit N] [--json]",
         ));
     }
-    let ctx = context(&args)?;
+    let json = flags.has("json");
+    let ctx = context(&flags)?;
     if ctx.config["tracker"] != "gitea" {
         return Err("story issues lists Gitea issues only. For a github tracker, run gh issue list --state open.".into());
     }
@@ -557,16 +496,17 @@ pub fn issues(args: &[String]) -> Result<String, Failure> {
 }
 
 pub fn push(args: &[String]) -> Result<String, Failure> {
-    let args = parse(args)?;
-    let ctx = context(&args)?;
+    let flags = config::Flags::parse(args)?;
+    let dry = flags.has("dry-run");
+    let ctx = context(&flags)?;
     if ctx.config["sync"] == "off" {
         return Err("Pushing is off for this project (sync: \"off\" in .story-time/settings.json). Use story export for a copyable card, or run the story-setup skill to set sync to \"ask\" or \"auto\".".into());
     }
     if !["github", "ado", "gitea"].contains(&ctx.config["tracker"].as_str().unwrap_or("")) {
         return Err("story push supports github, ado, or gitea.".into());
     }
-    let plan = plans(&ctx, &args)?;
-    let result = if args.dry {
+    let plan = plans(&ctx, &flags)?;
+    let result = if dry {
         json!({"ok":true,"plan":summary(&plan)})
     } else if plan.iter().all(|p| p.action == "skip") {
         json!({"ok":true,"pushed":[],"skipped":plan.iter().map(|p|p.id.clone()).collect::<Vec<_>>()})
@@ -578,13 +518,13 @@ pub fn push(args: &[String]) -> Result<String, Failure> {
             &Utc::now().format("%Y-%m-%d").to_string(),
         )?
     };
-    if args.json {
+    if flags.has("json") {
         return Ok(format!(
             "{}\n",
             serde_json::to_string_pretty(&result).map_err(|e| e.to_string())?
         ));
     }
-    if args.dry {
+    if dry {
         let rows = result["plan"]
             .as_array()
             .unwrap()

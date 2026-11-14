@@ -1,4 +1,4 @@
-use super::{execute, gateway::Remote, plans, Args, Context, Tracker};
+use super::{config::Flags, execute, gateway::Remote, plans, Context, Tracker};
 use serde_json::{json, Value};
 use std::{fs, path::PathBuf};
 
@@ -68,14 +68,7 @@ fn rollback_and_concurrent_write_contracts() {
             root: dir.clone(),
             dir: dir.clone(),
         };
-        let plan = plans(
-            &ctx,
-            &Args {
-                all: true,
-                ..Args::default()
-            },
-        )
-        .unwrap();
+        let plan = plans(&ctx, &Flags::parse(&["--all".to_owned()]).unwrap()).unwrap();
         let result = execute(&plan, &mut fake, "2026-11-11");
         let error = result.unwrap_err();
         assert!(error.contains("Push failed"));
