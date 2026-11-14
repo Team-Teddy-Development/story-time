@@ -422,6 +422,48 @@ fn dependency_and_spike_value_shapes_match_node() {
 }
 
 #[test]
+fn a_split_parent_keeps_its_estimate_without_a_size_finding() {
+    let s = Sandbox::new();
+    let scored = "value: 5\ntime_criticality: 3\nrisk_reduction: 2";
+    let sections = [("Story", GOOD_STORY), ("Acceptance Criteria", GOOD_AC)];
+    s.story(
+        "ST-001",
+        &format!(
+            "title: Split parent\nstatus: split\nsize: 13\n{scored}\nchildren: [ST-002, ST-003]"
+        ),
+        &sections,
+    );
+    s.story(
+        "ST-002",
+        &format!("title: Child five\nstatus: ready\nsize: 5\n{scored}"),
+        &sections,
+    );
+    s.story(
+        "ST-003",
+        &format!("title: Child eight\nstatus: ready\nsize: 8\n{scored}"),
+        &sections,
+    );
+    s.story(
+        "ST-004",
+        &format!("title: Unsplit\nstatus: ready\nsize: 13\n{scored}"),
+        &sections,
+    );
+    s.both_forms(&["ST-001", "ST-002"], 0);
+    let parent = s.both_forms(&["ST-001"], 0);
+    assert!(!parent.contains("size.small"), "{parent}");
+    let child = s.both_forms(&["ST-003"], 0);
+    assert!(
+        child.contains(" size.small ") && child.contains("Size 8 is large"),
+        "{child}"
+    );
+    let unsplit = s.both_forms(&["ST-004"], 1);
+    assert!(
+        unsplit.contains("Size 13 >= 13: too big to finish in a sprint. Split it."),
+        "{unsplit}"
+    );
+}
+
+#[test]
 fn values_javascript_cannot_lint_fail_like_node() {
     for (frontmatter, other) in [
         ("title: 5", None),
