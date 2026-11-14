@@ -63,6 +63,8 @@ Commands:
   adopt  preview                           Native: preview adopting an existing backlog; writes nothing
   issues --state open [--limit 200] [--json]
                                            Native: list open Gitea tracker issues (GET only; never prints the token)
+  metrics --from YYYY-MM-DD --to YYYY-MM-DD [--json]
+                                           Native: throughput, WIP, and cycle time from changelog status events; read-only
   config                                  Show the effective project config
   help                                     This text
 

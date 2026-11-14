@@ -30,6 +30,7 @@ script. Here the subject is the story lifecycle, from idea to accepted.
 | `sprint-review` | "close the sprint" | Records the goal outcome and demo evidence, links each piece of feedback to a backlog item, and gives every unfinished story a disposition: carry over, return to backlog, split, or drop. Keeps original estimates and sprint membership, and marks no story done. |
 | `retrospective` | "run a retro" | Revisits every previous improvement action first, then proposes at most three owned actions with the observed problem, proposed change, expected effect, follow-up date, and outcome measure. Writes `docs/retrospectives/<date>.md` and changes no policy; stories go through story-create with approval. |
 | `release-planning` | "plan a release" | Writes `docs/releases/<release>.md`: planned, accepted, and released work kept apart, a rollout and recovery plan, and delivery evidence or a specific handoff. Uses only deployment capabilities the repository or user names and claims no release without evidence. |
+| `agile-metrics` | "what is our cycle time?" | Throughput, WIP, and cycle time for a date window from the native `story metrics` command. Every figure names its source, window, and units; missing history and velocity without a sprint record stay `unknown`. |
 | `story-pick` | "what's next?" | WSJF-ranked pick, checked against WIP, capacity, dependencies, and risk, with alternatives. |
 | `story-map` | "map this epic" | User story map (backbone → steps → stories) sliced into a walking skeleton and outcome-named releases. |
 | `spike` | "we need to investigate" | A time-boxed, single-question spike with exit criteria, which ends in estimated follow-up stories. |
@@ -46,7 +47,7 @@ story-setup (once) → idea → story-create → acceptance-criteria → story-e
 project-discovery writes a project brief for a project with no direction and hands proposed epics to story-map.
 refinement runs in single-story or backlog mode; backlog-groom is its alias.
 gap-sweep finds work with no story and hands approved rows to story-create.
-sprint-planning consumes ordered ready stories; flow-review reports stuck work; sprint-review closes the sprint; release-planning ships accepted work with evidence; retrospective turns delivery problems into at most three owned actions; story-edit applies anywhere.
+sprint-planning consumes ordered ready stories; flow-review reports stuck work; sprint-review closes the sprint; release-planning ships accepted work with evidence; retrospective turns delivery problems into at most three owned actions; agile-metrics reports delivery figures; story-edit applies anywhere.
 ```
 
 Every skill depends on `story-time`, which holds the CLI. Install it with any
@@ -55,7 +56,7 @@ of them.
 ## Install
 
 Native `story init`, `story push`, `story adopt preview`, `story plan`,
-`story config`, `story show`, `story list`, `story secret`, and `story machine` require Rust and Cargo. Other commands still require Node 20+ and use the
+`story config`, `story show`, `story list`, `story secret`, `story machine`, and `story metrics` require Rust and Cargo. Other commands still require Node 20+ and use the
 existing dependency-free Node CLI.
 
 To install a release on a machine in one step, run this from the repository root:

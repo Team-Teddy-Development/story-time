@@ -141,7 +141,7 @@ fn every_figure_names_its_source_window_and_units_and_the_gap_stays_unknown() {
                     "units": "days",
                     "window": window,
                     "source": SOURCE,
-                    "definition": "median days from the first in-progress event to the done event, over stories done in the window",
+                    "definition": "median days from the first in-progress event to the done event, over stories done in the window with both events recorded",
                     "per_story": [
                         {"id": "ST-001", "days": 3},
                         {"id": "ST-002", "days": 1},

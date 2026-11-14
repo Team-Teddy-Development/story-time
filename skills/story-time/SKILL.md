@@ -26,6 +26,7 @@ flow-review reports blocked, aging, and over-WIP work and sends pulls to story-p
 sprint-review records the goal outcome, links feedback, and decides unfinished work; it marks no story done.
 release-planning writes a release manifest and uses only approved deployment capabilities; it can run before sprint review.
 retrospective revisits previous improvement actions and proposes at most three owned ones; it changes no policy.
+agile-metrics reports throughput, WIP, and cycle time from `story metrics`; missing history stays unknown.
 story-edit changes any story at any stage.
 state-machine and decision-table write checked models that acceptance-criteria and story-kickoff build on.
 ```
@@ -48,6 +49,7 @@ state-machine and decision-table write checked models that acceptance-criteria a
 | "sprint review", "close the sprint" | **sprint-review** skill |
 | "plan a release", "what is in this release?" | **release-planning** skill |
 | "retrospective", "retro", "how do we work better?" | **retrospective** skill |
+| "metrics", "cycle time", "throughput", "velocity" | **agile-metrics** skill |
 | "what should I work on next?" | **story-pick** skill |
 | "map out this epic / feature" | **story-map** skill |
 | "we don't know enough to estimate" | **spike** skill |
@@ -60,7 +62,7 @@ The **principle-invest** skill holds the quality bar all of them apply.
 
 ## The `story` tool
 
-Use installed Rust `story` for `init`, `push`, `adopt preview`, `plan`, `config`, `show`, `list`, `secret`, and `machine`.
+Use installed Rust `story` for `init`, `push`, `adopt preview`, `plan`, `config`, `show`, `list`, `secret`, `machine`, and `metrics`.
 The skill installer copies skills only; install the executable separately.
 Read `.story-time/settings.json` before selecting a tracker. Install the native
 command from the repository root:
@@ -70,7 +72,7 @@ cargo install --path native/story-push --locked
 ```
 
 `story push` runs entirely in Rust. Do not invoke the historical Node push
-handler. Planning, `story config`, `story show`, `story list`, `story secret`, and `story machine` also run entirely in Rust. Other commands
+handler. Planning, `story config`, `story show`, `story list`, `story secret`, `story machine`, and `story metrics` also run entirely in Rust. Other commands
 still use Node 20+.
 Set `STORY_TIME_LEGACY_CLI` to
 this skill's absolute `scripts/story.mjs` path, or configure `legacyCli` in
@@ -95,6 +97,7 @@ part of either Rust push execution path.
 | `story new --title T [--statement S] [--ac A]... [--type story\|spike\|bug\|chore]` | Create a draft with the next id. In a git repo the id is above every id on all local and remote-tracking branches; `git fetch` first so other branches' ids are seen |
 | `story list [--status S]` | List stories |
 | `story show <id>` | Print one story |
+| `story metrics --from YYYY-MM-DD --to YYYY-MM-DD [--json]` | Throughput, WIP, and cycle time for a window from changelog status events, with gaps `unknown`. Native Rust; read-only |
 | `story lint [id...]` | INVEST / Definition of Ready check. Exit 1 if any story has errors |
 | `story rank [--limit N] [--include-refined]` | WSJF ranking of ready, unblocked stories, plus why others were excluded |
 | `story set <id> key=value... [--note N]` | Update fields with a changelog entry. `status=ready` is lint-gated |

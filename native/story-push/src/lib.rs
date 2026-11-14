@@ -7,6 +7,7 @@ mod lenient_story;
 pub mod list;
 pub mod machine;
 mod models;
+pub mod metrics;
 pub mod planning;
 pub mod secret;
 pub mod show;
