@@ -193,10 +193,10 @@ pub fn parse(raw: &Value) -> Result<Value, String> {
         })?;
 
     let prefix = given("prefix").cloned().unwrap_or(json!("ST"));
-    if !is_prefix(&js_string(&prefix)) {
+    let prefix_text = text(&prefix, "prefix")?;
+    if !is_prefix(prefix_text) {
         return Err(format!(
-            "prefix must be uppercase letters/digits, e.g. \"ST\" or \"PAY\"; got \"{}\".",
-            js_string(&prefix)
+            "prefix must be uppercase letters/digits, e.g. \"ST\" or \"PAY\"; got \"{prefix_text}\"."
         ));
     }
 
@@ -408,7 +408,7 @@ fn jev(j: &Value) -> Result<Value, String> {
     })
 }
 
-/// A tracker field push reads as a string; stricter than Node, which accepts any value `String(value)` turns into valid text.
+/// A field native readers use as a string; stricter than Node, which accepts any value `String(value)` turns into valid text.
 fn text<'a>(value: &'a Value, name: &str) -> Result<&'a str, String> {
     value
         .as_str()
