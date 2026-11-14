@@ -1,0 +1,1223 @@
+//! `story mcp [--root DIR]...`: a read-only MCP server over stdio (ADR 0006). The contracts are
+//! in `docs/spikes/ST-006-mcp-server.md`. Tools take a repository key and story ids, never paths,
+//! and read through the same `config`, `list`, `lenient_story`, and `lint` code as the CLI.
+
+use crate::{
+    adoption::sha,
+    config,
+    lenient_story::{self, Js},
+    lint::{self, Severity},
+    list, valid_id, Failure,
+};
+use regex_lite::Regex;
+use serde_json::{json, Map, Value};
+use std::{
+    collections::HashMap,
+    fs,
+    io::{self, BufRead, Read, Write},
+    path::{Path, PathBuf},
+    time::Instant,
+};
+
+const USAGE: &str = "Usage: story mcp [--root DIR]...";
+const MODERN: &str = "2026-07-28";
+const LEGACY: &str = "2025-11-25";
+const SUPPORTED: [&str; 2] = [MODERN, LEGACY];
+/// `initialize` versions answered with the same version: their tool messages have the shape
+/// this server sends.
+const LEGACY_VERSIONS: [&str; 4] = [LEGACY, "2025-06-18", "2025-03-26", "2024-11-05"];
+const VERSION_KEY: &str = "io.modelcontextprotocol/protocolVersion";
+const CAPABILITIES_KEY: &str = "io.modelcontextprotocol/clientCapabilities";
+const SERVER_INFO_KEY: &str = "io.modelcontextprotocol/serverInfo";
+const LINE_LIMIT: usize = 1024 * 1024;
+const STORY_LIMIT: u64 = 1024 * 1024;
+const TOKEN_VARIABLES: [&str; 4] = [
+    "GH_TOKEN",
+    "AZURE_DEVOPS_EXT_PAT",
+    "GITEA_TOKEN",
+    "TYPESAFE_API_KEY",
+];
+const STATUSES: &[&str] = &[
+    "draft",
+    "refined",
+    "ready",
+    "in-progress",
+    "done",
+    "split",
+    "archived",
+];
+const TYPES: &[&str] = &["story", "spike", "bug", "chore"];
+
+pub fn run(args: &[String]) -> Result<(String, u8), Failure> {
+    let mut server = Server {
+        roots: roots(args)?,
+        legacy: false,
+        redactor: Redactor::from_env(),
+    };
+    server
+        .serve(io::stdin().lock(), io::stdout().lock())
+        .map_err(|e| format!("story mcp: {e}"))?;
+    Ok((String::new(), 0))
+}
+
+struct Root {
+    key: String,
+    path: PathBuf,
+}
+
+fn roots(args: &[String]) -> Result<Vec<Root>, Failure> {
+    let usage = || Failure {
+        code: 2,
+        message: USAGE.into(),
+    };
+    let mut given = Vec::new();
+    let mut args = args.iter();
+    while let Some(arg) = args.next() {
+        if arg != "--root" {
+            return Err(usage());
+        }
+        given.push(PathBuf::from(args.next().ok_or_else(usage)?));
+    }
+    if given.is_empty() {
+        given.push(match std::env::var_os("CLAUDE_PROJECT_DIR") {
+            Some(dir) if !dir.is_empty() => dir.into(),
+            _ => std::env::current_dir().map_err(|e| format!("story mcp: {e}"))?,
+        });
+    }
+    let mut roots: Vec<Root> = Vec::new();
+    for dir in given {
+        let path = dir
+            .canonicalize()
+            .map_err(|e| format!("story mcp: --root {}: {e}", dir.display()))?;
+        if roots.iter().any(|r| r.path == path) {
+            continue;
+        }
+        let base = key_base(&path);
+        let mut key = base.clone();
+        for n in 2.. {
+            if !roots.iter().any(|r| r.key == key) {
+                break;
+            }
+            key = format!("{base}-{n}");
+        }
+        roots.push(Root { key, path });
+    }
+    Ok(roots)
+}
+
+/// The root's final path component as a key matching `^[a-z0-9][a-z0-9._-]{0,63}$`, with room
+/// left for a `-N` suffix.
+fn key_base(path: &Path) -> String {
+    let name = path
+        .file_name()
+        .map(|n| n.to_string_lossy().to_lowercase())
+        .unwrap_or_default();
+    let cleaned: String = name
+        .chars()
+        .map(|c| match c {
+            'a'..='z' | '0'..='9' | '.' | '_' | '-' => c,
+            _ => '-',
+        })
+        .collect();
+    let key: String = cleaned
+        .trim_start_matches(|c: char| !c.is_ascii_alphanumeric())
+        .chars()
+        .take(60)
+        .collect();
+    if key.is_empty() {
+        "repository".into()
+    } else {
+        key
+    }
+}
+
+struct Server {
+    roots: Vec<Root>,
+    legacy: bool,
+    redactor: Redactor,
+}
+
+struct RpcError {
+    code: i64,
+    message: String,
+    data: Option<Value>,
+}
+fn rpc(code: i64, message: &str) -> RpcError {
+    RpcError {
+        code,
+        message: message.into(),
+        data: None,
+    }
+}
+
+impl Server {
+    fn serve(&mut self, mut input: impl BufRead, mut output: impl Write) -> io::Result<()> {
+        loop {
+            let mut line = Vec::new();
+            if input
+                .by_ref()
+                .take(LINE_LIMIT as u64 + 2)
+                .read_until(b'\n', &mut line)?
+                == 0
+            {
+                return Ok(());
+            }
+            if line.last() == Some(&b'\n') {
+                line.pop();
+                if line.last() == Some(&b'\r') {
+                    line.pop();
+                }
+            }
+            if line.len() > LINE_LIMIT {
+                let error = rpc(-32600, "Request exceeds input limit");
+                return send(&mut output, &response(Value::Null, Err(error)));
+            }
+            if line.iter().all(u8::is_ascii_whitespace) {
+                continue;
+            }
+            if let Some(reply) = self.handle(&line) {
+                send(&mut output, &reply)?;
+            }
+        }
+    }
+
+    fn handle(&mut self, line: &[u8]) -> Option<Value> {
+        let Ok(message) = serde_json::from_slice::<Value>(line) else {
+            return Some(response(Value::Null, Err(rpc(-32700, "Parse error"))));
+        };
+        let id = message.get("id");
+        let id_ok = matches!(id, None | Some(Value::String(_) | Value::Number(_)));
+        let method = message.get("method").and_then(Value::as_str);
+        let params = match message.get("params") {
+            None => Some(Map::new()),
+            Some(Value::Object(params)) => Some(params.clone()),
+            Some(_) => None,
+        };
+        let (Some(method), Some(params), true, true) =
+            (method, params, id_ok, message["jsonrpc"] == "2.0")
+        else {
+            let id = id.filter(|_| id_ok).cloned().unwrap_or(Value::Null);
+            return Some(response(id, Err(rpc(-32600, "Invalid Request"))));
+        };
+        let id = id?.clone();
+        Some(response(id, self.dispatch(method, &params)))
+    }
+
+    fn dispatch(&mut self, method: &str, params: &Map<String, Value>) -> Result<Value, RpcError> {
+        if method == "initialize" {
+            let requested = params.get("protocolVersion").and_then(Value::as_str);
+            let version = requested
+                .filter(|v| LEGACY_VERSIONS.contains(v))
+                .unwrap_or(LEGACY);
+            self.legacy = true;
+            return Ok(json!({
+                "protocolVersion": version,
+                "capabilities": capabilities(),
+                "serverInfo": server_info(),
+            }));
+        }
+        if !matches!(
+            method,
+            "ping" | "server/discover" | "tools/list" | "tools/call"
+        ) {
+            return Err(rpc(-32601, "Method not found"));
+        }
+        let meta = params.get("_meta");
+        let modern = match meta.and_then(|m| m.get(VERSION_KEY)) {
+            Some(Value::String(version)) if version == MODERN => {
+                if !meta.unwrap()[CAPABILITIES_KEY].is_object() {
+                    return Err(rpc(
+                        -32602,
+                        "Missing _meta io.modelcontextprotocol/clientCapabilities",
+                    ));
+                }
+                true
+            }
+            Some(Value::String(version)) => {
+                return Err(RpcError {
+                    code: -32022,
+                    message: "Unsupported protocol version".into(),
+                    data: Some(json!({"supported": SUPPORTED, "requested": version})),
+                });
+            }
+            Some(_) => return Err(rpc(-32602, "Invalid _meta protocol version")),
+            None if self.legacy => false,
+            None => {
+                return Err(rpc(
+                    -32602,
+                    "Missing _meta io.modelcontextprotocol/protocolVersion",
+                ))
+            }
+        };
+        let mut result = match method {
+            "ping" => json!({}),
+            "server/discover" => {
+                json!({"supportedVersions": SUPPORTED, "capabilities": capabilities()})
+            }
+            "tools/list" => {
+                if params.contains_key("cursor") {
+                    return Err(rpc(-32602, "tools/list does not page"));
+                }
+                json!({"tools": TOOLS.iter().map(Tool::describe).collect::<Vec<_>>()})
+            }
+            _ => self.call(params)?,
+        };
+        if modern {
+            result["resultType"] = json!("complete");
+            result["_meta"] = json!({ SERVER_INFO_KEY: server_info() });
+        }
+        Ok(result)
+    }
+
+    fn call(&self, params: &Map<String, Value>) -> Result<Value, RpcError> {
+        let name = params.get("name").and_then(Value::as_str);
+        let tool = TOOLS
+            .iter()
+            .find(|t| Some(t.name) == name)
+            .ok_or_else(|| rpc(-32602, "Unknown tool"))?;
+        let started = Instant::now();
+        let empty = Map::new();
+        let (args, outcome) = match params.get("arguments") {
+            None | Some(Value::Null) => (&empty, tool.run(self, &empty)),
+            Some(Value::Object(args)) => (args, tool.run(self, args)),
+            Some(_) => (
+                &empty,
+                Err(invalid("", "arguments must be an object.".into())),
+            ),
+        };
+        self.audit(tool.name, args, &outcome, started);
+        let (mut content, is_error) = match outcome {
+            Ok(content) => (content, false),
+            Err(error) => (
+                json!({"error": {
+                    "code": error.code,
+                    "message": error.message,
+                    "retryable": error.code == "io_error",
+                    "details": error.details,
+                }}),
+                true,
+            ),
+        };
+        let redactions = self.redactor.redact(&mut content);
+        content["redactions"] = json!(redactions);
+        Ok(json!({
+            "content": [{"type": "text", "text": content.to_string()}],
+            "structuredContent": content,
+            "isError": is_error,
+        }))
+    }
+
+    /// One value-free JSON line on stderr per tool call: allowlisted keys and valid ids only.
+    fn audit(
+        &self,
+        tool: &str,
+        args: &Map<String, Value>,
+        outcome: &Result<Value, ToolError>,
+        started: Instant,
+    ) {
+        let repository = match args.get("repository") {
+            Some(Value::String(key)) => self.roots.iter().find(|r| &r.key == key),
+            None if self.roots.len() == 1 => self.roots.first(),
+            _ => None,
+        }
+        .map(|r| r.key.clone());
+        let ids: Vec<&str> = args
+            .get("id")
+            .into_iter()
+            .chain(
+                args.get("ids")
+                    .and_then(Value::as_array)
+                    .into_iter()
+                    .flatten(),
+            )
+            .filter_map(Value::as_str)
+            .filter(|id| valid_id(id))
+            .collect();
+        let line = json!({
+            "at": chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true),
+            "tool": tool,
+            "repository": repository,
+            "ids": ids,
+            "outcome": if outcome.is_ok() { "ok" } else { "error" },
+            "error_code": outcome.as_ref().err().map(|e| e.code),
+            "sha256_before": null,
+            "sha256_after": null,
+            "duration_ms": started.elapsed().as_millis() as u64,
+        });
+        eprintln!("{line}");
+    }
+
+    fn root(&self, args: &Map<String, Value>) -> Result<&Root, ToolError> {
+        match args.get("repository").and_then(Value::as_str) {
+            Some(key) => self.roots.iter().find(|r| r.key == key).ok_or_else(|| {
+                fail(
+                    "repository_not_allowed",
+                    "That repository is not allowlisted.",
+                )
+            }),
+            None if self.roots.len() == 1 => Ok(&self.roots[0]),
+            None => Err(fail(
+                "repository_not_allowed",
+                "Name a repository; this server serves several.",
+            )),
+        }
+    }
+
+    fn open(&self, args: &Map<String, Value>) -> Result<Repo<'_>, ToolError> {
+        let root = self.root(args)?;
+        let settings = match settings(&root.path) {
+            Settings::Ok(settings) => settings,
+            Settings::Missing => {
+                return Err(fail(
+                    "not_configured",
+                    "The repository has no .story-time/settings.json.",
+                ))
+            }
+            Settings::Invalid(reason) => {
+                let mut error = fail("config_invalid", "The repository settings are invalid.");
+                error.details = json!({ "reason": reason });
+                return Err(error);
+            }
+        };
+        let dir = backlog(&root.path, &settings)?;
+        Ok(Repo {
+            root,
+            settings,
+            dir,
+        })
+    }
+}
+
+fn send(output: &mut impl Write, message: &Value) -> io::Result<()> {
+    serde_json::to_writer(&mut *output, message)?;
+    output.write_all(b"\n")?;
+    output.flush()
+}
+
+fn response(id: Value, result: Result<Value, RpcError>) -> Value {
+    match result {
+        Ok(result) => json!({"jsonrpc": "2.0", "id": id, "result": result}),
+        Err(error) => {
+            let mut body = json!({"code": error.code, "message": error.message});
+            if let Some(data) = error.data {
+                body["data"] = data;
+            }
+            json!({"jsonrpc": "2.0", "id": id, "error": body})
+        }
+    }
+}
+
+fn capabilities() -> Value {
+    json!({"tools": {"listChanged": false}})
+}
+
+fn server_info() -> Value {
+    json!({"name": "story-time", "version": env!("CARGO_PKG_VERSION")})
+}
+
+struct ToolError {
+    code: &'static str,
+    message: String,
+    details: Value,
+}
+fn fail(code: &'static str, message: &str) -> ToolError {
+    ToolError {
+        code,
+        message: message.into(),
+        details: json!({}),
+    }
+}
+fn invalid(pointer: &str, message: String) -> ToolError {
+    ToolError {
+        code: "invalid_argument",
+        message,
+        details: json!({ "pointer": pointer }),
+    }
+}
+
+enum Settings {
+    Ok(Value),
+    Missing,
+    Invalid(String),
+}
+
+/// The root's own settings file, read the way `config::locate` finds it but never from
+/// `STORY_TIME_CONFIG`.
+fn settings(root: &Path) -> Settings {
+    for file in [config::FILE, config::LEGACY_FILE] {
+        match fs::read_to_string(root.join(file)) {
+            Ok(text) => {
+                return match crate::js_number::parse(&text) {
+                    Err(_) => Settings::Invalid("invalid JSON configuration.".into()),
+                    Ok(raw) => match config::parse(&raw) {
+                        Ok(settings) => Settings::Ok(settings),
+                        Err(reason) => Settings::Invalid(reason),
+                    },
+                }
+            }
+            Err(e) if e.kind() == io::ErrorKind::NotFound => continue,
+            Err(_) => return Settings::Invalid("Could not read configuration.".into()),
+        }
+    }
+    Settings::Missing
+}
+
+/// `backlogDir` under the root, never `STORY_TIME_DIR`, refused when it resolves outside.
+fn backlog(root: &Path, settings: &Value) -> Result<PathBuf, ToolError> {
+    let dir = root.join(settings["backlogDir"].as_str().unwrap_or("backlog"));
+    let resolved = match dir.canonicalize() {
+        Ok(path) => path,
+        Err(e) if e.kind() == io::ErrorKind::NotFound => {
+            config::resolve(&dir).map_err(|_| io_error("resolve backlog directory"))?
+        }
+        Err(_) => return Err(io_error("resolve backlog directory")),
+    };
+    if resolved.starts_with(root) {
+        Ok(resolved)
+    } else {
+        Err(outside())
+    }
+}
+
+fn outside() -> ToolError {
+    fail(
+        "path_outside_repository",
+        "The backlog resolves outside the repository root.",
+    )
+}
+
+fn io_error(operation: &str) -> ToolError {
+    ToolError {
+        code: "io_error",
+        message: format!("Could not {operation}."),
+        details: json!({ "operation": operation }),
+    }
+}
+
+struct Repo<'a> {
+    root: &'a Root,
+    settings: Value,
+    dir: PathBuf,
+}
+
+impl Repo<'_> {
+    fn check_id(&self, id: &str) -> Result<(), ToolError> {
+        let prefix = self.settings["prefix"].as_str().unwrap_or("ST");
+        if valid_id(id) && id.rsplit_once('-').is_some_and(|(p, _)| p == prefix) {
+            Ok(())
+        } else {
+            Err(fail(
+                "invalid_story_id",
+                &format!("A story id is {prefix}- followed by digits."),
+            ))
+        }
+    }
+
+    /// The bytes of `<id>.md`, or `None` when it is absent.
+    fn bytes(&self, id: &str) -> Result<Option<Vec<u8>>, ToolError> {
+        let real = match self.dir.join(format!("{id}.md")).canonicalize() {
+            Ok(path) => path,
+            Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(None),
+            Err(_) => return Err(io_error("resolve story file")),
+        };
+        if !real.starts_with(&self.root.path) {
+            return Err(outside());
+        }
+        let file = fs::File::open(&real).map_err(|_| io_error("open story file"))?;
+        let mut bytes = Vec::new();
+        file.take(STORY_LIMIT + 1)
+            .read_to_end(&mut bytes)
+            .map_err(|_| io_error("read story file"))?;
+        if bytes.len() as u64 > STORY_LIMIT {
+            let mut error = fail("story_too_large", "The story file is larger than 1 MiB.");
+            error.details = json!({ "id": id });
+            return Err(error);
+        }
+        Ok(Some(bytes))
+    }
+
+    /// Every story in the CLI's order, with the SHA-256 of each file, after the same refusals
+    /// as `bytes`.
+    fn stories(&self) -> Result<(Vec<Js>, HashMap<String, String>), ToolError> {
+        let mut digests = HashMap::new();
+        match fs::read_dir(&self.dir) {
+            Ok(entries) => {
+                for entry in entries {
+                    let name = entry.map_err(|_| io_error("list backlog"))?.file_name();
+                    let Some(id) = name.to_str().and_then(crate::story_file_id) else {
+                        continue;
+                    };
+                    if let Some(bytes) = self.bytes(id)? {
+                        digests.insert(id.to_owned(), sha(&bytes));
+                    }
+                }
+            }
+            Err(e) if e.kind() == io::ErrorKind::NotFound => {}
+            Err(_) => return Err(io_error("list backlog")),
+        }
+        let stories = list::stories(&self.dir, None).map_err(|e| self.malformed(&e))?;
+        Ok((stories, digests))
+    }
+
+    fn malformed(&self, message: &str) -> ToolError {
+        let root = format!("{}/", self.root.path.display());
+        fail("story_malformed", &message.replace(&root, ""))
+    }
+
+    fn story(&self, id: &str) -> Result<(Js, Vec<u8>), ToolError> {
+        self.check_id(id)?;
+        let bytes = self.bytes(id)?.ok_or_else(|| {
+            let mut error = fail("story_not_found", "No story has that id.");
+            error.details = json!({ "id": id });
+            error
+        })?;
+        let story = lenient_story::parse(&String::from_utf8_lossy(&bytes))
+            .map_err(|e| self.malformed(&e))?;
+        Ok((story, bytes))
+    }
+}
+
+fn text(value: &Js) -> Value {
+    match value {
+        Js::Undefined => Value::Null,
+        Js::Str(s) => json!(s),
+        other => json!(other.string()),
+    }
+}
+
+fn summary(story: &Js, digest: Option<&String>) -> Value {
+    let size = match story.get("size") {
+        Js::Num(_) => story.get("size").to_value(),
+        other => text(other),
+    };
+    let depends_on: Vec<String> = match story.get("depends_on") {
+        Js::Undefined => Vec::new(),
+        Js::Arr(items) => items.iter().map(Js::string).collect(),
+        other => vec![other.string()],
+    };
+    json!({
+        "id": story.get("id").string(),
+        "title": text(story.get("title")),
+        "status": text(story.get("status")),
+        "type": text(story.get("type")),
+        "size": size,
+        "epic": text(story.get("epic")),
+        "depends_on": depends_on,
+        "remote_url": text(story.get("remote_url")),
+        "updated": text(story.get("updated")),
+        "sha256": digest,
+    })
+}
+
+fn story_config(server: &Server, args: &Map<String, Value>) -> Result<Value, ToolError> {
+    let roots: Vec<&Root> = match args.get("repository") {
+        Some(_) => vec![server.root(args)?],
+        None => server.roots.iter().collect(),
+    };
+    let repositories: Vec<Value> = roots
+        .into_iter()
+        .map(|root| match settings(&root.path) {
+            Settings::Missing => json!({"key": root.key, "status": "not_configured"}),
+            Settings::Invalid(reason) => {
+                json!({"key": root.key, "status": "config_invalid", "reason": reason})
+            }
+            Settings::Ok(s) => {
+                let tracker = s["tracker"].as_str().unwrap_or_default();
+                let fields: &[&str] = match tracker {
+                    "github" => &["repo"],
+                    "gitea" => &["baseUrl", "owner", "repo"],
+                    "ado" => &["organization", "project"],
+                    _ => &[],
+                };
+                let target: Map<String, Value> = fields
+                    .iter()
+                    .filter_map(|f| s[tracker].get(*f).filter(|v| v.is_string()).map(|v| ((*f).to_owned(), v.clone())))
+                    .collect();
+                json!({
+                    "key": root.key,
+                    "status": "ok",
+                    "prefix": s["prefix"],
+                    "tracker": tracker,
+                    "sync": s["sync"],
+                    "backlog_dir": s["backlogDir"],
+                    "wip_limit": s["team"]["wipLimit"],
+                    "definition_of_ready": s.get("definitionOfReady").cloned().unwrap_or(json!([])),
+                    "definition_of_done": s.get("definitionOfDone").cloned().unwrap_or(json!([])),
+                    "tracker_target": if target.is_empty() { Value::Null } else { Value::Object(target) },
+                })
+            }
+        })
+        .collect();
+    Ok(json!({ "repositories": repositories }))
+}
+
+struct Filter {
+    status: Option<Vec<String>>,
+    kind: Option<String>,
+    epic: Option<String>,
+}
+impl Filter {
+    fn matches(&self, story: &Js) -> bool {
+        let field = |key| match story.get(key) {
+            Js::Str(s) => Some(s.as_str()),
+            _ => None,
+        };
+        self.status
+            .as_ref()
+            .is_none_or(|s| field("status").is_some_and(|v| s.iter().any(|x| x == v)))
+            && self
+                .kind
+                .as_deref()
+                .is_none_or(|k| field("type").unwrap_or("story") == k)
+            && self
+                .epic
+                .as_deref()
+                .is_none_or(|e| field("epic") == Some(e))
+    }
+    fn digest(&self, repository: &str) -> String {
+        let mut status = self.status.clone();
+        if let Some(status) = status.as_mut() {
+            status.sort();
+            status.dedup();
+        }
+        sha(json!({"repository": repository, "status": status, "type": self.kind, "epic": self.epic})
+            .to_string()
+            .as_bytes())
+    }
+}
+
+fn hex(bytes: &[u8]) -> String {
+    bytes.iter().map(|b| format!("{b:02x}")).collect()
+}
+fn unhex(text: &str) -> Option<Vec<u8>> {
+    if !text.len().is_multiple_of(2) {
+        return None;
+    }
+    (0..text.len())
+        .step_by(2)
+        .map(|i| u8::from_str_radix(text.get(i..i + 2)?, 16).ok())
+        .collect()
+}
+
+/// The id a cursor continues after, when this server issued it for the same filter.
+fn after(cursor: &str, digest: &str) -> Result<String, ToolError> {
+    let refuse = || {
+        fail(
+            "invalid_cursor",
+            "The cursor is not one this server issued for this filter.",
+        )
+    };
+    let value: Value = unhex(cursor)
+        .and_then(|bytes| serde_json::from_slice(&bytes).ok())
+        .ok_or_else(refuse)?;
+    match (value["after_id"].as_str(), value["filter_digest"].as_str()) {
+        (Some(id), Some(d)) if valid_id(id) && d == digest => Ok(id.to_owned()),
+        _ => Err(refuse()),
+    }
+}
+
+fn strings(args: &Map<String, Value>, key: &str) -> Option<Vec<String>> {
+    args.get(key)?.as_array().map(|items| {
+        items
+            .iter()
+            .filter_map(Value::as_str)
+            .map(str::to_owned)
+            .collect()
+    })
+}
+
+fn story_list(server: &Server, args: &Map<String, Value>) -> Result<Value, ToolError> {
+    let repo = server.open(args)?;
+    let filter = Filter {
+        status: strings(args, "status"),
+        kind: args.get("type").and_then(Value::as_str).map(str::to_owned),
+        epic: args.get("epic").and_then(Value::as_str).map(str::to_owned),
+    };
+    let digest = filter.digest(&repo.root.key);
+    let after = match args.get("cursor").and_then(Value::as_str) {
+        Some(cursor) => Some(after(cursor, &digest)?),
+        None => None,
+    };
+    let limit = args.get("limit").and_then(Value::as_u64).unwrap_or(50) as usize;
+    let (stories, digests) = repo.stories()?;
+    let matching: Vec<&Js> = stories.iter().filter(|s| filter.matches(s)).collect();
+    let key = |s: &Js| list::collation_key(&s.get("id").string(), true);
+    let start = after.map_or(0, |id| {
+        let after = list::collation_key(&id, true);
+        matching
+            .iter()
+            .position(|s| key(s) > after)
+            .unwrap_or(matching.len())
+    });
+    let end = (start + limit).min(matching.len());
+    let page = &matching[start..end];
+    let next_cursor = (end < matching.len()).then(|| {
+        hex(
+            json!({"after_id": page[page.len() - 1].get("id").string(), "filter_digest": digest})
+                .to_string()
+                .as_bytes(),
+        )
+    });
+    Ok(json!({
+        "repository": repo.root.key,
+        "stories": page.iter().map(|s| summary(s, digests.get(&s.get("id").string()))).collect::<Vec<_>>(),
+        "next_cursor": next_cursor,
+        "total": matching.len(),
+    }))
+}
+
+fn story_show(server: &Server, args: &Map<String, Value>) -> Result<Value, ToolError> {
+    let repo = server.open(args)?;
+    let id = args["id"].as_str().unwrap_or_default();
+    let (story, bytes) = repo.story(id)?;
+    let mut frontmatter = match story.to_value() {
+        Value::Object(map) => map,
+        _ => Map::new(),
+    };
+    let sections: Vec<Value> = match frontmatter.remove("sections") {
+        Some(Value::Object(sections)) => sections
+            .into_iter()
+            .map(|(heading, body)| {
+                let body = match body {
+                    Value::String(body) => body,
+                    other => other.to_string(),
+                };
+                json!({"heading": heading, "body": body})
+            })
+            .collect(),
+        _ => Vec::new(),
+    };
+    let dir = repo
+        .dir
+        .strip_prefix(&repo.root.path)
+        .unwrap_or(Path::new(""));
+    Ok(json!({
+        "repository": repo.root.key,
+        "id": id,
+        "path": dir.join(format!("{id}.md")).to_string_lossy(),
+        "sha256": sha(&bytes),
+        "bytes": bytes.len(),
+        "frontmatter": frontmatter,
+        "sections": sections,
+    }))
+}
+
+fn story_lint(server: &Server, args: &Map<String, Value>) -> Result<Value, ToolError> {
+    let repo = server.open(args)?;
+    let (all, _) = repo.stories()?;
+    let targets: Vec<&Js> = match strings(args, "ids") {
+        None => all.iter().collect(),
+        Some(ids) => ids
+            .iter()
+            .map(|id| {
+                repo.check_id(id)?;
+                all.iter()
+                    .find(|s| *s.get("id") == Js::Str(id.clone()))
+                    .ok_or_else(|| {
+                        let mut error = fail("story_not_found", "No story has that id.");
+                        error.details = json!({ "id": id });
+                        error
+                    })
+            })
+            .collect::<Result<_, _>>()?,
+    };
+    let ctx = lint::Context {
+        stories: Some(&all),
+        root: Some(&repo.root.path),
+    };
+    let (mut errors, mut warnings) = (0, 0);
+    let mut results = Vec::new();
+    for story in targets {
+        let findings = lint::lint_story(story, &ctx).map_err(|e| repo.malformed(&e))?;
+        let findings: Vec<Value> = findings
+            .iter()
+            .map(|f| {
+                let severity = if f.severity == Severity::Error {
+                    errors += 1;
+                    "error"
+                } else {
+                    warnings += 1;
+                    "warning"
+                };
+                json!({"rule": f.rule, "severity": severity, "message": f.message})
+            })
+            .collect();
+        results.push(json!({"id": story.get("id").string(), "findings": findings}));
+    }
+    Ok(json!({
+        "repository": repo.root.key,
+        "results": results,
+        "errors": errors,
+        "warnings": warnings,
+    }))
+}
+
+enum Kind {
+    Text(usize),
+    Choice(&'static [&'static str]),
+    List(&'static Kind, usize),
+    Integer { min: i64, max: i64, default: i64 },
+}
+impl Kind {
+    fn schema(&self) -> Value {
+        match self {
+            Kind::Text(max) => json!({"type": "string", "maxLength": max}),
+            Kind::Choice(choices) => json!({"type": "string", "enum": choices}),
+            Kind::List(item, max) => {
+                json!({"type": "array", "items": item.schema(), "maxItems": max})
+            }
+            Kind::Integer { min, max, default } => {
+                json!({"type": "integer", "minimum": min, "maximum": max, "default": default})
+            }
+        }
+    }
+    fn check(&self, value: &Value, pointer: &str) -> Result<(), ToolError> {
+        let ok = match (self, value) {
+            (Kind::Text(max), Value::String(s)) => s.chars().count() <= *max,
+            (Kind::Choice(choices), Value::String(s)) => choices.contains(&s.as_str()),
+            (Kind::List(item, max), Value::Array(items)) => {
+                if items.len() > *max {
+                    return Err(invalid(pointer, format!("At most {max} items.")));
+                }
+                for (i, v) in items.iter().enumerate() {
+                    item.check(v, &format!("{pointer}/{i}"))?;
+                }
+                true
+            }
+            (Kind::Integer { min, max, .. }, Value::Number(n)) => {
+                n.as_i64().is_some_and(|n| (*min..=*max).contains(&n))
+            }
+            _ => false,
+        };
+        if ok {
+            Ok(())
+        } else {
+            Err(invalid(
+                pointer,
+                format!("{pointer} does not match {}.", self.schema()),
+            ))
+        }
+    }
+}
+
+struct Field {
+    name: &'static str,
+    kind: Kind,
+}
+
+const REPOSITORY: Field = Field {
+    name: "repository",
+    kind: Kind::Text(64),
+};
+const ID: Field = Field {
+    name: "id",
+    kind: Kind::Text(64),
+};
+
+struct Tool {
+    name: &'static str,
+    description: &'static str,
+    fields: &'static [Field],
+    required: &'static [&'static str],
+    output: fn() -> Value,
+    run: fn(&Server, &Map<String, Value>) -> Result<Value, ToolError>,
+}
+
+const TOOLS: [Tool; 4] = [
+    Tool {
+        name: "story_config",
+        description: "The story-time settings of each allowlisted repository, or of one.",
+        fields: &[REPOSITORY],
+        required: &[],
+        output: config_schema,
+        run: story_config,
+    },
+    Tool {
+        name: "story_list",
+        description: "Story summaries in backlog id order, filtered and paged with a cursor.",
+        fields: &[
+            REPOSITORY,
+            Field {
+                name: "status",
+                kind: Kind::List(&Kind::Choice(STATUSES), 7),
+            },
+            Field {
+                name: "type",
+                kind: Kind::Choice(TYPES),
+            },
+            Field {
+                name: "epic",
+                kind: Kind::Text(64),
+            },
+            Field {
+                name: "limit",
+                kind: Kind::Integer {
+                    min: 1,
+                    max: 100,
+                    default: 50,
+                },
+            },
+            Field {
+                name: "cursor",
+                kind: Kind::Text(512),
+            },
+        ],
+        required: &[],
+        output: list_schema,
+        run: story_list,
+    },
+    Tool {
+        name: "story_show",
+        description: "One story's frontmatter and sections, with the SHA-256 of its file.",
+        fields: &[REPOSITORY, ID],
+        required: &["id"],
+        output: show_schema,
+        run: story_show,
+    },
+    Tool {
+        name: "story_lint",
+        description: "The Definition of Ready lint findings for every story, or for the named ids.",
+        fields: &[
+            REPOSITORY,
+            Field {
+                name: "ids",
+                kind: Kind::List(&Kind::Text(64), 100),
+            },
+        ],
+        required: &[],
+        output: lint_schema,
+        run: story_lint,
+    },
+];
+
+impl Tool {
+    fn describe(&self) -> Value {
+        let properties: Map<String, Value> = self
+            .fields
+            .iter()
+            .map(|f| (f.name.to_owned(), f.kind.schema()))
+            .collect();
+        json!({
+            "name": self.name,
+            "description": self.description,
+            "inputSchema": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": properties,
+                "required": self.required,
+            },
+            "outputSchema": (self.output)(),
+            "annotations": {
+                "readOnlyHint": true,
+                "destructiveHint": false,
+                "idempotentHint": true,
+                "openWorldHint": false,
+            },
+        })
+    }
+
+    fn run(&self, server: &Server, args: &Map<String, Value>) -> Result<Value, ToolError> {
+        for (key, value) in args {
+            let pointer = format!("/{}", key.replace('~', "~0").replace('/', "~1"));
+            match self.fields.iter().find(|f| f.name == key) {
+                Some(field) => field.kind.check(value, &pointer)?,
+                None => return Err(invalid(&pointer, format!("Unknown argument {pointer}."))),
+            }
+        }
+        if let Some(missing) = self.required.iter().find(|r| !args.contains_key(**r)) {
+            return Err(invalid(
+                &format!("/{missing}"),
+                format!("/{missing} is required."),
+            ));
+        }
+        (self.run)(server, args)
+    }
+}
+
+fn object(required: &[&str], properties: Value) -> Value {
+    json!({"type": "object", "additionalProperties": false, "required": required, "properties": properties})
+}
+
+fn with_redactions(mut schema: Value) -> Value {
+    schema["required"]
+        .as_array_mut()
+        .unwrap()
+        .push(json!("redactions"));
+    schema["properties"]["redactions"] = json!({"type": "integer", "minimum": 0});
+    schema
+}
+
+fn texts() -> Value {
+    json!({"type": "array", "items": {"type": "string"}})
+}
+
+fn config_schema() -> Value {
+    let nullable_text = json!({"type": ["string", "null"]});
+    let entry = object(
+        &["key", "status"],
+        json!({
+            "key": {"type": "string"},
+            "status": {"enum": ["ok", "not_configured", "config_invalid"]},
+            "reason": {"type": "string"},
+            "prefix": {"type": "string"},
+            "tracker": {"type": "string"},
+            "sync": nullable_text,
+            "backlog_dir": nullable_text,
+            "wip_limit": {"type": ["integer", "null"]},
+            "definition_of_ready": texts(),
+            "definition_of_done": texts(),
+            "tracker_target": {"type": ["object", "null"], "additionalProperties": {"type": "string"}},
+        }),
+    );
+    with_redactions(object(
+        &["repositories"],
+        json!({"repositories": {"type": "array", "items": entry}}),
+    ))
+}
+
+fn list_schema() -> Value {
+    let nullable_text = json!({"type": ["string", "null"]});
+    let summary = object(
+        &[
+            "id",
+            "title",
+            "status",
+            "type",
+            "size",
+            "epic",
+            "depends_on",
+            "remote_url",
+            "updated",
+            "sha256",
+        ],
+        json!({
+            "id": {"type": "string"},
+            "title": nullable_text,
+            "status": nullable_text,
+            "type": nullable_text,
+            "size": {"type": ["number", "string", "null"]},
+            "epic": nullable_text,
+            "depends_on": texts(),
+            "remote_url": nullable_text,
+            "updated": nullable_text,
+            "sha256": nullable_text,
+        }),
+    );
+    with_redactions(object(
+        &["repository", "stories", "next_cursor", "total"],
+        json!({
+            "repository": {"type": "string"},
+            "stories": {"type": "array", "items": summary},
+            "next_cursor": nullable_text,
+            "total": {"type": "integer", "minimum": 0},
+        }),
+    ))
+}
+
+fn show_schema() -> Value {
+    let section = object(
+        &["heading", "body"],
+        json!({"heading": {"type": "string"}, "body": {"type": "string"}}),
+    );
+    with_redactions(object(
+        &[
+            "repository",
+            "id",
+            "path",
+            "sha256",
+            "bytes",
+            "frontmatter",
+            "sections",
+        ],
+        json!({
+            "repository": {"type": "string"},
+            "id": {"type": "string"},
+            "path": {"type": "string"},
+            "sha256": {"type": "string"},
+            "bytes": {"type": "integer", "minimum": 0},
+            "frontmatter": {"type": "object"},
+            "sections": {"type": "array", "items": section},
+        }),
+    ))
+}
+
+fn lint_schema() -> Value {
+    let finding = object(
+        &["rule", "severity", "message"],
+        json!({
+            "rule": {"type": "string"},
+            "severity": {"enum": ["error", "warning"]},
+            "message": {"type": "string"},
+        }),
+    );
+    let result = object(
+        &["id", "findings"],
+        json!({"id": {"type": "string"}, "findings": {"type": "array", "items": finding}}),
+    );
+    with_redactions(object(
+        &["repository", "results", "errors", "warnings"],
+        json!({
+            "repository": {"type": "string"},
+            "results": {"type": "array", "items": result},
+            "errors": {"type": "integer", "minimum": 0},
+            "warnings": {"type": "integer", "minimum": 0},
+        }),
+    ))
+}
+
+/// Replaces token-shaped strings, and the value of each tracker or Jev token variable that is
+/// set and at least 8 bytes long, with `[redacted]` in every string of a tool result.
+struct Redactor {
+    pattern: Regex,
+    values: Vec<String>,
+}
+impl Redactor {
+    fn from_env() -> Self {
+        Self {
+            pattern: Regex::new(
+                r"(?:ghp_|gho_|ghs_|github_pat_)[A-Za-z0-9_]+|glpat-[A-Za-z0-9_-]+|Bearer[ \t]+[A-Za-z0-9._~+/=-]{8,}",
+            )
+            .unwrap(),
+            values: TOKEN_VARIABLES
+                .iter()
+                .filter_map(|name| std::env::var(name).ok())
+                .filter(|value| value.len() >= 8)
+                .collect(),
+        }
+    }
+
+    fn redact(&self, value: &mut Value) -> usize {
+        match value {
+            Value::String(text) => {
+                let mut count = 0;
+                for secret in &self.values {
+                    let found = text.matches(secret.as_str()).count();
+                    if found > 0 {
+                        count += found;
+                        *text = text.replace(secret.as_str(), "[redacted]");
+                    }
+                }
+                let found = self.pattern.find_iter(text).count();
+                if found > 0 {
+                    count += found;
+                    *text = self.pattern.replace_all(text, "[redacted]").into_owned();
+                }
+                count
+            }
+            Value::Array(items) => items.iter_mut().map(|v| self.redact(v)).sum(),
+            Value::Object(map) => {
+                let mut count = 0;
+                *map = std::mem::take(map)
+                    .into_iter()
+                    .map(|(key, mut item)| {
+                        let mut key = Value::String(key);
+                        count += self.redact(&mut key) + self.redact(&mut item);
+                        (key.as_str().unwrap_or_default().to_owned(), item)
+                    })
+                    .collect();
+                count
+            }
+            _ => 0,
+        }
+    }
+}

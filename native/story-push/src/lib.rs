@@ -11,6 +11,7 @@ mod lenient_story;
 pub mod lint;
 pub mod list;
 pub mod machine;
+pub mod mcp;
 pub mod metrics;
 mod models;
 pub mod new_story;
@@ -55,6 +56,7 @@ pub const NATIVE_COMMANDS: &[(&str, Native)] = &[
     ("lint", lint::run),
     ("secret", |args| secret::run(args).map(|out| (out, 0))),
     ("machine", machine::run),
+    ("mcp", mcp::run),
     ("table", table::run),
     ("metrics", |args| metrics::run(args).map(|out| (out, 0))),
     ("export", |args| export::run(args).map(|out| (out, 0))),

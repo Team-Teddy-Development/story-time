@@ -64,7 +64,7 @@ The **principle-invest** skill holds the quality bar all of them apply.
 
 ## The `story` tool
 
-Use installed Rust `story` for `init`, `push`, `adopt preview`, `plan`, `config`, `show`, `list`, `lint`, `stats`, `secret`, `issues`, `note`, `machine`, `export`, `new`, `rank`, `set`, `split`, `table`, `judge`, `help`, and `metrics`.
+Use installed Rust `story` for `init`, `push`, `adopt preview`, `plan`, `config`, `show`, `list`, `lint`, `stats`, `secret`, `issues`, `note`, `machine`, `mcp`, `export`, `new`, `rank`, `set`, `split`, `table`, `judge`, `help`, and `metrics`.
 The skill installer copies skills only; install the executable separately.
 Read `.story-time/settings.json` before selecting a tracker. Install the native
 command from the repository root:
@@ -74,7 +74,7 @@ cargo install --path native/story-push --locked
 ```
 
 `story push` runs entirely in Rust. Do not invoke the historical Node push
-handler. `story init`, `story adopt preview`, `story plan`, `story config`, `story show`, `story list`, `story lint`, `story stats`, `story secret`, `story issues`, `story note`, `story machine`, `story export`, `story new`, `story rank`, `story set`, `story split`, `story table`, `story judge`, `story help`, and `story metrics` also run entirely in Rust. No command needs Node.
+handler. `story init`, `story adopt preview`, `story plan`, `story config`, `story show`, `story list`, `story lint`, `story stats`, `story secret`, `story issues`, `story note`, `story machine`, `story mcp`, `story export`, `story new`, `story rank`, `story set`, `story split`, `story table`, `story judge`, `story help`, and `story metrics` also run entirely in Rust. No command needs Node.
 Plan JSON is the default output; other commands use `--json`.
 
 The separate Rust `gitea-gateway story-push` interface remains available in
@@ -107,6 +107,7 @@ part of either Rust push execution path.
 | `story judge [id...]` | Judgement calls: need vs. solution, real benefit, testable criteria, type, size, split pattern. Jev with a key, code heuristics without. Native Rust; read-only |
 | `story secret set\|status\|clear <github\|ado\|jev>` | Store a tracker token or the TypeSafe key in `.story-time/.<name>.env` (mode 600, git-ignored). The user runs `set` themselves. Native Rust |
 | `story machine check\|criteria\|diagram <file>` | Check a state machine (`model/state/<entity>.toml`) for unreachable states, dead ends, transitions without an event, and unknown names; print one criterion per transition and per refused event; or print its Mermaid diagram. Exit 1 on defects. Native Rust; read-only |
+| `story mcp [--root DIR]...` | Read-only MCP server over stdio with `story_config`, `story_list`, `story_show`, and `story_lint` for the allowlisted repositories. No token, no network. Native Rust; read-only |
 | `story table check\|criteria <file>` | Check a decision table for uncovered input combinations and, under `unique`, overlapping rules; or print one criterion with a row per combination for a parameterized test. Exit 1 on defects. Native Rust; read-only |
 | `story init --from answers.json` / `story config` | Write / show the project config (`.story-time/settings.json`). Native Rust |
 | `story help` | Print the command summary. `story` with no command does the same. Native Rust; read-only |
