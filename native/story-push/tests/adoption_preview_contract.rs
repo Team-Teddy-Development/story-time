@@ -232,6 +232,10 @@ fn conflicting_duplicate_id_or_remote_is_a_conflict_for_that_file() {
     for (extra, code) in [
         ("id: PAY-009\r\n", "duplicate_id"),
         ("remote: 7\r\nremote: 8\r\n", "remote_conflict"),
+        (
+            "remote_url: https://github.com/acme/shop/issues/7\r\nremote_url: https://github.com/acme/shop/issues/8\r\n",
+            "remote_conflict",
+        ),
     ] {
         let p = Project::new();
         p.config(false);
