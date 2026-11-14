@@ -448,6 +448,18 @@ fn a_split_parent_keeps_its_estimate_without_a_size_finding() {
         &format!("title: Unsplit\nstatus: ready\nsize: 13\n{scored}"),
         &sections,
     );
+    for (id, children) in [("ST-005", ""), ("ST-006", "\nchildren: []")] {
+        s.story(
+            id,
+            &format!("title: Marked split by hand\nstatus: split\nsize: 13\n{scored}{children}"),
+            &sections,
+        );
+        let hand_split = s.both_forms(&[id], 1);
+        assert!(
+            hand_split.contains("Size 13 >= 13: too big to finish in a sprint. Split it."),
+            "{hand_split}"
+        );
+    }
     s.both_forms(&["ST-001", "ST-002"], 0);
     let parent = s.both_forms(&["ST-001"], 0);
     assert!(!parent.contains("size.small"), "{parent}");
