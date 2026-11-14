@@ -319,7 +319,10 @@ fn source_selects_the_skills_folder() {
             .and_then(|(_, b)| b.clone()),
         Some(b"alpha".to_vec())
     );
-    assert!(!run.tree.keys().any(|k| k.ends_with("scripts/test")));
+    assert!(!run
+        .tree
+        .keys()
+        .any(|k| k.starts_with("home") && k.ends_with("scripts/test")));
     let installed: Vec<&PathBuf> = run
         .tree
         .keys()

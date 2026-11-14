@@ -6,7 +6,11 @@ use std::{
 use story_time_native::skill_install::{self, Agent, Target};
 
 const USAGE: &str = "Usage: story-install-skills --agent codex|claude|all [--scope user|project]
-                            [--project DIR] [--codex-home DIR] [--force] [--dry-run]
+                            [--project DIR] [--codex-home DIR] [--source DIR]
+                            [--force] [--dry-run]
+
+  --source DIR  the story-time checkout or release whose skills/ to copy
+                (default: the checkout this binary was built from)
 
   codex  user    ~/.agents/skills      (or $CODEX_HOME/skills with --codex-home)
   codex  project <project>/.agents/skills
@@ -24,6 +28,7 @@ struct Flags {
     scope: Option<String>,
     project: Option<String>,
     codex_home: Option<String>,
+    source: Option<String>,
     force: bool,
     dry_run: bool,
 }
@@ -40,6 +45,7 @@ fn parse(args: &[String]) -> Result<Flags, Failure> {
             "scope" => &mut flags.scope,
             "project" => &mut flags.project,
             "codex-home" => &mut flags.codex_home,
+            "source" => &mut flags.source,
             "force" => {
                 flags.force = true;
                 continue;
@@ -89,10 +95,23 @@ fn run(args: &[String]) -> Result<(), Failure> {
             "Unknown agent \"{agent}\". Use: claude, codex, all."
         ))
     })?;
-    let skills_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../skills");
+    let cwd = std::env::current_dir().map_err(|e| Failure::Fatal(e.to_string()))?;
+    let source = match &flags.source {
+        Some(dir) => cwd.join(dir),
+        None => Path::new(env!("CARGO_MANIFEST_DIR")).join("../.."),
+    };
+    let skills_dir = skill_install::normalize(&source.join("skills"));
+    if !skills_dir.is_dir() {
+        return Err(Failure::Fatal(format!(
+            "No story-time skills folder at {}.\nPass --source DIR with the story-time checkout or release that holds skills/.",
+            skills_dir.display()
+        )));
+    }
     let fatal = |e: std::io::Error| Failure::Fatal(e.to_string());
     let skills = skill_install::skill_names(&skills_dir).map_err(fatal)?;
-    let home = PathBuf::from(std::env::var_os("HOME").unwrap_or_default());
+    let home = std::env::home_dir()
+        .filter(|home| home.is_absolute())
+        .ok_or_else(|| Failure::Fatal("Cannot find your home folder.".into()))?;
     let plan = skill_install::plan(&agents, &target(&flags, home)?, &skills);
 
     let clashes: Vec<String> = plan
