@@ -36,6 +36,8 @@ and name the failing command and its error in Gaps.
 `story list --json` is the only story source. The default scope is every
 story in `story list --json` except `archived` ones; use a narrower scope
 (an epic, a sprint) only when the user names it. The report states its scope.
+State the scope as the `story list --json` count and each excluded count
+separately.
 
 Also read each of these that exists, and name the ones that do not:
 
@@ -78,7 +80,8 @@ or prose.
 
 Never compute a figure yourself. Copy each figure from `story metrics` with
 its window and units. Copy a count directly from `story list --json` or
-`story metrics` output and cite the command. Never estimate a figure or
+`story metrics` output and cite the command. Copy each count as printed;
+never add, subtract, or total counts. Never estimate a figure or
 derive a rate or forecast, and do not convert points to hours or days.
 Comparing two copied and cited numbers is allowed, such as the `in-progress`
 count against the WIP limit from `story config --json`; state both numbers.
@@ -96,12 +99,19 @@ with none appears only in the `open` counts.
   delivery evidence. A manifest `handoff` row is not a release.
 - `blocked`: any open story with a named blocker, whatever its status. A
   `blocked` row names its blocker: a `depends_on` story that is not `done`,
-  or a blocker the story Notes or a flow-review report name.
+  or an item that a flow-review report or the story Notes say the story is
+  blocked on or waits for. A Notes blocker names that item: a story ID, an
+  issue, a person, or a named external deliverable. Notes that mention risks
+  or "blockers" without naming what the story waits for are not a blocker;
+  such text may become a risk row that cites the Notes.
 - `forecast`: work expected later. A forecast is not a commitment. Label it
   as a forecast and cite a basis that already states a date or scope: a
   sprint plan, a release manifest, or an epic map order. An epic map's slice
-  order is a scope basis with no date. With no such basis, the forecast is
-  `unknown`. Never compute a forecast.
+  order is a scope basis with no date. A forecast row goes to each open
+  story that is not blocked and has a cited basis that states a date or
+  scope (sprint plan, release manifest, epic map slice), `in-progress`
+  stories with such a basis included. Every other open story appears only
+  in the `open` counts. Never compute a forecast.
 - `open`: one `open` count per status (`draft`, `refined`, `ready`,
   `in-progress`) from `story list --json`. The `open` counts are a separate
   summary that overlaps the state rows; say so under the table.
@@ -112,7 +122,9 @@ and `forecast` story as its own row.
 
 `split` and `archived` stories are excluded, with their counts stated. A state
 with no entries gets one row with `none` in Work and Claim, and the command
-that showed none as its Record.
+that showed none as its Record. When `docs/releases/` does not exist, the
+`released` row keeps `none` in Work and Claim, its Record is the missing path
+`docs/releases/`, and Gaps names it.
 
 ## 5. Write the report
 
@@ -140,7 +152,7 @@ order:
 | ST-047 | `released` | EP-001 health check v1.4.0 reached production | `docs/releases/1.4.0.md` Delivery |
 | ST-052 | `blocked` | Waits for ST-051, which is `in-progress` | `ST-052 depends_on`, `docs/flow/2026-11-12.md` |
 | ST-055 | `forecast` | Forecast, not a commitment: next sprint, basis sprint plan | `docs/planning/sprint.json` |
-| 12 stories | `open` | 9 `draft`, 3 `ready` | `story list --json` |
+| `open` stories | `open` | 9 `draft`, 3 `ready` | `story list --json` |
 
 ### Metrics
 
@@ -154,6 +166,11 @@ Every risk, decision, and next action names an owner. When the owner is
 not recorded, write `unknown` in Owner, keep a risk's own next action in its
 Next action cell, and add one Next actions row, "Lead assigns an owner",
 owned by the lead.
+
+A risk row needs a record that names the risk: a story's Notes, a decision
+log, a report, or the user. A comparison of two copied numbers, such as the
+`in-progress` count over the WIP limit, may be a risk row that cites both
+numbers' records. Invent no other risk.
 
 | Risk | Owner | Next action | Record |
 |---|---|---|---|
