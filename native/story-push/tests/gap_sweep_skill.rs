@@ -56,3 +56,28 @@ fn story_create_adopts_the_source_issue_before_it_syncs() {
         "remote must be set before the sync step pushes"
     );
 }
+
+#[test]
+fn gap_sweep_lists_open_gitea_issues_read_only_and_drops_story_remotes() {
+    let text = skill("gap-sweep");
+    let gitea = position(&text, "when `tracker` is `gitea`");
+    let listing = position(&text, "story issues --state open --limit 200 --json");
+    assert!(gitea < listing, "Gitea issues come from the native command");
+    for handled in ["curl", "GITEA_TOKEN", "Authorization"] {
+        assert!(
+            !text.contains(handled),
+            "the skill must not handle a token or call the API directly: {handled}"
+        );
+    }
+    assert!(
+        text[gitea..].contains("skipped (no signed-in Gitea access)"),
+        "a failed listing is recorded as skipped"
+    );
+    let drop = position(&text, "Drop issues whose number is any story's `remote`");
+    assert!(gitea < drop, "Gitea issues pass through the remote filter");
+    let skipped = text
+        .lines()
+        .find(|line| line.contains("tracker collector skipped"))
+        .unwrap();
+    assert!(!skipped.contains("Gitea"), "{skipped}");
+}

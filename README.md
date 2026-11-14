@@ -23,7 +23,7 @@ script. Here the subject is the story lifecycle, from idea to accepted.
 | `story-ready` | "is this ready?" | Definition of Ready gate: automated INVEST lint plus judgment checks. The only way into `ready`. |
 | `refinement` | "refine ST-012", "refine the backlog" | One workflow for single-story depth or complete open-story inventory, epic questions, preserved estimates, and ordered ready candidates. |
 | `backlog-groom` | "groom the backlog" | Compatibility alias to refinement in backlog mode. |
-| `gap-sweep` | "what are we missing?" | Finds work with no story in code, tests, docs, stories, and open GitHub issues, plus up to 2 evidence-backed features. Proposes at most 10 rows and hands approved ones to story-create. |
+| `gap-sweep` | "what are we missing?" | Finds work with no story in code, tests, docs, stories, and open GitHub or Gitea issues, plus up to 2 evidence-backed features. Proposes at most 10 rows and hands approved ones to story-create. |
 | `sprint-planning` | "plan a sprint" | Goal-based local JSON and Markdown proposals with explicit capacity, completed dependencies, deferred work, and forecast limits. |
 | `flow-review` | "what is stuck?" | Read-only report of blocked, aging, and over-WIP work, each with an owner and a next action, plus scope swaps with their capacity effect. Missing sprint and flow data stays `unknown`; pulls go to story-pick. |
 | `story-pick` | "what's next?" | WSJF-ranked pick, checked against WIP, capacity, dependencies, and risk, with alternatives. |

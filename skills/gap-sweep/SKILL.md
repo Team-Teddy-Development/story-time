@@ -1,6 +1,6 @@
 ---
 name: gap-sweep
-description: Find work that has no story yet (code markers, skipped tests, unmet doc promises, unfiled spike and Out of Scope follow-ups, open GitHub issues) plus up to 2 evidence-backed feature ideas, propose at most 10 rows with checkable evidence, and hand the approved rows to story-create. Use when the user says "sweep for gaps", "what are we missing", "find unfiled work", or "suggest features".
+description: Find work that has no story yet (code markers, skipped tests, unmet doc promises, unfiled spike and Out of Scope follow-ups, open GitHub and Gitea issues) plus up to 2 evidence-backed feature ideas, propose at most 10 rows with checkable evidence, and hand the approved rows to story-create. Use when the user says "sweep for gaps", "what are we missing", "find unfiled work", or "suggest features".
 ---
 
 # Gap Sweep
@@ -32,7 +32,7 @@ backlog directory, and this skill's own files.
 | Skipped tests | Tests marked to skip or ignore inside test code, such as `#[ignore]`, `it.skip(`, `test.skip(`, `describe.skip(`, `@pytest.mark.skip` | defect |
 | Doc promises | Commands and flags that README and `docs/` describe, checked against the CLI's help output | doc_gap |
 | Story follow-ups | `## Out of Scope` items and spike `## Findings` follow-ups in `story list --json` that name work with no story | follow_up |
-| GitHub issues | Open issues without the `story` label (see below). A `bug` label makes the kind `defect` | follow_up |
+| Tracker issues | Open GitHub or Gitea issues without the `story` label (see below). A `bug` label makes the kind `defect` | follow_up |
 | Feature anchors | A workaround in code, a manual step the docs repeat, or an issue body that asks for a capability the code lacks. Each names the persona who benefits | feature |
 
 GitHub issues, when `tracker` is `github`:
@@ -41,7 +41,18 @@ GitHub issues, when `tracker` is `github`:
 gh issue list --state open --limit 200 --search "-label:story" --json number,title,labels,body
 ```
 
-Drop issues whose number is any story's `remote`. If the command returns 200
+Gitea issues, when `tracker` is `gitea`. The native `story` command lists
+them with GET requests only, through the project's signed-in Gitea access:
+
+```bash
+story issues --state open --limit 200 --json
+```
+
+Drop issues with a `story` label. If the command fails, for example because
+the project has no signed-in Gitea access, record
+`skipped (no signed-in Gitea access)` with its error message.
+
+Drop issues whose number is any story's `remote`. If the collector returns 200
 items, report the list as truncated. For any other tracker, or none, record
 `tracker collector skipped (not yet supported)`.
 

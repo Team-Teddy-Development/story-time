@@ -620,6 +620,71 @@ fn execute(plan: &[Planned], gateway: &mut dyn Tracker, date: &str) -> Result<Va
     )
 }
 
+pub fn issues(args: &[String]) -> Result<String, Failure> {
+    let usage = |message: String| Failure { code: 2, message };
+    let (mut json, mut limit, mut rest) = (false, 200, Vec::new());
+    let mut index = 0;
+    while index < args.len() {
+        match args[index].as_str() {
+            "--json" => json = true,
+            "--state" => {
+                index += 1;
+                if args.get(index).map(String::as_str) != Some("open") {
+                    return Err(usage("story issues lists only --state open.".into()));
+                }
+            }
+            "--limit" => {
+                index += 1;
+                limit = args
+                    .get(index)
+                    .and_then(|n| n.parse::<usize>().ok())
+                    .filter(|n| *n > 0)
+                    .ok_or_else(|| usage("--limit needs a positive number.".into()))?;
+            }
+            _ => rest.push(args[index].clone()),
+        }
+        index += 1;
+    }
+    let args = parse(&rest)?;
+    if !args.ids.is_empty() || args.all || args.dry {
+        return Err(usage(
+            "Usage: story issues --state open [--limit N] [--json]".into(),
+        ));
+    }
+    let ctx = context(&args)?;
+    if ctx.config["tracker"] != "gitea" {
+        return Err("story issues lists Gitea issues only. For a github tracker, run gh issue list --state open.".into());
+    }
+    let issues = Gateway::new(&ctx.config, &ctx.root)?.open_issues(limit)?;
+    if json {
+        return Ok(format!(
+            "{}\n",
+            serde_json::to_string_pretty(&issues).map_err(|e| e.to_string())?
+        ));
+    }
+    Ok(table(
+        &["Number", "Title", "Labels"],
+        issues
+            .iter()
+            .map(|i| {
+                vec![
+                    i["number"].to_string(),
+                    i["title"].as_str().unwrap_or_default().to_owned(),
+                    i["labels"]
+                        .as_array()
+                        .map(|l| {
+                            l.iter()
+                                .filter_map(Value::as_str)
+                                .collect::<Vec<_>>()
+                                .join(",")
+                        })
+                        .unwrap_or_default(),
+                ]
+            })
+            .collect(),
+    ))
+}
+
 pub fn push(args: &[String]) -> Result<String, Failure> {
     let args = parse(args)?;
     let ctx = context(&args)?;

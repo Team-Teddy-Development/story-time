@@ -18,11 +18,16 @@ below disagrees with this section, this section wins.
     `story set <id> remote=<n>` after `story new` and before its sync step. The
     push then updates the issue. That path is already tested in
     `native/story-push/tests/cli.rs:62`.
-*   **GitHub only.** The tracker collector runs
-    `gh issue list --state open --limit 200 --search "-label:story"`, drops
-    issues that are a story's `remote`, and reports truncation. Every other
-    tracker reports `tracker collector skipped (not yet supported)`. The skill
-    never touches a token.
+*   **GitHub and Gitea.** The tracker collector runs
+    `gh issue list --state open --limit 200 --search "-label:story"` on
+    GitHub. On Gitea (ST-037) it runs the native
+    `story issues --state open --limit 200 --json`, which pages read-only GETs
+    of `/api/v1/repos/<owner>/<repo>/issues?state=open&type=issues` with the
+    project's stored tracker credential and drops pull requests. The skill
+    drops issues with a `story` label. Both drop issues that are a story's
+    `remote` and report truncation. The agent never handles the token; a
+    failed listing is recorded as skipped. Every other tracker reports
+    `tracker collector skipped (not yet supported)`.
 *   **Collectors only gather.** The walk checks every kind's excerpt, so only
     rows that reach the table cost a judgment. Skip patterns are anchored to
     test code. `docs/designs/`, the backlog, and the skill's own files are
@@ -227,7 +232,7 @@ sets it.
 | Skipped tests | `git grep -n` for `#[ignore]`, `.skip(`, `it.skip`, `xit(`, `@pytest.mark.skip`, `t.Skip(` | defect |
 | Doc promises | README and `docs/`: commands, flags, or behavior that the code or `--help` output does not provide | doc_gap |
 | Story follow-ups | `## Out of Scope` items and spike `## Findings` follow-ups from `story list --json` | follow_up |
-| Tracker issues | Open issues whose number is in no story's `remote`. GitHub: `gh issue list --state open --json number,title,labels,body`. Gitea: `GET /api/v1/repos/{owner}/{repo}/issues?state=open&type=issues`. ADO: a WIQL query through `az boards query`. Jira and Linear: the tracker's own tool, per `skills/story-time/references/backends.md`. A `bug` label sets `defect`. | follow_up or defect |
+| Tracker issues | Open issues whose number is in no story's `remote`. GitHub: `gh issue list --state open --json number,title,labels,body`. Gitea: `story issues --state open --limit 200 --json` (native GETs of `/api/v1/repos/{owner}/{repo}/issues?state=open&type=issues`). ADO: a WIQL query through `az boards query`. Jira and Linear: the tracker's own tool, per `skills/story-time/references/backends.md`. A `bug` label sets `defect`. | follow_up or defect |
 | Feature anchors | Workarounds, repeated manual steps in docs, issue comments asking for something; each with an excerpt and a persona | feature |
 
 The tracker collector is skipped when no tracker is configured, and the
