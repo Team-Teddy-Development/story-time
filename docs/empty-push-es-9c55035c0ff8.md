@@ -2,8 +2,9 @@
 
 Fingerprint: `es_9c55035c0ff8`.
 
-Status: reproduced, not fixed. The sentinel's existing session-follow-up record
-is not source-fix evidence.
+Status: fixed in the Node handler by ST-098, which also matches the native
+`story push` behavior. `native/story-push/tests/push_flag_contract.rs` compares
+both runtimes on an empty and a missing backlog.
 
 ## Root cause
 
@@ -34,7 +35,7 @@ Observed baseline result: two passed, one failed. The failed assertion reports
 ## Acceptance gates
 
 - Empty authorized `push --all --dry-run --json` exits 0 and returns
-  `{"ok":true,"plan":[]}` without stderr, credentials, or local writes: UNMET.
+  `{"ok":true,"plan":[]}` without stderr, credentials, or local writes: MET by ST-098.
 - Missing explicit targets remain a usage error: MET by baseline test.
 - Disabled synchronization remains rejected: MET by baseline test.
 - Nonempty push behavior and full existing suite remain verified after the fix: UNMET.

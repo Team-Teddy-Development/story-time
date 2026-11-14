@@ -6,15 +6,28 @@ use std::{
 
 struct Sandbox(PathBuf);
 impl Sandbox {
-    fn new() -> Self {
-        let path = std::env::temp_dir().join(format!("story-push-flags-{}", std::process::id()));
+    fn bare(tag: &str, settings: &str) -> PathBuf {
+        let path = std::env::temp_dir().join(format!("story-push-{tag}-{}", std::process::id()));
         let _ = fs::remove_dir_all(&path);
         fs::create_dir_all(path.join(".story-time")).unwrap();
-        fs::write(
-            path.join(".story-time/settings.json"),
+        fs::write(path.join(".story-time/settings.json"), settings).unwrap();
+        path
+    }
+    fn empty(backlog: bool) -> Self {
+        let path = Self::bare(
+            if backlog { "empty" } else { "missing" },
+            r#"{"tracker":"gitea","sync":"ask","gitea":{"baseUrl":"http://127.0.0.1:1","owner":"o","repo":"r"}}"#,
+        );
+        if backlog {
+            fs::create_dir(path.join("backlog")).unwrap();
+        }
+        Self(path.canonicalize().unwrap())
+    }
+    fn new() -> Self {
+        let path = Self::bare(
+            "flags",
             r#"{"tracker":"github","sync":"ask","github":{"repo":"o/r"}}"#,
-        )
-        .unwrap();
+        );
         for (folder, title, remote) in [("backlog", "From default", 3), ("--x", "From dash dir", 4)]
         {
             fs::create_dir_all(path.join(folder)).unwrap();
@@ -121,6 +134,56 @@ fn push_parses_flags_like_node() {
         }
         if let Some(refusal) = refusals.iter().find(|(a, _)| a == args) {
             assert_eq!(text(&node.stderr), format!("{}\n", refusal.1), "{args:?}");
+        }
+    }
+}
+
+#[test]
+fn push_all_on_an_empty_or_missing_backlog_agrees_with_node() {
+    let text = |b: &[u8]| String::from_utf8_lossy(b).into_owned();
+    let cases: &[(&[&str], i32, &str)] = &[
+        (&["push", "--all", "--dry-run"], 0, "Action  ID  Remote\n"),
+        (
+            &["push", "--all", "--dry-run", "--json"],
+            0,
+            "{\n  \"ok\": true,\n  \"plan\": []\n}\n",
+        ),
+        (&["push", "--all"], 0, "Nothing to push.\n"),
+        (
+            &["push", "--all", "--json"],
+            0,
+            "{\n  \"ok\": true,\n  \"pushed\": [],\n  \"skipped\": []\n}\n",
+        ),
+        (&["push", "--dry-run"], 2, ""),
+        (&["push", "--json"], 2, ""),
+    ];
+    for backlog in [true, false] {
+        let sandbox = Sandbox::empty(backlog);
+        for (args, code, stdout) in cases {
+            let node = sandbox.run(false, args);
+            let native = sandbox.run(true, args);
+            let seen = |o: &Output| (text(&o.stdout), text(&o.stderr), o.status.code());
+            assert_eq!(seen(&native), seen(&node), "backlog={backlog} {args:?}");
+            let expected_stderr = if *code == 2 {
+                "Usage: story push <id...> | --all [--dry-run]\n"
+            } else {
+                ""
+            };
+            assert_eq!(
+                seen(&node),
+                (
+                    (*stdout).to_owned(),
+                    expected_stderr.to_owned(),
+                    Some(*code)
+                ),
+                "backlog={backlog} {args:?}"
+            );
+            assert_eq!(
+                fs::read_dir(sandbox.0.join(".story-time")).unwrap().count(),
+                1,
+                "backlog={backlog} {args:?} wrote under .story-time"
+            );
+            assert_eq!(sandbox.0.join("backlog").exists(), backlog);
         }
     }
 }
