@@ -35,6 +35,11 @@ impl Sandbox {
             .find(|p| p.is_file())
             .expect("git on PATH");
         symlink(git, git_only.join("git")).unwrap();
+        let names: Vec<_> = fs::read_dir(&git_only)
+            .unwrap()
+            .map(|e| e.unwrap().file_name())
+            .collect();
+        assert_eq!(names, ["git"], "native PATH holds only git, so no node can run");
         let root = root.canonicalize().unwrap();
         Self {
             template: root.join("template"),
