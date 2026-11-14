@@ -115,6 +115,16 @@ impl Fixture {
     fn server(&self) -> Server {
         Server::start(&["--root", self.root.to_str().unwrap()], &self.root, &[])
     }
+    fn writer(&self) -> Server {
+        Server::start(
+            &["--root", self.root.to_str().unwrap(), "--write"],
+            &self.root,
+            &[],
+        )
+    }
+    fn read(&self, relative: &str) -> String {
+        fs::read_to_string(self.root.join(relative)).unwrap()
+    }
 }
 impl Drop for Fixture {
     fn drop(&mut self) {
@@ -893,7 +903,7 @@ fn claude_code_and_codex_handshakes_list_the_fixture_stories() {
 #[test]
 fn story_mcp_refuses_an_unknown_option() {
     let output: Output = Command::new(env!("CARGO_BIN_EXE_story"))
-        .args(["mcp", "--write"])
+        .args(["mcp", "--writes"])
         .env_clear()
         .env("PATH", "/nonexistent")
         .stdin(Stdio::null())
@@ -956,5 +966,264 @@ fn story_lint_reads_an_outside_machine_the_same_whether_it_exists() {
             "{machine:#?}"
         );
     }
+    server.finish();
+}
+
+const READ_TOOLS: [&str; 4] = ["story_config", "story_list", "story_show", "story_lint"];
+
+fn tool_names(server: &mut Server) -> Vec<String> {
+    let listed = server.modern("tools/list", json!({}));
+    listed["result"]["tools"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|t| t["name"].as_str().unwrap().to_owned())
+        .collect()
+}
+
+fn sha256(fixture: &Fixture, id: &str) -> String {
+    let mut server = fixture.server();
+    let shown = server.tool("story_show", json!({"id": id}));
+    let sha = structured(&shown)["sha256"].as_str().unwrap().to_owned();
+    server.finish();
+    sha
+}
+
+fn changelog_lines(text: &str) -> usize {
+    text.split("## Changelog")
+        .nth(1)
+        .map_or(0, |log| log.lines().filter(|l| l.starts_with("- ")).count())
+}
+
+#[test]
+fn without_write_no_write_tool_is_listed_and_a_write_call_is_an_unknown_tool() {
+    let fixture = Fixture::new().with_stories(2);
+    let before = fixture.snapshot();
+    let sha = sha256(&fixture, "ST-001");
+    let mut server = fixture.server();
+    assert_eq!(tool_names(&mut server), READ_TOOLS);
+    for (name, arguments) in [
+        (
+            "story_update",
+            json!({"id": "ST-001", "expected_sha256": sha, "set": {"status": "refined"}}),
+        ),
+        (
+            "story_note",
+            json!({"id": "ST-001", "expected_sha256": sha, "note": "hello"}),
+        ),
+    ] {
+        let response = server.modern("tools/call", json!({"name": name, "arguments": arguments}));
+        assert_eq!(response["error"]["code"], -32602, "{response}");
+    }
+    server.finish();
+    assert_eq!(fixture.snapshot(), before);
+
+    let mut server = fixture.writer();
+    let listed = server.modern("tools/list", json!({}));
+    let tools = listed["result"]["tools"].as_array().unwrap();
+    let names: Vec<&str> = tools.iter().map(|t| t["name"].as_str().unwrap()).collect();
+    assert_eq!(
+        names,
+        [READ_TOOLS.as_slice(), &["story_update", "story_note"]].concat()
+    );
+    for tool in tools {
+        let write = tool["name"] == "story_update" || tool["name"] == "story_note";
+        assert_eq!(tool["annotations"]["readOnlyHint"], !write, "{tool}");
+        assert_eq!(tool["annotations"]["openWorldHint"], false, "{tool}");
+    }
+    let update = tools.iter().find(|t| t["name"] == "story_update").unwrap();
+    assert_eq!(update["annotations"]["destructiveHint"], true);
+    assert_eq!(update["annotations"]["idempotentHint"], true);
+    assert_eq!(
+        update["inputSchema"]["required"],
+        json!(["id", "expected_sha256", "set"])
+    );
+    let note = tools.iter().find(|t| t["name"] == "story_note").unwrap();
+    assert_eq!(note["annotations"]["idempotentHint"], false);
+    server.finish();
+}
+
+#[test]
+fn story_update_writes_what_story_set_writes_and_returns_audit_evidence() {
+    for (sync, next) in [
+        ("ask", json!("story push ST-002")),
+        ("auto", json!("story push ST-002")),
+        ("off", Value::Null),
+    ] {
+        let by_cli = Fixture::new().with_stories(3);
+        let by_mcp = Fixture::new().with_stories(3);
+        let settings = SETTINGS.replace("\"ask\"", &format!("\"{sync}\""));
+        by_cli.write(".story-time/settings.json", &settings);
+        by_mcp.write(".story-time/settings.json", &settings);
+        let before = by_mcp.read("backlog/ST-002.md");
+        let sha = sha256(&by_mcp, "ST-002");
+
+        by_cli.cli(&[
+            "set",
+            "ST-002",
+            "status=refined",
+            "size=3",
+            "depends_on=ST-001,ST-003",
+            "type=",
+            "--note",
+            "Refined in review",
+            "--json",
+        ]);
+        let mut server = by_mcp.writer();
+        let schemas = output_schemas(&mut server);
+        let result = server.tool(
+            "story_update",
+            json!({
+                "id": "ST-002",
+                "expected_sha256": sha,
+                "set": {"status": "refined", "size": 3, "depends_on": ["ST-001", "ST-003"], "type": null},
+                "note": "Refined in review",
+            }),
+        );
+        let content = structured(&result).clone();
+        conforms(&schemas["story_update"], &content, "story_update").unwrap();
+        let (_, _, stderr) = server.finish();
+
+        let written = by_mcp.read("backlog/ST-002.md");
+        assert_eq!(written, by_cli.read("backlog/ST-002.md"));
+        assert_ne!(written, before);
+        assert_eq!(content["status"], "updated");
+        assert_eq!(content["sha256_before"], sha);
+        assert_eq!(content["sha256_after"], sha256(&by_mcp, "ST-002"));
+        assert_eq!(content["story"]["status"], "refined");
+        assert_eq!(content["story"]["sha256"], content["sha256_after"]);
+        let line =
+            "set status=refined, size=3, depends_on=ST-001,ST-003, type= — Refined in review";
+        assert_eq!(content["audit"]["changelog"], line);
+        assert!(written.contains(&format!(" {line}\n")), "{written}");
+        assert_eq!(content["audit"]["operation"], "story_update");
+        assert_eq!(content["audit"]["repository"], "fixture");
+        assert_eq!(content["audit"]["id"], "ST-002");
+        assert_eq!(
+            content["audit"]["fields"],
+            json!(["status", "size", "depends_on", "type"])
+        );
+        assert_eq!(content["publish"]["sync"], sync);
+        assert_eq!(content["publish"]["tracker"], "github");
+        assert_eq!(content["publish"]["pushed"], false);
+        assert_eq!(content["publish"]["next"], next);
+
+        let audit: Value = serde_json::from_str(stderr.lines().last().unwrap()).unwrap();
+        assert_eq!(audit["tool"], "story_update");
+        assert_eq!(audit["sha256_before"], content["sha256_before"]);
+        assert_eq!(audit["sha256_after"], content["sha256_after"]);
+        assert!(!stderr.contains("Refined in review"), "{stderr}");
+    }
+}
+
+#[test]
+fn story_update_refusals_carry_their_codes_and_change_nothing_unintended() {
+    let fixture = Fixture::new().with_stories(3);
+    fixture.write(
+        "backlog/ST-004.md",
+        "---\nid: ST-004\ntitle: Unfinished\nstatus: draft\ntype: story\ncreated: 2026-11-14\nupdated: 2026-11-14\n---\n\n## Story\nSomething.\n",
+    );
+    let sha = sha256(&fixture, "ST-002");
+    let mut server = fixture.writer();
+    let mut refuse = |server: &mut Server, arguments: Value| -> Value {
+        let before = fixture.snapshot();
+        let result = server.tool("story_update", arguments);
+        assert_eq!(fixture.snapshot(), before);
+        tool_error(&result).clone()
+    };
+
+    let stale = "0".repeat(64);
+    let error = refuse(
+        &mut server,
+        json!({"id": "ST-002", "expected_sha256": stale, "set": {"status": "refined"}}),
+    );
+    assert_eq!(error["code"], "conflict");
+    assert_eq!(error["retryable"], true);
+    assert_eq!(error["details"]["expected_sha256"], stale);
+    assert_eq!(error["details"]["current_sha256"], sha);
+
+    for field in ["remote", "remote_url", "id", "created"] {
+        let error = refuse(
+            &mut server,
+            json!({"id": "ST-002", "expected_sha256": sha, "set": {"status": "refined", field: "x"}}),
+        );
+        assert_eq!(error["code"], "field_not_writable", "{field}: {error}");
+        assert_eq!(error["details"]["field"], field);
+    }
+
+    let draft = sha256(&fixture, "ST-004");
+    let error = refuse(
+        &mut server,
+        json!({"id": "ST-004", "expected_sha256": draft, "set": {"status": "ready"}}),
+    );
+    assert_eq!(error["code"], "lifecycle_refused", "{error}");
+    let findings = error["details"]["findings"].as_array().unwrap();
+    assert!(!findings.is_empty());
+    assert!(findings
+        .iter()
+        .all(|f| f["rule"].is_string() && f["message"].is_string()));
+
+    let root = fs::File::open(&fixture.root).unwrap();
+    root.try_lock().unwrap();
+    let error = refuse(
+        &mut server,
+        json!({"id": "ST-002", "expected_sha256": sha, "set": {"status": "refined"}}),
+    );
+    assert_eq!(error["code"], "lock_held");
+    assert_eq!(error["retryable"], true);
+    drop(root);
+
+    let update = json!({"id": "ST-002", "expected_sha256": sha, "set": {"status": "refined", "size": 3}, "note": "why"});
+    let first = server.tool("story_update", update.clone());
+    let first = structured(&first).clone();
+    assert_eq!(first["status"], "updated");
+    let applied = fixture.read("backlog/ST-002.md");
+    let retry = server.tool("story_update", update);
+    let retry = structured(&retry).clone();
+    assert_eq!(retry["status"], "already_applied");
+    assert_eq!(retry["sha256_before"], first["sha256_after"]);
+    assert_eq!(retry["sha256_after"], first["sha256_after"]);
+    assert_eq!(fixture.read("backlog/ST-002.md"), applied);
+    assert_eq!(changelog_lines(&applied), 1);
+
+    let error = refuse(
+        &mut server,
+        json!({"id": "ST-002", "expected_sha256": sha, "set": {"status": "done"}}),
+    );
+    assert_eq!(error["code"], "conflict");
+    server.finish();
+}
+
+#[test]
+fn story_note_appends_what_story_note_appends_and_a_stale_hash_is_a_conflict() {
+    let by_cli = Fixture::new().with_stories(2);
+    let by_mcp = Fixture::new().with_stories(2);
+    let sha = sha256(&by_mcp, "ST-001");
+    by_cli.cli(&["note", "ST-001", "Reworded the story", "--json"]);
+    let mut server = by_mcp.writer();
+    let schemas = output_schemas(&mut server);
+    let result = server.tool(
+        "story_note",
+        json!({"id": "ST-001", "expected_sha256": sha, "note": "Reworded the story"}),
+    );
+    let content = structured(&result).clone();
+    conforms(&schemas["story_note"], &content, "story_note").unwrap();
+    assert_eq!(
+        by_mcp.read("backlog/ST-001.md"),
+        by_cli.read("backlog/ST-001.md")
+    );
+    assert_eq!(content["status"], "updated");
+    assert_eq!(content["audit"]["changelog"], "Reworded the story");
+    assert_eq!(content["publish"]["next"], "story push ST-001");
+
+    let before = by_mcp.snapshot();
+    let retry = server.tool(
+        "story_note",
+        json!({"id": "ST-001", "expected_sha256": sha, "note": "Reworded the story"}),
+    );
+    let error = tool_error(&retry);
+    assert_eq!(error["code"], "conflict");
+    assert_eq!(error["details"]["current_sha256"], content["sha256_after"]);
+    assert_eq!(by_mcp.snapshot(), before);
     server.finish();
 }
