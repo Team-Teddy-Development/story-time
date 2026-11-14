@@ -6,18 +6,21 @@ start sprints, update story status or estimates, or synchronize tracker fields.
 
 ## Install the native prerequisite
 
-From the Story Time source checkout, run:
+Install native `story` with the steps in the repository
+[README install section](../../README.md#install). From the Story Time source
+checkout, the manual route is:
 
 ```bash
 cargo install --path native/story-push --locked
-export STORY_TIME_LEGACY_CLI="$PWD/skills/story-time/scripts/story.mjs"
 ```
+
+The native `story` binary runs every command, including `story config` and
+`story plan`, and no `story` command requires Node.
 
 The retained Node skill installer copies skills only. It does not install native
 `story`, Cargo, or documentation outside the skills tree. Copied skills include
 the [planning request reference](../../skills/story-time/references/planning.md)
 and [version-1 JSON schema](../../skills/story-time/references/planning-request.schema.json).
-Node remains necessary for retained commands such as `story config`, not planning.
 
 ## Run a complete request against your project
 
