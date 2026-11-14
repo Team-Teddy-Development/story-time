@@ -12,7 +12,7 @@ fn main() -> ExitCode {
             [--type story|spike|bug|chore] [--epic ID] [--json]\n\n\
             Creates a draft story and returns its allocated ID. Use the returned ID\n\
             for subsequent commands; do not assume the next number.\n\
-            Creation requires the retained Node CLI. This help command is native and read-only."
+            Creation is native. This help command is read-only."
         );
         return ExitCode::SUCCESS;
     }
