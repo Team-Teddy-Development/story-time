@@ -4,13 +4,12 @@
 use crate::{
     config::{self, Flags},
     lenient_story::{trim, Js},
-    list::backlog_dir,
+    list::{self, backlog_dir},
     next_id::next_id,
-    serialize_story::serialize,
-    valid_id, Failure,
+    Failure,
 };
 use chrono::Utc;
-use std::{fs, path::Path};
+use std::path::Path;
 
 const TYPES: [&str; 4] = ["story", "spike", "bug", "chore"];
 const STATEMENT_TODO: &str = "TODO: As a <persona>, I want <goal>, so that <benefit>.";
@@ -115,21 +114,8 @@ fn create(flags: &Flags, dir: &Path, prefix: &str, date: &str) -> Result<Js, Str
         ("sections".into(), Js::Obj(sections)),
     ]);
     let story = Js::Obj(fields);
-    save(dir, &id, &story)?;
+    list::save(dir, &story)?;
     Ok(story)
-}
-
-/// `FileSystemStoryRepository.save`: write a temporary file, then rename it into place, so a
-/// crash never leaves a half-written story.
-pub(crate) fn save(dir: &Path, id: &str, story: &Js) -> Result<(), String> {
-    if !valid_id(id) {
-        return Err(format!("Invalid story id: {id}"));
-    }
-    let target = dir.join(format!("{id}.md"));
-    fs::create_dir_all(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
-    let tmp = dir.join(format!("{id}.md.{}.tmp", std::process::id()));
-    fs::write(&tmp, serialize(story)).map_err(|e| format!("{}: {e}", tmp.display()))?;
-    fs::rename(&tmp, &target).map_err(|e| format!("{}: {e}", target.display()))
 }
 
 /// JavaScript's `Number(string)`.
