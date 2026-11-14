@@ -64,7 +64,7 @@ The **principle-invest** skill holds the quality bar all of them apply.
 
 ## The `story` tool
 
-Use installed Rust `story` for `init`, `push`, `adopt preview`, `plan`, `config`, `show`, `list`, `lint`, `stats`, `secret`, `note`, `machine`, `export`, `new`, `table`, and `metrics`.
+Use installed Rust `story` for `init`, `push`, `adopt preview`, `plan`, `config`, `show`, `list`, `lint`, `stats`, `secret`, `issues`, `note`, `machine`, `export`, `new`, `table`, and `metrics`.
 The skill installer copies skills only; install the executable separately.
 Read `.story-time/settings.json` before selecting a tracker. Install the native
 command from the repository root:
@@ -74,7 +74,7 @@ cargo install --path native/story-push --locked
 ```
 
 `story push` runs entirely in Rust. Do not invoke the historical Node push
-handler. Planning, `story config`, `story show`, `story list`, `story lint`, `story stats`, `story secret`, `story note`, `story machine`, `story export`, `story new`, `story table`, and `story metrics` also run entirely in Rust. Other commands
+handler. `story init`, `story adopt preview`, `story plan`, `story config`, `story show`, `story list`, `story lint`, `story stats`, `story secret`, `story issues`, `story note`, `story machine`, `story export`, `story new`, `story table`, and `story metrics` also run entirely in Rust. Other commands
 still use Node 20+.
 Set `STORY_TIME_LEGACY_CLI` to
 this skill's absolute `scripts/story.mjs` path, or configure `legacyCli` in
@@ -94,11 +94,11 @@ part of either Rust push execution path.
 
 | Command | Does |
 |---|---|
-| `story plan --snapshot` | Capture a complete version-1 request with current source identity and hashes; read-only |
-| `story plan --from request.json [--output docs/planning/name.json]` | Generate a local JSON proposal; explicit output also writes Markdown, with reviewed hashes required for both replacements |
-| `story new --title T [--statement S] [--ac A]... [--type story\|spike\|bug\|chore]` | Create a draft with the next id. In a git repo the id is above every id on all local and remote-tracking branches; `git fetch` first so other branches' ids are seen |
-| `story list [--status S]` | List stories |
-| `story show <id>` | Print one story |
+| `story plan --snapshot` | Capture a complete version-1 request with current source identity and hashes. Native Rust; read-only |
+| `story plan --from request.json [--output docs/planning/name.json]` | Generate a local JSON proposal; explicit output also writes Markdown, with reviewed hashes required for both replacements. Native Rust |
+| `story new --title T [--statement S] [--ac A]... [--type story\|spike\|bug\|chore]` | Create a draft with the next id. In a git repo the id is above every id on all local and remote-tracking branches; `git fetch` first so other branches' ids are seen. Native Rust |
+| `story list [--status S]` | List stories. Native Rust; read-only |
+| `story show <id>` | Print one story. Native Rust; read-only |
 | `story metrics --from YYYY-MM-DD --to YYYY-MM-DD [--json]` | Throughput, WIP, and cycle time for a window from changelog status events, with gaps `unknown`. Native Rust; read-only |
 | `story lint [id...] [--json]` | INVEST / Definition of Ready check. Exit 1 if any story has errors. Native Rust; read-only |
 | `story rank [--limit N] [--include-refined]` | WSJF ranking of ready, unblocked stories, plus why others were excluded |
@@ -109,10 +109,10 @@ part of either Rust push execution path.
 | `story export <id> [--format github\|ado\|gitea\|markdown] [--command]` | Copy-paste card for the tracker, or the `gh` / `az boards` command that creates it. Native Rust; read-only |
 | `story push <id...> \| --all [--dry-run]` | Create or update items in GitHub, ADO, or Gitea. Native Rust; refuses when `sync` is `off` |
 | `story judge [id...]` | Judgement calls: need vs. solution, real benefit, testable criteria, type, size, split pattern. Jev with a key, code heuristics without |
-| `story secret set\|status\|clear <github\|ado\|jev>` | Store a tracker token or the TypeSafe key in `.story-time/.<name>.env` (mode 600, git-ignored). The user runs `set` themselves |
-| `story machine check\|criteria\|diagram <file>` | Check a state machine (`model/state/<entity>.toml`) for unreachable states, dead ends, transitions without an event, and unknown names; print one criterion per transition and per refused event; or print its Mermaid diagram. Exit 1 on defects |
-| `story table check\|criteria <file>` | Check a decision table for uncovered input combinations and, under `unique`, overlapping rules; or print one criterion with a row per combination for a parameterized test. Exit 1 on defects |
-| `story init --from answers.json` / `story config` | Write / show the project config (`.story-time/settings.json`) |
+| `story secret set\|status\|clear <github\|ado\|jev>` | Store a tracker token or the TypeSafe key in `.story-time/.<name>.env` (mode 600, git-ignored). The user runs `set` themselves. Native Rust |
+| `story machine check\|criteria\|diagram <file>` | Check a state machine (`model/state/<entity>.toml`) for unreachable states, dead ends, transitions without an event, and unknown names; print one criterion per transition and per refused event; or print its Mermaid diagram. Exit 1 on defects. Native Rust; read-only |
+| `story table check\|criteria <file>` | Check a decision table for uncovered input combinations and, under `unique`, overlapping rules; or print one criterion with a row per combination for a parameterized test. Exit 1 on defects. Native Rust; read-only |
+| `story init --from answers.json` / `story config` | Write / show the project config (`.story-time/settings.json`). Native Rust |
 
 The [planning request contract](./references/planning.md) defines missing inputs,
 capacity arithmetic, forecasts, freshness, and safe output. Plans never change
