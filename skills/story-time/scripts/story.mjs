@@ -187,9 +187,10 @@ const commands = {
     if (f.all && ids.length) throw new UsageError('Use --all or explicit story IDs, not both.');
     pushPolicy(ctx.config);
     const targets = f.all ? (await repo.list()).map((s) => s.id) : ids;
-    if (!targets.length) throw new UsageError('Usage: story push <id...> | --all [--dry-run]');
-    const gateway = await makeGateway(ctx);
-    const r = await pushStories(repo, gateway, targets, { dryRun: f['dry-run'] });
+    if (!f.all && !targets.length) throw new UsageError('Usage: story push <id...> | --all [--dry-run]');
+    const r = !targets.length
+      ? f['dry-run'] ? { ok: true, plan: [] } : { ok: true, pushed: [], skipped: [] }
+      : await pushStories(repo, await makeGateway(ctx), targets, { dryRun: f['dry-run'] });
     if (!r.ok) {
       const undone = r.compensated?.length ? `\nRolled back: ${r.compensated.join(', ')}.` : '';
       const stuck = r.compensationFailures?.length
