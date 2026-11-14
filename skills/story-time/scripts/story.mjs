@@ -71,6 +71,7 @@ Commands:
 Config: --config, else $STORY_TIME_CONFIG, else ./.story-time/settings.json, else ./.story-time.json (optional).
 Backlog directory: --dir, else $STORY_TIME_DIR, else config backlogDir, else ./backlog.`;
 
+const NATIVE_ONLY = new Set(['plan', 'adopt', 'issues', 'metrics']);
 const BOOLEAN = new Set(['json', 'force', 'include-refined', 'command', 'all', 'dry-run']);
 const REPEATABLE = new Set(['ac']);
 
@@ -498,7 +499,10 @@ async function main(argv) {
   const [command = 'help', ...rest] = argv;
   const handler = commands[command];
   if (!handler) {
-    console.error(`Unknown command "${command}".\n\n${USAGE}`);
+    const problem = NATIVE_ONLY.has(command)
+      ? `The "${command}" command runs only in the native story binary (native/story-push); this Node CLI cannot run it.`
+      : `Unknown command "${command}".`;
+    console.error(`${problem}\n\n${USAGE}`);
     return 2;
   }
   try {
