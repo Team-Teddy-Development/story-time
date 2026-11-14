@@ -34,6 +34,7 @@ const USAGE = readFileSync(new URL('./usage.txt', import.meta.url), 'utf8').trim
 const NATIVE_ONLY = new Set(['plan', 'adopt', 'issues', 'metrics']);
 const BOOLEAN = new Set(['json', 'force', 'include-refined', 'command', 'all', 'dry-run']);
 const REPEATABLE = new Set(['ac']);
+const PUSH_FLAGS = new Set(['all', 'dry-run', 'json', 'config', 'dir']);
 
 function parseArgs(argv) {
   const positional = [];
@@ -181,6 +182,9 @@ const commands = {
   },
 
   async push(repo, ids, f, ctx) {
+    const unknown = Object.keys(f).find((k) => !PUSH_FLAGS.has(k));
+    if (unknown !== undefined) throw new UsageError(`Unknown push flag --${unknown}.`);
+    if (f.all && ids.length) throw new UsageError('Use --all or explicit story IDs, not both.');
     pushPolicy(ctx.config);
     const targets = f.all ? (await repo.list()).map((s) => s.id) : ids;
     if (!targets.length) throw new UsageError('Usage: story push <id...> | --all [--dry-run]');

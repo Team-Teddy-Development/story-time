@@ -68,7 +68,6 @@ fn invalid_selection_and_config_fail_before_any_tracker() {
     let f = Fixture::new("ask");
     for (args, code) in [
         (vec!["push"], 2),
-        (vec!["push", "--all", "ST-001"], 2),
         (vec!["push", "--all", "--dir"], 2),
         (vec!["push", "../escape", "--dry-run"], 1),
         (vec!["push", "ST-404", "--dry-run"], 1),

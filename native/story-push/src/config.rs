@@ -107,6 +107,7 @@ pub fn load(flag: Option<&str>) -> Result<Loaded, String> {
 pub struct Flags {
     pub positional: Vec<String>,
     named: HashMap<String, Vec<Option<String>>>,
+    order: Vec<String>,
 }
 impl Flags {
     pub fn parse(args: &[String]) -> Result<Self, Failure> {
@@ -119,13 +120,17 @@ impl Flags {
             "dry-run",
         ];
         let mut positional = Vec::new();
-        let mut named = HashMap::new();
+        let mut named: HashMap<String, Vec<Option<String>>> = HashMap::new();
+        let mut order = Vec::new();
         let mut args = args.iter();
         while let Some(arg) = args.next() {
             let Some(key) = arg.strip_prefix("--") else {
                 positional.push(arg.clone());
                 continue;
             };
+            if !named.contains_key(key) {
+                order.push(key.to_owned());
+            }
             if BOOLEAN.contains(&key) {
                 named.insert(key.to_owned(), vec![None]);
                 continue;
@@ -136,10 +141,18 @@ impl Flags {
             })?;
             named
                 .entry(key.to_owned())
-                .or_insert_with(Vec::new)
+                .or_default()
                 .push(Some(value.clone()));
         }
-        Ok(Self { positional, named })
+        Ok(Self {
+            positional,
+            named,
+            order,
+        })
+    }
+    /// Flag names in first-seen order, as `Object.keys` lists Node's flags.
+    pub fn names(&self) -> &[String] {
+        &self.order
     }
     pub fn has(&self, key: &str) -> bool {
         self.named.contains_key(key)
