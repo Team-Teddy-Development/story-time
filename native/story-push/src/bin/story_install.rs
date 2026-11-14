@@ -5,6 +5,8 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
+use story_time_native::skill_install::{self, Agent, Target};
+
 const USAGE: &str = "Usage: story-install --agent claude|codex|all [--source DIR] [--dry-run]
        story-install --rollback [--dry-run]
 
@@ -41,11 +43,11 @@ impl Layout {
         self.bin_root.join("bin/story")
     }
 
-    fn skills_dir(&self, agent: &str) -> PathBuf {
-        match agent {
-            "claude" => self.home.join(".claude/skills"),
-            _ => self.home.join(".agents/skills"),
-        }
+    fn skills_dir(&self, agent: Agent) -> PathBuf {
+        agent.skills_root(&Target::User {
+            home: self.home.clone(),
+            codex_home: None,
+        })
     }
 }
 
@@ -122,7 +124,7 @@ impl Step {
 }
 
 struct Options {
-    agents: Vec<&'static str>,
+    agents: Vec<Agent>,
     source: PathBuf,
     dry_run: bool,
     rollback: bool,
@@ -145,12 +147,10 @@ fn parse(args: &[String]) -> Result<Option<Options>, String> {
                 options.source = args.next().ok_or("--source needs a value")?.into();
             }
             "--agent" => {
-                options.agents = match args.next().map(String::as_str) {
-                    Some("claude") => vec!["claude"],
-                    Some("codex") => vec!["codex"],
-                    Some("all") => vec!["claude", "codex"],
-                    _ => return Err("--agent must be claude, codex, or all".into()),
-                }
+                options.agents = args
+                    .next()
+                    .and_then(|name| Agent::parse(name))
+                    .ok_or("--agent must be claude, codex, or all")?
             }
             other => return Err(format!("Unknown argument {other}.")),
         }
@@ -185,7 +185,7 @@ fn plan(options: &Options, layout: &Layout) -> Result<Vec<Step>, String> {
     ];
     steps.extend(options.agents.iter().map(|agent| Step::Skills {
         from: release.join("skills"),
-        to: layout.skills_dir(agent),
+        to: layout.skills_dir(*agent),
     }));
     if layout.runtime.is_file() {
         steps.push(Step::RemoveRuntime);
@@ -252,34 +252,10 @@ fn backup(layout: &Layout, dir: &Path) -> io::Result<()> {
 }
 
 fn install_skills(from: &Path, to: &Path) -> io::Result<()> {
-    fs::create_dir_all(to)?;
-    for entry in fs::read_dir(from)? {
-        let skill = entry?.path();
-        if skill.is_dir() {
-            let dest = to.join(skill.file_name().unwrap());
-            if dest.exists() {
-                fs::remove_dir_all(&dest)?;
-            }
-            copy_skill(&skill, &dest, &skill)?;
-        }
+    for skill in skill_install::skill_names(from)? {
+        skill_install::install(&from.join(&skill), &to.join(&skill))?;
     }
     Ok(())
-}
-
-fn copy_skill(src: &Path, dest: &Path, skill_root: &Path) -> io::Result<()> {
-    if src.strip_prefix(skill_root).unwrap() == Path::new("scripts/test") {
-        return Ok(());
-    }
-    if src.is_dir() {
-        fs::create_dir_all(dest)?;
-        for entry in fs::read_dir(src)? {
-            let path = entry?.path();
-            copy_skill(&path, &dest.join(path.file_name().unwrap()), skill_root)?;
-        }
-        Ok(())
-    } else {
-        fs::copy(src, dest).map(|_| ())
-    }
 }
 
 fn rollback(layout: &Layout, dry_run: bool) -> Result<String, String> {

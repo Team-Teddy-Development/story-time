@@ -21,6 +21,7 @@ pub mod rank;
 pub mod secret;
 pub mod set;
 pub mod show;
+pub mod skill_install;
 pub mod split;
 pub mod stats;
 pub mod story;
