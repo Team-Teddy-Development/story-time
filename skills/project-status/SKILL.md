@@ -93,8 +93,9 @@ Every story in scope has one state. Keep the four states apart.
   as a forecast and cite a basis that already states a date or scope: a
   sprint plan, a release manifest, or an epic map order. With no such basis,
   the forecast is `unknown`. Never compute a forecast.
-- `open`: every other open story (`draft`, `refined`, `ready`, unblocked
-  `in-progress`), as one `open` count per status from `story list --json`.
+- `open`: every open story (`draft`, `refined`, `ready`, `in-progress`), as
+  one `open` count per status from `story list --json`. These counts include
+  blocked stories; the `blocked` rows name them.
 
 `split` and `archived` stories are excluded, with their counts stated. A state
 with no entries gets one row with `none` in Work and Claim, and the command
