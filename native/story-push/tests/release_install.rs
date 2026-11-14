@@ -274,6 +274,9 @@ fn each_install_builds_in_a_fresh_target_directory_that_is_removed_afterwards() 
     );
     assert_eq!(
         read(&sandbox.home().join(".local/bin/story")),
-        format!("built from {}\n", sandbox.release().join("native/story-push").display())
+        format!(
+            "built from {}\n",
+            sandbox.release().join("native/story-push").display()
+        )
     );
 }
