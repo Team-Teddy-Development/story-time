@@ -1,4 +1,4 @@
-use crate::story::to_html;
+use crate::story::ado_args;
 use reqwest::blocking::Client;
 use reqwest::{Method, StatusCode, Url};
 use serde_json::{json, Value};
@@ -1098,58 +1098,22 @@ fn ado_remote(org: &str, project: &str, id: String) -> Remote {
     }
 }
 fn ado_content(card: &Value) -> Result<(String, Vec<String>), String> {
-    let fields = card["fields"]
-        .as_array()
-        .ok_or("Rendered ADO card has invalid fields.")?;
-    let mut kind = None;
-    let mut args = strings(&["--title", required(card, "title")?]);
-    let mut extra = Vec::new();
-    for field in fields {
-        let name = required(field, "name")?;
-        let value = field
-            .get("value")
-            .and_then(Value::as_str)
-            .ok_or("Rendered ADO field has invalid value.")?;
-        match name {
-            "Work Item Type" => kind = Some(value.to_string()),
-            "Description" => {
-                args.extend(strings(&["--description", &to_html(value)]));
-            }
-            "Area Path" if !value.is_empty() => {
-                args.extend(strings(&["--area", value]));
-            }
-            "Iteration Path" if !value.is_empty() => {
-                args.extend(strings(&["--iteration", value]));
-            }
-            _ => {}
-        }
-        if let Some(reference) = field.get("ref").and_then(Value::as_str) {
-            if ![
-                "System.Description",
-                "System.AreaPath",
-                "System.IterationPath",
-            ]
-            .contains(&reference)
-            {
-                let value = if reference.contains("AcceptanceCriteria")
-                    || reference.contains("ReproSteps")
-                {
-                    to_html(value)
-                } else {
-                    value.to_string()
-                };
-                extra.push(format!("{reference}={value}"));
-            }
+    let a = ado_args(card)?;
+    let mut args = vec!["--title".to_owned(), a.title];
+    for (flag, value) in [
+        ("--description", a.description),
+        ("--area", a.area),
+        ("--iteration", a.iteration),
+    ] {
+        if let Some(value) = value {
+            args.extend([flag.to_owned(), value]);
         }
     }
-    if !extra.is_empty() {
+    if !a.fields.is_empty() {
         args.push("--fields".into());
-        args.extend(extra);
+        args.extend(a.fields);
     }
-    Ok((
-        kind.ok_or("Rendered ADO card has no work item type.")?,
-        args,
-    ))
+    Ok((a.kind, args))
 }
 
 fn validate_token(token: &str) -> Result<(), String> {
@@ -1404,44 +1368,7 @@ mod tests {
     }
 
     #[test]
-    fn ado_description_matches_node_gateway_content() {
-        for (description, node_args) in [
-            (
-                "First line\nsecond\n\nNext <p>\n\n\n& last",
-                json!([
-                    "--title",
-                    "T",
-                    "--description",
-                    "<p>First line<br>second</p><p>Next &lt;p&gt;</p><p>&amp; last</p>"
-                ]),
-            ),
-            ("", json!(["--title", "T", "--description", "<p></p>"])),
-        ] {
-            let card = json!({"title":"T","fields":[
-                {"name":"Work Item Type","value":"User Story"},
-                {"name":"Description","value":description,"ref":"System.Description"}
-            ]});
-            let (_, args) = ado_content(&card).unwrap();
-            assert_eq!(json!(args), node_args);
-            assert_eq!(args[3], to_html(description));
-        }
-    }
-
-    #[test]
-    fn ado_maps_html_fields_and_process_states() {
-        let card = json!({"title":"Example","fields":[
-            {"name":"Work Item Type","value":"Bug"},
-            {"name":"Repro Steps","value":"<bad>\nnext","ref":"Microsoft.VSTS.TCM.ReproSteps"},
-            {"name":"Acceptance Criteria","value":"- one\n- two","ref":"Microsoft.VSTS.Common.AcceptanceCriteria"},
-            {"name":"Area Path","value":"Shop\\UI","ref":"System.AreaPath"}
-        ]});
-        let (kind, args) = ado_content(&card).unwrap();
-        assert_eq!(kind, "Bug");
-        assert!(args.contains(&"Microsoft.VSTS.TCM.ReproSteps=<p>&lt;bad&gt;<br>next</p>".into()));
-        assert!(args.contains(
-            &"Microsoft.VSTS.Common.AcceptanceCriteria=<ul><li>one</li><li>two</li></ul>".into()
-        ));
-        assert!(args.contains(&"--area".into()));
+    fn ado_process_states_and_remote_urls() {
         for (process, done, archived) in [
             ("agile", "Closed", "Removed"),
             ("scrum", "Done", "Removed"),

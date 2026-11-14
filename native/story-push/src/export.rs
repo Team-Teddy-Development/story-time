@@ -61,28 +61,23 @@ fn command(story: &Value, format: &str, settings: &Value) -> Result<String, Stri
             if !truthy(ado.get("organization")) {
                 return Err("Set ado.organization and ado.project in .story-time/settings.json (run the story-setup skill) to print an az command.".into());
             }
-            let a = ado_args(story, ado)?;
+            let a = ado_args(&render_card(story, "ado", settings)?)?;
             let mut lines = vec![format!(
                 "az boards work-item create --org {} --project {} --type {} --title {title}",
                 quote(&js_string(&ado["organization"])),
                 quote(&js_string(&ado["project"])),
-                quote(&js_string(&a["type"])),
+                quote(&a.kind),
             )];
-            for (key, flag) in [
-                ("description", "--description"),
-                ("area", "--area"),
-                ("iteration", "--iteration"),
+            for (flag, value) in [
+                ("--description", a.description),
+                ("--area", a.area),
+                ("--iteration", a.iteration),
             ] {
-                if truthy(a.get(key)) {
-                    lines.push(format!("{flag} {}", quote(&js_string(&a[key]))));
+                if let Some(value) = value.filter(|v| !v.is_empty()) {
+                    lines.push(format!("{flag} {}", quote(&value)));
                 }
             }
-            let fields: Vec<String> = a["fields"]
-                .as_array()
-                .into_iter()
-                .flatten()
-                .map(|field| quote(&js_string(field)))
-                .collect();
+            let fields: Vec<String> = a.fields.iter().map(|field| quote(field)).collect();
             if !fields.is_empty() {
                 lines.push(format!("--fields {}", fields.join(" ")));
             }
