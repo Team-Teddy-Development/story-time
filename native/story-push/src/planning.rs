@@ -250,7 +250,9 @@ fn optional_text(value: &Value, name: &str) -> Result<Option<String>> {
 fn parse_story(bytes: &[u8], path: &str, prefix: &str) -> Result<Story> {
     let text = std::str::from_utf8(bytes)
         .map_err(|_| format!("malformed_story: {path}: invalid UTF-8"))?;
-    let value = crate::story::parse(text).map_err(|e| format!("malformed_story: {path}: {e}"))?;
+    let value = crate::lenient_story::parse(text)
+        .map_err(|e| format!("malformed_story: {path}: {e}"))?
+        .to_value();
     let id = optional_text(&value, "id")?
         .ok_or_else(|| format!("malformed_story: {path}: missing id"))?;
     let suffix = id.strip_prefix(&format!("{prefix}-"));

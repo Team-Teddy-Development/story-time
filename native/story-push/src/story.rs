@@ -29,17 +29,9 @@ const INTERNAL: &[&str] = &[
     "Test Plan",
 ];
 
-pub fn parse(text: &str) -> Result<Value, String> {
-    parse_with(text, false)
-}
-
 /// Reads a legacy story for adoption, which keeps the original bytes and
 /// never renders the result, so prose before the first section is skipped.
 pub fn parse_legacy(text: &str) -> Result<Value, String> {
-    parse_with(text, true)
-}
-
-fn parse_with(text: &str, skip_preamble: bool) -> Result<Value, String> {
     let normalized = text.replace("\r\n", "\n");
     let rest = normalized
         .strip_prefix("---\n")
@@ -90,8 +82,6 @@ fn parse_with(text: &str, skip_preamble: bool) -> Result<Value, String> {
             current = Some(name.into());
         } else if current.is_some() {
             lines.push(line);
-        } else if !skip_preamble && !line.trim().is_empty() {
-            return Err("Content outside a named story section is unsupported".into());
         }
     }
     if let Some(name) = current {
@@ -793,7 +783,7 @@ pub fn ado_args(story: &Value, ado: &Value) -> Result<Value, String> {
 mod tests {
     use super::*;
     fn story() -> Value {
-        parse("---\nid: ST-001\ntitle: Reset password\nstatus: ready\ntype: story\nepic: EP-1\nvalue: 8\ntime_criticality: 5\nrisk_reduction: 3\nsize: 3\ndepends_on: []\n---\n\n## Story\nAs a user, I want reset.\n\n## Acceptance Criteria\n- [ ] Given email <exists>\n* [X] Given token & valid\n\n## Notes\nKeep this.\n\n## Out of Scope\n- SMS reset\n\n## Changelog\n- 2026-11-02 created\n").unwrap()
+        parse_legacy("---\nid: ST-001\ntitle: Reset password\nstatus: ready\ntype: story\nepic: EP-1\nvalue: 8\ntime_criticality: 5\nrisk_reduction: 3\nsize: 3\ndepends_on: []\n---\n\n## Story\nAs a user, I want reset.\n\n## Acceptance Criteria\n- [ ] Given email <exists>\n* [X] Given token & valid\n\n## Notes\nKeep this.\n\n## Out of Scope\n- SMS reset\n\n## Changelog\n- 2026-11-02 created\n").unwrap()
     }
     fn field(card: &Value, name: &str) -> Value {
         card["fields"]
@@ -818,7 +808,7 @@ mod tests {
         ]);
         s["custom"] = json!("null");
         let text = serialize(&s).unwrap();
-        assert_eq!(parse(&text).unwrap(), s);
+        assert_eq!(parse_legacy(&text).unwrap(), s);
         assert!(text.find("id:").unwrap() < text.find("title:").unwrap());
         assert_eq!(
             s["sections"]
@@ -836,10 +826,10 @@ mod tests {
             ]
         );
         assert_eq!(
-            parse("---\nid: 'it''s'\nflag: true # comment\n---\n").unwrap()["id"],
+            parse_legacy("---\nid: 'it''s'\nflag: true # comment\n---\n").unwrap()["id"],
             "it's"
         );
-        assert_eq!(parse(&text.replace('\n', "\r\n")).unwrap(), s);
+        assert_eq!(parse_legacy(&text.replace('\n', "\r\n")).unwrap(), s);
     }
     #[test]
     fn rejects_lossy_input() {
@@ -849,10 +839,9 @@ mod tests {
             "---\na: {b: 2}\n---\n",
             "---\na: [[1]]\n---\n",
             "---\na: 1\na: 2\n---\n",
-            "---\na: x\n---\ntext",
             "---\na: x\n---\n## Story\nx\n## Story\ny",
         ] {
-            assert!(parse(text).is_err(), "{text}");
+            assert!(parse_legacy(text).is_err(), "{text}");
         }
         assert!(serialize(&json!({"id":"ST-1","unknown":{"a":1}})).is_err());
     }
@@ -873,7 +862,7 @@ mod tests {
             .as_str()
             .unwrap()
             .ends_with("- 2026-11-06 updated tracker item ABC-1"));
-        assert_eq!(parse(&serialize(&linked).unwrap()).unwrap(), linked);
+        assert_eq!(parse_legacy(&serialize(&linked).unwrap()).unwrap(), linked);
     }
     #[test]
     fn tracker_titles_include_one_story_id_without_mutating_local_titles() {
