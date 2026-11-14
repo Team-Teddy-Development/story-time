@@ -26,6 +26,38 @@ use std::{
 
 pub const USAGE: &str = "Usage: story push <id...> | --all [--dry-run]";
 
+pub type Native = fn(&[String]) -> Result<(String, u8), Failure>;
+
+pub const NATIVE_COMMANDS: &[(&str, Native)] = &[
+    ("init", |args| init::run(args).map(|out| (out, 0))),
+    ("push", |args| push(args).map(|out| (out, 0))),
+    ("adopt", |args| Ok(adoption::run(args))),
+    ("plan", |args| Ok(planning::run(args))),
+    ("config", |args| config::run(args).map(|out| (out, 0))),
+    ("show", |args| show::run(args).map(|out| (out, 0))),
+    ("issues", |args| issues(args).map(|out| (out, 0))),
+    ("list", |args| list::run(args).map(|out| (out, 0))),
+    ("secret", |args| secret::run(args).map(|out| (out, 0))),
+    ("machine", machine::run),
+    ("metrics", |args| metrics::run(args).map(|out| (out, 0))),
+];
+
+pub fn legacy_required_message() -> String {
+    let names: Vec<&str> = NATIVE_COMMANDS.iter().map(|(name, _)| *name).collect();
+    let list = match names.as_slice() {
+        [] => String::new(),
+        [only] => only.to_string(),
+        [first, second] => format!("{first} and {second}"),
+        [init @ .., last] => format!("{}, and {last}", init.join(", ")),
+    };
+    let mut capitalized = list.chars();
+    let capitalized = capitalized
+        .next()
+        .map(|first| first.to_uppercase().chain(capitalized).collect::<String>())
+        .unwrap_or_default();
+    format!("Commands other than {list} require STORY_TIME_LEGACY_CLI or ~/.config/story-time/runtime.json with legacyCli. {capitalized} are fully native and need neither Node nor this setting.")
+}
+
 #[derive(Debug)]
 pub struct Failure {
     pub code: i32,

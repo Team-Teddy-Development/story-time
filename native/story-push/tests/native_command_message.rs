@@ -28,7 +28,9 @@ fn the_legacy_required_message_names_exactly_the_dispatch_table() {
         .strip_prefix("Commands other than ")
         .unwrap_or_else(|| panic!("unexpected message: {message}"));
     let (excluded, rest) = rest
-        .split_once(" require STORY_TIME_LEGACY_CLI or ~/.config/story-time/runtime.json with legacyCli. ")
+        .split_once(
+            " require STORY_TIME_LEGACY_CLI or ~/.config/story-time/runtime.json with legacyCli. ",
+        )
         .unwrap_or_else(|| panic!("unexpected message: {message}"));
     let native = rest
         .strip_suffix(" are fully native and need neither Node nor this setting.\n")
