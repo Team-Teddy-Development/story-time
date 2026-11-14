@@ -1,8 +1,8 @@
 //! Stories read the way the Node CLI's `parseStory` reads them, which is more lenient than
-//! [`crate::story::parse`]: read commands must match Node byte for byte, including for files
-//! the strict parser rejects.
+//! [`crate::story::parse`]: read commands (`show`, `list`) must match Node byte for byte,
+//! including for files the strict parser rejects.
 
-use crate::js_space;
+use crate::{config::array_index, js_space};
 
 /// A value `parseStory` can produce, with JavaScript's semantics for printing it.
 #[derive(Clone, Debug, PartialEq)]
@@ -24,6 +24,14 @@ impl Js {
                 .find(|(k, _)| k == key)
                 .map_or(&Js::Undefined, |(_, v)| v),
             _ => &Js::Undefined,
+        }
+    }
+
+    /// The properties of an object, or none for any other value.
+    pub(crate) fn props(&self) -> &[(String, Js)] {
+        match self {
+            Js::Obj(entries) => entries,
+            _ => &[],
         }
     }
 
@@ -84,11 +92,10 @@ impl Js {
                 out.push(']');
             }
             Js::Obj(entries) => {
-                let mut entries: Vec<_> = entries
-                    .iter()
+                let entries: Vec<_> = ordered(entries)
+                    .into_iter()
                     .filter(|(_, v)| *v != Js::Undefined)
                     .collect();
-                entries.sort_by_key(|(k, _)| array_index(k).map_or((1, 0), |i| (0, i)));
                 if entries.is_empty() {
                     out.push_str("{}");
                     return;
@@ -109,10 +116,11 @@ impl Js {
     }
 }
 
-/// JavaScript lists integer-like keys first, in ascending order.
-fn array_index(key: &str) -> Option<u64> {
-    let n: u64 = key.parse().ok()?;
-    (n.to_string() == key && n < u32::MAX as u64).then_some(n)
+/// JavaScript property order: array-index keys first, ascending, then insertion order.
+pub(crate) fn ordered(entries: &[(String, Js)]) -> Vec<&(String, Js)> {
+    let mut ordered: Vec<_> = entries.iter().collect();
+    ordered.sort_by_key(|(k, _)| array_index(k).map_or((1, 0), |i| (0, i)));
+    ordered
 }
 
 /// `Number.prototype.toString()`.
@@ -297,7 +305,7 @@ fn value(raw: &str) -> Result<Js, String> {
     if quoted('"') {
         return serde_json::from_str::<String>(raw)
             .map(Js::Str)
-            .map_err(|e| e.to_string());
+            .map_err(|e| format!("Invalid quoted frontmatter value {raw}: {e}"));
     }
     if quoted('\'') {
         return Ok(Js::Str(raw[1..raw.len() - 1].replace("''", "'")));

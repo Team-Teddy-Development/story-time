@@ -2,7 +2,7 @@
 
 use crate::{
     config::{self, Flags},
-    legacy_story::Js,
+    lenient_story::Js,
     table, Failure,
 };
 use std::{
@@ -46,7 +46,7 @@ pub(crate) fn stories(dir: &Path, status: Option<&str>) -> Result<Vec<Js>, Strin
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => continue,
             Err(e) => return Err(format!("{}: {e}", path.display())),
         };
-        stories.push(crate::legacy_story::parse(&String::from_utf8_lossy(
+        stories.push(crate::lenient_story::parse(&String::from_utf8_lossy(
             &bytes,
         ))?);
     }

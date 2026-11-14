@@ -3,7 +3,7 @@ mod adoption_apply;
 pub mod config;
 pub mod gateway;
 pub mod init;
-mod legacy_story;
+mod lenient_story;
 pub mod list;
 pub mod planning;
 pub mod show;
