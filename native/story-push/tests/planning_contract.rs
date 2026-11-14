@@ -633,3 +633,47 @@ fn malformed_config_and_unknown_nested_request_fields_cannot_masquerade_as_missi
     r["calendar"] = json!({"start":null,"end":null,"time_zone":null,"ready":true});
     p.conflict(&r, None, "unknown field");
 }
+
+#[test]
+fn settings_numbers_print_in_plan_artifacts_as_javascript_prints_them() {
+    let p = Project::new();
+    p.put(".story-time/settings.json", r#"{"tracker":"files","sync":"off","prefix":"PAY","backlogDir":"work","team":{"sprintDays":9007199254740993,"wipLimit":9007199254740993}}"#);
+    p.story("PAY-001", "ready", "3", "");
+    let r = p.planned();
+    let (out, _) = p.run(&r, Some("docs/planning/big.json"));
+    assert!(out.status.success());
+    let stdout = String::from_utf8(out.stdout).unwrap();
+    let json = fs::read_to_string(p.root.join("docs/planning/big.json")).unwrap();
+    let md = fs::read_to_string(p.root.join("docs/planning/big.md")).unwrap();
+    assert_eq!(stdout, json);
+    assert!(
+        json.contains("\"sprint_days\": 9007199254740992,"),
+        "{json}"
+    );
+    assert!(
+        json.contains("\"limit_per_person\": 9007199254740992,"),
+        "{json}"
+    );
+    assert!(json.contains("\"selected_points\": 3,"), "{json}");
+    assert!(md.contains("\"sprint_days\":9007199254740992,"), "{md}");
+    assert!(
+        md.contains("\"limit_per_person\":9007199254740992,"),
+        "{md}"
+    );
+    for text in [&json, &md] {
+        assert!(!text.contains("9007199254740992.0"), "{text}");
+    }
+
+    let p = Project::new();
+    p.put(
+        ".story-time/settings.json",
+        r#"{"tracker":"files","sync":"off","prefix":"PAY","backlogDir":"work","team":{"sprintDays":1e400}}"#,
+    );
+    let out = p.command(&["plan", "--snapshot"]);
+    assert_eq!(out.status.code(), Some(2));
+    let v: Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(
+        v["diagnostic"],
+        "malformed_config: team.sprintDays must be a positive integer."
+    );
+}
