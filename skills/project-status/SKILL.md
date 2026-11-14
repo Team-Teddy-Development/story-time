@@ -65,11 +65,12 @@ Every status claim links to its record. These are the authoritative records:
 - A release manifest path, such as `docs/releases/1.4.0.md`.
 - A `story metrics` output, with its window.
 - A pull request link, or a report path with its section.
+- A decision log row, such as `docs/planning/decisions.tsv` with its `ts`.
 
 A Record that cites a missing file records absence, not the claim: write the
 claim as `unknown` and name the missing path in Gaps. A Record never cites
-the report itself. A claim with no record is `unknown`. Write `unknown` in its cell, name the
-question that would fill it, and keep the row. Never fill a gap from memory
+the report itself. A claim with no record is `unknown`. Write `unknown` in
+its cell, name the question that would fill it, and keep the row. Never fill a gap from memory
 or prose.
 
 Never compute a figure yourself. Copy each figure from `story metrics` with
