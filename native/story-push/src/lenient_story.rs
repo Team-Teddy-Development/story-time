@@ -170,10 +170,10 @@ fn number(n: f64) -> String {
 fn trim_start(s: &str) -> &str {
     s.trim_start_matches(js_space)
 }
-fn trim(s: &str) -> &str {
+pub(crate) fn trim(s: &str) -> &str {
     s.trim_matches(js_space)
 }
-fn line_terminator(c: char) -> bool {
+pub(crate) fn line_terminator(c: char) -> bool {
     matches!(c, '\n' | '\r' | '\u{2028}' | '\u{2029}')
 }
 
