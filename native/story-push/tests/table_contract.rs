@@ -333,3 +333,24 @@ fn node_fixture_matches_node() {
         vec![0; 4]
     );
 }
+
+#[test]
+fn large_integers_match_node() {
+    let big = "9".repeat(400);
+    let s = Sandbox::new();
+    let cases = [
+        format!("name = -9007199254740993\nhit_policy = \"first\"\noutputs = [\"o\"]\n[inputs]\nx = [9007199254740993, 1_000_000_000_000_000_000_000, 100_000_000_000_000_000_000, -{big}, {big}]\n[[rules]]\nwhen = {{ x = 9007199254740992 }}\nthen = {{ o = {big} }}\n[[rules]]\nwhen = {{ x = \"-\" }}\nthen = {{ o = 123456789012345678901234567 }}\n"),
+        with(&[("name = \"promotion\"", &format!("name = {big}"))], ""),
+        with(&[("name = \"promotion\"", &format!("name = -{big}"))], ""),
+        with(&[("name = \"promotion\"", "name = 1_000_000_000_000_000_000_000")], ""),
+        with(&[("name = \"promotion\"", "name = 9007199254740992")], ""),
+        "hit_policy = \"unique\"\noutputs = [\"o\"]\n[inputs]\nx = [9007199254740992, 9007199254740993]\n[[rules]]\nwhen = { x = \"-\" }\nthen = { o = 1 }\n".to_owned(),
+        format!("hit_policy = \"unique\"\noutputs = [\"o\"]\n[inputs]\nx = [-{big}, 1_000_000_000_000_000_000_000]\n[[rules]]\nwhen = {{ x = {big} }}\nthen = {{ o = 1 }}\n[[rules]]\nwhen = {{ x = 100000000000000000000000 }}\nthen = {{ o = 2 }}\n"),
+        with(&[("hit_policy = \"unique\"", "hit_policy = 100000000000000000000000")], ""),
+        with(&[("hit_policy = \"unique\"", &format!("hit_policy = [{big}, -9007199254740993]"))], ""),
+    ];
+    for (i, text) in cases.iter().enumerate() {
+        let codes = s.every_action(&format!("model/rules/large{i}.toml"), text);
+        assert!(codes.iter().all(|c| *c == 0 || *c == 1), "{i}: {codes:?}");
+    }
+}
