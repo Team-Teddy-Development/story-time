@@ -38,3 +38,20 @@ pub(crate) fn read(flags: &config::Flags) -> Result<(Value, Js), Failure> {
     let story = list::get(&dir, id)?.ok_or_else(|| format!("Story {id} not found."))?;
     Ok((settings, story))
 }
+
+/// `requireStory` for each id, failing the way Node's `Promise.all` of them settles: an empty id
+/// first, then an invalid one, then the first that cannot be read.
+pub(crate) fn require_all(dir: &Path, ids: &[String]) -> Result<Vec<Js>, Failure> {
+    if ids.iter().any(String::is_empty) {
+        return Err(Failure {
+            code: 2,
+            message: "A story id is required.".into(),
+        });
+    }
+    if let Some(id) = ids.iter().find(|id| !crate::valid_id(id)) {
+        return Err(format!("Invalid story id: {id}").into());
+    }
+    ids.iter()
+        .map(|id| Ok(list::get(dir, id)?.ok_or_else(|| format!("Story {id} not found."))?))
+        .collect()
+}

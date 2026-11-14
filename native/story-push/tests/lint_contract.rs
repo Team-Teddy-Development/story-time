@@ -264,6 +264,9 @@ fn per_id_forms_match_node() {
     s.both_forms(&["ST-001", "ST-001"], 0);
     s.both_forms(&["ST-999"], 1);
     s.both_forms(&["bad"], 1);
+    s.both_forms(&[""], 2);
+    s.both_forms(&["bad", ""], 2);
+    s.both_forms(&["ST-999", "bad"], 1);
     s.both_forms(&["ST-001", "--unknown", "value"], 0);
     s.both_forms(&["--dir", "elsewhere"], 0);
     s.both_forms(&["--dir", "elsewhere", "ST-001"], 1);
@@ -411,7 +414,11 @@ fn dependency_and_spike_value_shapes_match_node() {
         &format!("---\nid: ST-004\ntitle: Names spikes in a string\n{SCORED}\ndepends_on: \"xST-001, ST-002x\"\n---\n"),
     );
     let out = s.compare(&["ST-001"]);
-    assert_eq!(out.status.code(), Some(1));
+    assert_eq!(
+        out.status.code(),
+        Some(0),
+        "a string depends_on unblocks every spike id it contains"
+    );
 }
 
 #[test]

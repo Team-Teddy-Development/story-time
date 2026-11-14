@@ -6,6 +6,7 @@ pub mod gateway;
 pub mod init;
 mod js_number;
 mod lenient_story;
+pub mod lint;
 pub mod list;
 pub mod machine;
 pub mod metrics;
@@ -45,6 +46,7 @@ pub const NATIVE_COMMANDS: &[(&str, Native)] = &[
     ("issues", |args| issues(args).map(|out| (out, 0))),
     ("list", |args| list::run(args).map(|out| (out, 0))),
     ("stats", |args| stats::run(args).map(|out| (out, 0))),
+    ("lint", lint::run),
     ("secret", |args| secret::run(args).map(|out| (out, 0))),
     ("machine", machine::run),
     ("table", table::run),
