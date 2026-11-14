@@ -70,7 +70,7 @@ cargo install --path native/story-push --locked
 ```
 
 `story push` runs entirely in Rust. Do not invoke the historical Node push
-handler. Planning, `story config`, `story show`, and `story list` also run entirely in Rust. Other commands
+handler. Planning, `story config`, `story show`, `story list`, and `story machine` also run entirely in Rust. Other commands
 still use Node 20+.
 Set `STORY_TIME_LEGACY_CLI` to
 this skill's absolute `scripts/story.mjs` path, or configure `legacyCli` in

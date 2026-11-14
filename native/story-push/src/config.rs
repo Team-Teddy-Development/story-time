@@ -451,7 +451,7 @@ fn present(value: Option<&Value>) -> Option<&Value> {
     value.filter(|v| !v.is_null())
 }
 
-fn truthy(value: Option<&Value>) -> bool {
+pub(crate) fn truthy(value: Option<&Value>) -> bool {
     match value {
         None | Some(Value::Null) | Some(Value::Bool(false)) => false,
         Some(Value::Number(n)) => n.as_f64().is_some_and(|n| n != 0.0),
@@ -461,7 +461,7 @@ fn truthy(value: Option<&Value>) -> bool {
 }
 
 /// `String(value)` in JavaScript.
-fn js_string(value: &Value) -> String {
+pub(crate) fn js_string(value: &Value) -> String {
     match value {
         Value::String(s) => s.clone(),
         Value::Array(items) => items
@@ -513,7 +513,7 @@ fn spread(value: &Value) -> Value {
 }
 
 /// The value `JSON.parse` would build: array-index keys first in ascending order, and integral numbers printed without a fraction.
-fn js_value(value: &Value) -> Value {
+pub(crate) fn js_value(value: &Value) -> Value {
     match value {
         Value::Object(o) => {
             let mut entries: Vec<_> = o.iter().map(|(k, v)| (k.clone(), js_value(v))).collect();
