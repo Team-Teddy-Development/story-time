@@ -325,3 +325,62 @@ fn project_status_dates_a_decision_only_when_its_log_does_not_disclaim_the_time(
         "Use a decision log row's date only when the log does not disclaim that row's timestamp",
     );
 }
+
+#[test]
+fn project_status_counts_a_notes_blocker_only_when_it_names_what_the_story_waits_for() {
+    let text = skill("project-status");
+    position(
+        &text,
+        "A Notes blocker names that item: a story ID, an issue, a person, or a named external deliverable",
+    );
+    position(
+        &text,
+        "Notes that mention risks or \"blockers\" without naming what the story waits for are not a blocker",
+    );
+}
+
+#[test]
+fn project_status_copies_counts_without_arithmetic() {
+    let text = skill("project-status");
+    assert!(!flowed(&text).contains("| 12 stories |"));
+    position(
+        &text,
+        "Copy each count as printed; never add, subtract, or total counts",
+    );
+    position(
+        &text,
+        "State the scope as the `story list --json` count and each excluded count separately",
+    );
+}
+
+#[test]
+fn project_status_selects_forecast_rows_by_a_cited_basis() {
+    let text = skill("project-status");
+    assert!(!flowed(&text).contains("With no such basis, the forecast is `unknown`"));
+    position(
+        &text,
+        "A forecast row goes to each open story that is not blocked and has a cited basis that states a date or scope",
+    );
+    position(&text, "`in-progress` stories with such a basis included");
+    position(
+        &text,
+        "Every other open story appears only in the `open` counts",
+    );
+}
+
+#[test]
+fn project_status_takes_risks_only_from_records_that_name_them() {
+    let text = skill("project-status");
+    position(&text, "A risk row needs a record that names the risk");
+    position(&text, "may be a risk row that cites both numbers' records");
+    position(&text, "Invent no other risk");
+}
+
+#[test]
+fn project_status_cites_the_missing_release_directory_in_the_released_none_row() {
+    let text = skill("project-status");
+    position(
+        &text,
+        "When `docs/releases/` does not exist, the `released` row keeps `none` in Work and Claim, its Record is the missing path `docs/releases/`, and Gaps names it",
+    );
+}
