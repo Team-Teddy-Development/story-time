@@ -3,11 +3,11 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
-import { mkdtemp, mkdir, writeFile } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { mkdir, writeFile } from 'node:fs/promises';
 import { join, dirname } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { READY_MD } from './fixtures.mjs';
+import { makeTempDir } from './temp-dir.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const CLI = join(HERE, '..', 'story.mjs');
@@ -29,7 +29,7 @@ function story(cwd, args, { env = {}, input = '', stub = false } = {}) {
 }
 
 async function project() {
-  const dir = await mkdtemp(join(tmpdir(), 'story-judge-'));
+  const dir = await makeTempDir('story-judge-');
   await mkdir(join(dir, 'backlog'));
   await writeFile(join(dir, 'backlog', 'ST-001.md'), READY_MD);
   return dir;

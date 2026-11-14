@@ -1,12 +1,12 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, readFile, stat, chmod, writeFile, mkdir } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { readFile, stat, chmod, writeFile, mkdir } from 'node:fs/promises';
 import { join } from 'node:path';
 import { parseEnvFile, mask, SECRET_SPECS, tokenEnv } from '../src/config/secrets.mjs';
 import { FileSecretStore } from '../src/adapters/file-secret-store.mjs';
+import { makeTempDir } from './temp-dir.mjs';
 
-const tmp = () => mkdtemp(join(tmpdir(), 'story-secret-'));
+const tmp = () => makeTempDir('story-secret-');
 const notTracked = async () => false;
 
 test('secret specs name one env file and variable per tracker', () => {

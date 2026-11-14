@@ -1,18 +1,18 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFile } from 'node:child_process';
-import { mkdtemp, mkdir, readdir, readFile, writeFile, access } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { mkdir, readdir, readFile, writeFile, access } from 'node:fs/promises';
 import { join, dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 import { planInstall, AGENTS } from '../scripts/install.mjs';
 import { EXPECTED } from './expected-skills.mjs';
+import { makeTempDir } from '../skills/story-time/scripts/test/temp-dir.mjs';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const INSTALL = join(ROOT, 'scripts', 'install.mjs');
 const run = promisify(execFile);
-const tmp = () => mkdtemp(join(tmpdir(), 'story-install-'));
+const tmp = () => makeTempDir('story-install-');
 const exists = (p) => access(p).then(() => true, () => false);
 
 async function install(home, ...args) {

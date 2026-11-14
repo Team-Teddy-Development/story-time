@@ -1,16 +1,16 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFile } from 'node:child_process';
-import { mkdtemp, mkdir, writeFile, readFile, access } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { mkdir, writeFile, readFile, access } from 'node:fs/promises';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 import { READY_MD } from './fixtures.mjs';
+import { makeTempDir } from './temp-dir.mjs';
 
 const CLI = join(dirname(fileURLToPath(import.meta.url)), '..', 'story.mjs');
 const run = promisify(execFile);
-const tmp = () => mkdtemp(join(tmpdir(), 'story-cfg-'));
+const tmp = () => makeTempDir('story-cfg-');
 const exists = (p) => access(p).then(() => true, () => false);
 
 // Runs the CLI from a project directory, the way an agent would.
