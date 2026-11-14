@@ -16,45 +16,15 @@ fn main() -> ExitCode {
         );
         return ExitCode::SUCCESS;
     }
-    if args.first().is_some_and(|s| s == "plan") {
-        let (output, code) = story_time_native::planning::run(&args[1..]);
-        print!("{output}");
-        return ExitCode::from(code);
-    }
-    if args.first().is_some_and(|s| s == "machine") {
-        return match story_time_native::machine::run(&args[1..]) {
+    let command = args.first().map(String::as_str);
+    if let Some((_, run)) = story_time_native::NATIVE_COMMANDS
+        .iter()
+        .find(|(name, _)| Some(*name) == command)
+    {
+        return match run(&args[1..]) {
             Ok((output, code)) => {
                 print!("{output}");
                 ExitCode::from(code)
-            }
-            Err(error) => {
-                eprintln!("{}", error.message);
-                ExitCode::from(error.code as u8)
-            }
-        };
-    }
-    if args.first().is_some_and(|s| s == "adopt") {
-        let (output, code) = story_time_native::adoption::run(&args[1..]);
-        print!("{output}");
-        return ExitCode::from(code);
-    }
-    type Native = fn(&[String]) -> Result<String, story_time_native::Failure>;
-    let native: Option<Native> = match args.first().map(String::as_str) {
-        Some("init") => Some(story_time_native::init::run),
-        Some("push") => Some(story_time_native::push),
-        Some("config") => Some(story_time_native::config::run),
-        Some("issues") => Some(story_time_native::issues),
-        Some("show") => Some(story_time_native::show::run),
-        Some("list") => Some(story_time_native::list::run),
-        Some("secret") => Some(story_time_native::secret::run),
-        Some("metrics") => Some(story_time_native::metrics::run),
-        _ => None,
-    };
-    if let Some(run) = native {
-        return match run(&args[1..]) {
-            Ok(output) => {
-                print!("{output}");
-                ExitCode::SUCCESS
             }
             Err(error) => {
                 eprintln!("{}", error.message);
@@ -72,7 +42,7 @@ fn main() -> ExitCode {
             raw["legacyCli"].as_str().map(PathBuf::from)
         });
     let Some(legacy) = legacy else {
-        eprintln!("Commands other than init, push, adopt, plan, config, show, issues, list, secret, machine, and metrics require STORY_TIME_LEGACY_CLI or ~/.config/story-time/runtime.json with legacyCli. Init, push, adopt, plan, config, show, issues, list, secret, machine, and metrics are fully native and need neither Node nor this setting.");
+        eprintln!("{}", story_time_native::legacy_required_message());
         return ExitCode::from(1);
     };
     match Command::new("node").arg(legacy).args(args).status() {
