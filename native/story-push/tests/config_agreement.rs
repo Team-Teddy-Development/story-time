@@ -150,6 +150,36 @@ fn config_push_plan_and_init_reject_the_same_settings_naming_the_same_field() {
             pushable(json!({"github": {"repo": "acme/.."}})),
             "github.repo",
         ),
+        (
+            "github repo is a list",
+            pushable(json!({"github": {"repo": ["acme/shop"]}})),
+            "github.repo",
+        ),
+        (
+            "ado organization is a number",
+            json!({"tracker": "ado", "sync": "ask", "ado": {"organization": 5, "project": "shop"}}),
+            "ado.organization",
+        ),
+        (
+            "ado project is a number",
+            json!({"tracker": "ado", "sync": "ask", "ado": {"organization": "https://dev.azure.com/acme", "project": 5}}),
+            "ado.project",
+        ),
+        (
+            "gitea baseUrl is a list",
+            json!({"tracker": "gitea", "sync": "ask", "gitea": {"baseUrl": ["https://gitea.example.com"], "owner": "acme", "repo": "shop"}}),
+            "gitea.baseUrl",
+        ),
+        (
+            "gitea owner is a list",
+            json!({"tracker": "gitea", "sync": "ask", "gitea": {"baseUrl": "https://gitea.example.com", "owner": ["acme"], "repo": "shop"}}),
+            "gitea.owner",
+        ),
+        (
+            "gitea repo is a number",
+            json!({"tracker": "gitea", "sync": "ask", "gitea": {"baseUrl": "https://gitea.example.com", "owner": "acme", "repo": 5}}),
+            "gitea.repo",
+        ),
     ] {
         let s = Sandbox::new(&settings);
         for (command, out, rejects) in s.commands() {

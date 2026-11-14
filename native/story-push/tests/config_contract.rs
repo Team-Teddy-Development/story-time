@@ -305,3 +305,40 @@ fn tracker_url_checks_reject_settings_node_accepts() {
         );
     }
 }
+
+/// Intended divergence (ST-074): push reads these tracker fields as strings, so native rejects a non-string value that Node's `String(value)` accepts.
+#[test]
+fn non_string_tracker_fields_reject_settings_node_accepts() {
+    for (text, field) in [
+        (r#"{"github":{"repo":["acme/shop"]}}"#, "github.repo"),
+        (
+            r#"{"ado":{"organization":5,"project":"shop"}}"#,
+            "ado.organization",
+        ),
+        (
+            r#"{"ado":{"organization":"https://dev.azure.com/acme","project":5}}"#,
+            "ado.project",
+        ),
+        (
+            r#"{"gitea":{"baseUrl":"https://h","owner":["o"],"repo":"r"}}"#,
+            "gitea.owner",
+        ),
+        (
+            r#"{"gitea":{"baseUrl":"https://h","owner":"o","repo":5}}"#,
+            "gitea.repo",
+        ),
+    ] {
+        let s = Sandbox::new();
+        s.write(".story-time/settings.json", text);
+        assert_eq!(
+            s.run(false, &["--json"], &[]).status.code(),
+            Some(0),
+            "Node accepts {text}"
+        );
+        let native = s.run(true, &["--json"], &[]);
+        let stderr = String::from_utf8_lossy(&native.stderr);
+        assert_eq!(native.status.code(), Some(1), "native accepts {text}");
+        assert!(native.stdout.is_empty());
+        assert!(stderr.contains(field), "{text}: {stderr}");
+    }
+}
