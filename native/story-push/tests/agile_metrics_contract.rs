@@ -226,3 +226,25 @@ fn the_window_must_be_two_ordered_dates() {
         assert!(out.stdout.is_empty(), "{args:?}");
     }
 }
+
+#[test]
+fn a_split_into_line_is_the_status_event_of_a_split_story() {
+    let backlog = Backlog::new();
+    backlog
+        .story(
+            "ST-001",
+            "split",
+            &[
+                "2026-11-02 set status=in-progress",
+                "2026-11-04 split into ST-002, ST-003",
+            ],
+        )
+        .story("ST-002", "draft", &[])
+        .story("ST-003", "draft", &[]);
+    let report = backlog.json("2026-11-01", "2026-11-07");
+    for figure in &report["figures"].as_array().unwrap()[..3] {
+        assert_eq!(figure["unknown"], json!([]), "{figure}");
+    }
+    assert_eq!(report["figures"][0]["value"], 0);
+    assert_eq!(report["figures"][1]["value"], 0);
+}
