@@ -91,7 +91,8 @@ replacing its title and body, instead of creating a second one. Tell the user
 before that push.
 
 When creating several stories from one source, show the list of titles and
-statements first and wait for approval before writing.
+statements first and wait for approval before writing. Rows the user already
+approved in a **gap-sweep** table count as that approval.
 
 ## 5. Report
 

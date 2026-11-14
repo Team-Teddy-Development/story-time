@@ -23,6 +23,7 @@ script. Here the subject is the story lifecycle, from idea to accepted.
 | `story-ready` | "is this ready?" | Definition of Ready gate: automated INVEST lint plus judgment checks. The only way into `ready`. |
 | `refinement` | "refine ST-012", "refine the backlog" | One workflow for single-story depth or complete open-story inventory, epic questions, preserved estimates, and ordered ready candidates. |
 | `backlog-groom` | "groom the backlog" | Compatibility alias to refinement in backlog mode. |
+| `gap-sweep` | "what are we missing?" | Finds work with no story in code, tests, docs, stories, and open GitHub issues, plus up to 2 evidence-backed features. Proposes at most 10 rows and hands approved ones to story-create. |
 | `sprint-planning` | "plan a sprint" | Goal-based local JSON and Markdown proposals with explicit capacity, completed dependencies, deferred work, and forecast limits. |
 | `story-pick` | "what's next?" | WSJF-ranked pick, checked against WIP, capacity, dependencies, and risk, with alternatives. |
 | `story-map` | "map this epic" | User story map (backbone → steps → stories) sliced into a walking skeleton and outcome-named releases. |
@@ -38,6 +39,7 @@ story-setup (once) → idea → story-create → acceptance-criteria → story-e
           ├─ too big → story-split      ├─ epic → story-map      └─ unknown → spike
           ├─ a lifecycle → state-machine      └─ a multi-input rule → decision-table   (both feed acceptance-criteria)
 refinement runs in single-story or backlog mode; backlog-groom is its alias.
+gap-sweep finds work with no story and hands approved rows to story-create.
 sprint-planning consumes ordered ready stories; story-edit applies anywhere.
 ```
 
