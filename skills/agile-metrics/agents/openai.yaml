@@ -1,0 +1,4 @@
+interface:
+  display_name: "Agile metrics"
+  short_description: "Report throughput, WIP, and cycle time with gaps unknown"
+  default_prompt: "Use $agile-metrics to report delivery metrics for a window, naming each figure's source, window, and units."

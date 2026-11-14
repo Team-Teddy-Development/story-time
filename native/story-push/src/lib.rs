@@ -6,6 +6,7 @@ pub mod init;
 mod lenient_story;
 pub mod list;
 pub mod machine;
+pub mod metrics;
 mod models;
 pub mod planning;
 pub mod secret;
