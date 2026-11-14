@@ -211,7 +211,7 @@ fn invalid_input_has_diagnostics_and_no_writes_even_with_force() {
             r#"{"github":{"repo":"shop"}}"#,
             "github.repo must be owner/repo",
         ),
-        (r#"{"tracker":"github"}"#, "github settings"),
+        (r#"{"tracker":"github"}"#, "github.repo"),
         (r#"{"sync":"auto"}"#, "needs tracker"),
         (r#"{"project":{"stack":false}}"#, "project.stack"),
     ] {

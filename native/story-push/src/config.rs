@@ -161,7 +161,7 @@ pub fn run(args: &[String]) -> Result<String, Failure> {
     })
 }
 
-/// Validates raw settings and returns the effective config with defaults, as Node's `parseConfig` does.
+/// The one settings validator for config, push, and init: Node's `parseConfig` plus the tracker URL checks that keep secrets and path segments out of requests.
 pub fn parse(raw: &Value) -> Result<Value, String> {
     let raw = js_value(raw);
     let object = raw.as_object().ok_or("Config must be a JSON object.")?;
@@ -286,7 +286,7 @@ fn github(g: &Value) -> Result<Value, String> {
     let text = js_string(repo);
     if !text
         .split_once('/')
-        .is_some_and(|(owner, name)| is_name(owner) && is_name(name))
+        .is_some_and(|(owner, name)| is_segment(owner) && is_segment(name))
     {
         return Err(format!("github.repo must be owner/repo; got \"{text}\"."));
     }
@@ -338,8 +338,21 @@ fn gitea(g: &Value) -> Result<Value, String> {
         );
     }
     let text = js_string(base_url.unwrap());
-    if !reqwest::Url::parse(&text).is_ok_and(|u| ["http", "https"].contains(&u.scheme())) {
+    let url = reqwest::Url::parse(&text)
+        .ok()
+        .filter(|u| ["http", "https"].contains(&u.scheme()));
+    let Some(url) = url else {
         return Err(format!("gitea.baseUrl must be an http(s) URL such as \"https://gitea.example.com\"; got \"{text}\"."));
+    };
+    // Stricter than Node: the URL can carry a secret, so the reason never echoes it.
+    if !url.username().is_empty()
+        || url.password().is_some()
+        || url.query().is_some()
+        || url.fragment().is_some()
+    {
+        return Err(
+            "gitea.baseUrl must not contain credentials, a query, or a fragment. Store the token with: story secret set gitea".into(),
+        );
     }
     if !truthy(prop(g, "owner")) {
         return Err("tracker \"gitea\" needs gitea.owner (the user or organization).".into());
@@ -349,7 +362,7 @@ fn gitea(g: &Value) -> Result<Value, String> {
     }
     for key in ["owner", "repo"] {
         let name = js_string(&g[key]);
-        if !is_name(&name) {
+        if !is_segment(&name) {
             return Err(format!(
                 "gitea.{key} must be a single name (letters, digits, _ . -); got \"{name}\"."
             ));
@@ -421,6 +434,11 @@ fn is_name(s: &str) -> bool {
     !s.is_empty()
         && s.bytes()
             .all(|c| c.is_ascii_alphanumeric() || b"_.-".contains(&c))
+}
+
+/// A name that is safe as one tracker URL path segment; stricter than Node, which accepts `.` and `..`.
+fn is_segment(s: &str) -> bool {
+    is_name(s) && s != "." && s != ".."
 }
 
 /// `value.key` in JavaScript: only objects carry the settings keys.
