@@ -3,8 +3,8 @@
 ST-022 adds `story adopt preview` to the native Rust CLI. Run it from the project
 root. It prints one JSON document on stdout, including for conflicts. It does not
 write files, load credentials, contact trackers, or call the retained Node CLI.
-Only preview is implemented. No adoption apply, verify, or rollback command is
-available. ST-023 owns mutation and recovery.
+ST-023 adds `apply`, `verify`, and `rollback`; see "Apply, verify, and rollback"
+below.
 
 ```sh
 cargo build --offline --locked --manifest-path native/story-push/Cargo.toml --target-dir /tmp/ST022-native-target
@@ -85,6 +85,54 @@ Preview is an observation, not a repository lock or authorization to mutate. A
 later apply owner must recheck source freshness and membership, acquire its lock,
 and implement the backup, journal, and recovery contract before any write. Preview
 does not establish transactional consistency while another process changes files.
+
+## Apply, verify, and rollback
+
+```sh
+story adopt preview > /outside/repo/plan.json      # review this file
+story adopt apply --plan /outside/repo/plan.json [--state DIR]
+story adopt verify --plan /outside/repo/plan.json [--state DIR]
+story adopt rollback --plan /outside/repo/plan.json [--state DIR]
+```
+
+Each command prints one JSON report: exit 0 on success, exit 2 with `conflict`
+diagnostics (`code`, `path`, `recovery`). `--state` defaults to
+`$XDG_STATE_HOME` or `~/.local/state`, then `story-time/adoption/<migration_id>`.
+It must resolve outside the repository.
+
+Apply refuses a plan that is not version 1, is a preview conflict, was edited
+(`plan_digest` mismatch), names an unsafe, credential, or non-create write, or no
+longer matches the repository (`stale_plan`). It takes an exclusive OS lock on the
+repository root directory (`lock_held` when another run holds it); the OS
+releases it when a process exits, so a crash leaves no stale lock. Under the lock
+it recomputes the preview, then writes the state directory:
+
+| Path | Content |
+| --- | --- |
+| `backup/files/NNNN` | Mode-600 byte copies of every reviewed present input (configuration and backlog files). |
+| `backup/manifest.json` | Plan digest, migration ID, root, and each copy's path, SHA256, length, and name. |
+| `journal.json` | Ordered steps with path, absent preimage, postimage SHA256, `pending`/`complete`/`rolled_back` state and error, directories this run created, and every recorded failure. |
+
+The backup is re-read and checked against the reviewed digests before the first
+write. A configuration with credential-like keys, or a dotenv/key file in the
+input set, is refused (`credential_in_backup_set`) and nothing is copied. Each step
+publishes its file by hard-linking a fully written temporary file, so it never
+replaces bytes another writer created.
+
+A rerun classifies each step only by current bytes: absent is pending, postimage
+is complete, anything else is `step_diverged`. Apply resumes pending steps and
+reports the classification in `resume`. A repeated apply on an adopted repository
+returns `already_adopted` without writing. Verify is read-only: it requires an
+`already_adopted` preview for the plan's migration, rechecks the backup, and
+reports the receipt digest and explicit unknowns. Rollback removes, in reverse
+order, only journaled files whose bytes still equal their postimage, then only
+empty directories the journal proves this run created. Any diverged step stops
+rollback before it removes anything (`rollback_diverged`). Source files are never
+modified, so rollback never restores them; the backup stays for manual recovery.
+No command contacts a tracker.
+
+`STORY_TIME_ADOPT_FAULT=before:N|after:N` is a test-only fault hook. It stops apply
+around journaled write N with exit 75, as a crash would.
 
 ## Verification
 

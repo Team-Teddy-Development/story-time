@@ -1,4 +1,5 @@
 pub mod adoption;
+mod adoption_apply;
 pub mod gateway;
 pub mod init;
 pub mod planning;
