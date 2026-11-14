@@ -34,10 +34,13 @@ enum Backend {
     Gitea(Gitea),
 }
 
+const TRACKER_CLI_TIMEOUT: Duration = Duration::from_secs(120);
+
 struct Cli {
     program: PathBuf,
     root: PathBuf,
     token: Option<(String, String)>,
+    timeout: Duration,
 }
 
 impl Cli {
@@ -59,13 +62,67 @@ impl Cli {
         let mut child = command
             .spawn()
             .map_err(|_| "Tracker CLI could not start; check its installation.".to_string())?;
-        let write_result = match (input, child.stdin.take()) {
-            (Some(text), Some(mut stdin)) => stdin.write_all(text.as_bytes()),
-            _ => Ok(()),
+        let writer = match (input, child.stdin.take()) {
+            (Some(text), Some(mut stdin)) => {
+                let text = text.to_owned();
+                Some(std::thread::spawn(move || stdin.write_all(text.as_bytes())))
+            }
+            _ => None,
         };
-        let out = child
-            .wait_with_output()
-            .map_err(|_| "Tracker CLI could not be read.".to_string())?;
+        let drain = |pipe: Option<Box<dyn Read + Send>>| {
+            std::thread::spawn(move || {
+                let mut bytes = Vec::new();
+                if let Some(mut pipe) = pipe {
+                    let _ = pipe.read_to_end(&mut bytes);
+                }
+                bytes
+            })
+        };
+        let stdout = drain(
+            child
+                .stdout
+                .take()
+                .map(|p| Box::new(p) as Box<dyn Read + Send>),
+        );
+        let stderr = drain(
+            child
+                .stderr
+                .take()
+                .map(|p| Box::new(p) as Box<dyn Read + Send>),
+        );
+        let deadline = std::time::Instant::now() + self.timeout;
+        let status = loop {
+            match child.try_wait() {
+                Ok(Some(status)) => break status,
+                Ok(None) if std::time::Instant::now() < deadline => {
+                    std::thread::sleep(Duration::from_millis(20))
+                }
+                Ok(None) => {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    let program = self
+                        .program
+                        .file_name()
+                        .map(|n| n.to_string_lossy().into_owned())
+                        .unwrap_or_default();
+                    let command: Vec<&str> = std::iter::once(program.as_str())
+                        .chain(args.iter().take(2).map(String::as_str))
+                        .collect();
+                    return Err(format!(
+                        "Tracker CLI `{}` timed out after {}s and was stopped.",
+                        command.join(" "),
+                        self.timeout.as_secs()
+                    ));
+                }
+                Err(_) => return Err("Tracker CLI could not be read.".to_string()),
+            }
+        };
+        let out = std::process::Output {
+            status,
+            stdout: stdout.join().unwrap_or_default(),
+            stderr: stderr.join().unwrap_or_default(),
+        };
+        let write_result = writer.map_or(Ok(()), |w| w.join().unwrap_or(Ok(())));
         if !out.status.success() {
             return Err(format!(
                 "Tracker CLI failed (exit {}). Check tracker authentication and repository access.",
@@ -107,6 +164,7 @@ impl Gateway {
             program: PathBuf::from(program),
             root: root.to_path_buf(),
             token: token.clone().map(|value| (variable.into(), value)),
+            timeout: TRACKER_CLI_TIMEOUT,
         };
         let backend = match tracker {
             "github" => {
@@ -1493,6 +1551,7 @@ mod tests {
             use std::{env,fs::OpenOptions,io::{Read,Write}};
             fn main() {
                 let args:Vec<String>=env::args().skip(1).collect();
+                if std::path::Path::new("hang").exists() { loop { std::thread::sleep(std::time::Duration::from_secs(60)); } }
                 assert!(!args.iter().any(|s|s.contains("private-cli-token")));
                 assert!(env::var("GH_TOKEN").ok().as_deref()==Some("private-cli-token") || env::var("AZURE_DEVOPS_EXT_PAT").ok().as_deref()==Some("private-cli-token"));
                 let mut input=String::new(); std::io::stdin().read_to_string(&mut input).unwrap();
@@ -1542,6 +1601,7 @@ mod tests {
                 .into(),
                 "private-cli-token".into(),
             )),
+            timeout: TRACKER_CLI_TIMEOUT,
         }
     }
 
@@ -1590,6 +1650,28 @@ mod tests {
                 .count(),
             1
         );
+    }
+
+    #[test]
+    fn a_tracker_cli_that_never_exits_is_stopped_with_a_timeout_naming_the_command() {
+        let tmp = Temp::new();
+        let mut cli = stub_cli(&tmp.0, "gh");
+        cli.timeout = Duration::from_secs(1);
+        fs::write(tmp.0.join("hang"), "").unwrap();
+        let mut gateway = Gateway {
+            config: json!({}),
+            backend: Backend::Github {
+                repo: "acme/shop".into(),
+                cli,
+                labels: HashSet::new(),
+            },
+        };
+        let started = std::time::Instant::now();
+        let error = gateway.create(&story("ready")).unwrap_err();
+        assert!(started.elapsed() < Duration::from_secs(10), "{error}");
+        assert!(error.contains("timed out after 1s"), "{error}");
+        assert!(error.contains("gh label create"), "{error}");
+        assert!(!error.contains("private-cli-token"), "{error}");
     }
 
     #[test]
