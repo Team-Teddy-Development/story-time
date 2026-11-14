@@ -137,7 +137,7 @@ fn real_installer_ships_both_entry_points_and_executes_their_documented_native_i
             let project = temp.join(format!("{}-{name}-{mode}", agent.trim_start_matches('.')));
             fs::create_dir_all(project.join(".story-time")).unwrap();
             fs::create_dir(project.join("work")).unwrap();
-            let config=json!({"tracker":"jira","sync":"off","prefix":"PAY","backlogDir":"work","team":{"sprintDays":10,"wipLimit":1},"custom":"unchanged"}).to_string();
+            let config=json!({"tracker":"jira","sync":"off","prefix":"PAY","backlogDir":"work","team":{"sprintDays":10,"wipLimit":1},"jira":{"preserve":"unchanged"}}).to_string();
             fs::write(project.join(".story-time/settings.json"), &config).unwrap();
             let ready="---\nid: PAY-001\nstatus: ready\nsize: 3\n---\n\n## Story\nPreserve this estimate.\n";
             let draft = "---\nid: PAY-002\nstatus: draft\nsize: 5\n---\n\n## Story\nNot ready.\n";

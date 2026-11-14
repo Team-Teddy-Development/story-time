@@ -329,44 +329,13 @@ fn snapshot(root: &Path) -> Result<Snapshot> {
         let (file, bytes) = image(root, name)?;
         let config: Value =
             serde_json::from_slice(&bytes).map_err(|e| format!("malformed_config: {e}"))?;
-        if !config.is_object() {
-            return Err("malformed_config: expected object".into());
-        }
         (Some(file), config)
     } else {
         (None, json!({}))
     };
-    for (key, allowed) in [
-        (
-            "tracker",
-            &["files", "github", "gitea", "ado", "jira", "linear"][..],
-        ),
-        ("sync", &["off", "ask", "auto"][..]),
-    ] {
-        if let Some(value) = optional_text(&config, key)? {
-            if !allowed.contains(&value.as_str()) {
-                return Err(format!("malformed_config: unknown {key}"));
-            }
-        }
-    }
-    if config
-        .get("team")
-        .is_some_and(|v| !v.is_null() && !v.is_object())
-    {
-        return Err("malformed_config: team must be an object".into());
-    }
-    let backlog_dir = optional_text(&config, "backlogDir")?.unwrap_or_else(|| "backlog".into());
-    let prefix = optional_text(&config, "prefix")?.unwrap_or_else(|| "ST".into());
-    if !prefix
-        .bytes()
-        .next()
-        .is_some_and(|c| c.is_ascii_uppercase())
-        || !prefix
-            .bytes()
-            .all(|c| c.is_ascii_uppercase() || c.is_ascii_digit())
-    {
-        return Err("malformed_config: prefix must be uppercase letters/digits".into());
-    }
+    let config = crate::config::parse(&config).map_err(|e| format!("malformed_config: {e}"))?;
+    let backlog_dir = crate::config::js_string(&config["backlogDir"]);
+    let prefix = crate::config::js_string(&config["prefix"]);
     let dir = safe_path(root, &backlog_dir)?;
     let mut paths = Vec::new();
     match fs::read_dir(&dir) {
@@ -431,15 +400,6 @@ fn snapshot(root: &Path) -> Result<Snapshot> {
     let mut done = BTreeSet::new();
     for id in stories.keys() {
         visit(id, &stories, &mut BTreeSet::new(), &mut done)?;
-    }
-    for name in ["sprintDays", "wipLimit"] {
-        if let Some(value) = config["team"].get(name) {
-            if !value.is_null() && value.as_u64().filter(|n| *n > 0).is_none() {
-                return Err(format!(
-                    "malformed_config: team.{name} must be a positive integer"
-                ));
-            }
-        }
     }
     Ok(Snapshot {
         source: Source {

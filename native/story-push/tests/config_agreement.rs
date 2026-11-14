@@ -31,14 +31,17 @@ impl Sandbox {
             .output()
             .unwrap()
     }
-    fn commands(&self) -> [(&'static str, Output); 3] {
+    /// Each command with the exit code it uses to reject settings; plan reports a conflict on stdout with exit 2.
+    fn commands(&self) -> [(&'static str, Output, i32); 4] {
         let settings = ".story-time/settings.json";
         [
-            ("config", self.story(&["config", "--config", settings])),
+            ("config", self.story(&["config", "--config", settings]), 1),
             (
                 "push",
                 self.story(&["push", "--all", "--dry-run", "--config", settings]),
+                1,
             ),
+            ("plan", self.story(&["plan", "--snapshot"]), 2),
             (
                 "init",
                 self.story(&[
@@ -49,6 +52,7 @@ impl Sandbox {
                     "out/settings.json",
                     "--force",
                 ]),
+                1,
             ),
         ]
     }
@@ -69,7 +73,7 @@ fn pushable(extra: Value) -> Value {
 }
 
 #[test]
-fn config_push_and_init_accept_the_same_settings() {
+fn config_push_plan_and_init_accept_the_same_settings() {
     for (name, settings) in [
         ("empty backlogDir", pushable(json!({"backlogDir": ""}))),
         ("team not an object", pushable(json!({"team": "x"}))),
@@ -90,11 +94,12 @@ fn config_push_and_init_accept_the_same_settings() {
         ),
     ] {
         let s = Sandbox::new(&settings);
-        for (command, out) in s.commands() {
+        for (command, out, _) in s.commands() {
             assert_eq!(
                 out.status.code(),
                 Some(0),
-                "{command} rejects {name}: {}",
+                "{command} rejects {name}: {}{}",
+                String::from_utf8_lossy(&out.stdout),
                 String::from_utf8_lossy(&out.stderr)
             );
         }
@@ -102,7 +107,7 @@ fn config_push_and_init_accept_the_same_settings() {
 }
 
 #[test]
-fn config_push_and_init_reject_the_same_settings_naming_the_same_field() {
+fn config_push_plan_and_init_reject_the_same_settings_naming_the_same_field() {
     let gitea = |base_url: &str, owner: &str| json!({"tracker": "gitea", "sync": "ask", "gitea": {"baseUrl": base_url, "owner": owner, "repo": "shop"}});
     for (name, settings, field) in [
         (
@@ -145,11 +150,45 @@ fn config_push_and_init_reject_the_same_settings_naming_the_same_field() {
             pushable(json!({"github": {"repo": "acme/.."}})),
             "github.repo",
         ),
+        (
+            "github repo is a list",
+            pushable(json!({"github": {"repo": ["acme/shop"]}})),
+            "github.repo",
+        ),
+        (
+            "ado organization is a number",
+            json!({"tracker": "ado", "sync": "ask", "ado": {"organization": 5, "project": "shop"}}),
+            "ado.organization",
+        ),
+        (
+            "ado project is a number",
+            json!({"tracker": "ado", "sync": "ask", "ado": {"organization": "https://dev.azure.com/acme", "project": 5}}),
+            "ado.project",
+        ),
+        (
+            "gitea baseUrl is a list",
+            json!({"tracker": "gitea", "sync": "ask", "gitea": {"baseUrl": ["https://gitea.example.com"], "owner": "acme", "repo": "shop"}}),
+            "gitea.baseUrl",
+        ),
+        (
+            "gitea owner is a list",
+            json!({"tracker": "gitea", "sync": "ask", "gitea": {"baseUrl": "https://gitea.example.com", "owner": ["acme"], "repo": "shop"}}),
+            "gitea.owner",
+        ),
+        (
+            "gitea repo is a number",
+            json!({"tracker": "gitea", "sync": "ask", "gitea": {"baseUrl": "https://gitea.example.com", "owner": "acme", "repo": 5}}),
+            "gitea.repo",
+        ),
     ] {
         let s = Sandbox::new(&settings);
-        for (command, out) in s.commands() {
-            let stderr = String::from_utf8_lossy(&out.stderr);
-            assert_eq!(out.status.code(), Some(1), "{command} accepts {name}");
+        for (command, out, rejects) in s.commands() {
+            let stderr = String::from_utf8_lossy(if command == "plan" {
+                &out.stdout
+            } else {
+                &out.stderr
+            });
+            assert_eq!(out.status.code(), Some(rejects), "{command} accepts {name}");
             assert!(
                 stderr.contains(field),
                 "{command} does not name {field} for {name}: {stderr}"
