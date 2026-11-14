@@ -1,25 +1,29 @@
-//! `story mcp [--root DIR]...`: a read-only MCP server over stdio (ADR 0006). The contracts are
+//! `story mcp [--root DIR]... [--write]`: an MCP server over stdio (ADR 0006). The contracts are
 //! in `docs/spikes/ST-006-mcp-server.md`. Tools take a repository key and story ids, never paths,
-//! and read through the same `config`, `list`, `lenient_story`, and `lint` code as the CLI.
+//! and read through the same `config`, `list`, `lenient_story`, and `lint` code as the CLI. With
+//! `--write` it adds `story_update` and `story_note`, which change stories through the code of
+//! `story set` and `story note` under the repository lock and a SHA-256 precondition.
 
 use crate::{
     adoption::sha,
+    adoption_apply::lock_repository,
     config,
     lenient_story::{self, Js},
     lint::{self, Severity},
-    list, valid_id, Failure,
+    list, note, set, valid_id, Failure,
 };
 use regex_lite::Regex;
 use serde_json::{json, Map, Value};
 use std::{
     collections::HashMap,
     fs,
+    fs::TryLockError,
     io::{self, BufRead, Read, Write},
     path::{Path, PathBuf},
     time::Instant,
 };
 
-const USAGE: &str = "Usage: story mcp [--root DIR]...";
+const USAGE: &str = "Usage: story mcp [--root DIR]... [--write]";
 const MODERN: &str = "2026-07-28";
 const LEGACY: &str = "2025-11-25";
 const SUPPORTED: [&str; 2] = [MODERN, LEGACY];
@@ -49,8 +53,10 @@ const STATUSES: &[&str] = &[
 const TYPES: &[&str] = &["story", "spike", "bug", "chore"];
 
 pub fn run(args: &[String]) -> Result<(String, u8), Failure> {
+    let (roots, write) = roots(args)?;
     let mut server = Server {
-        roots: roots(args)?,
+        roots,
+        write,
         legacy: false,
         redactor: Redactor::from_env(),
     };
@@ -65,18 +71,20 @@ struct Root {
     path: PathBuf,
 }
 
-fn roots(args: &[String]) -> Result<Vec<Root>, Failure> {
+fn roots(args: &[String]) -> Result<(Vec<Root>, bool), Failure> {
     let usage = || Failure {
         code: 2,
         message: USAGE.into(),
     };
     let mut given = Vec::new();
+    let mut write = false;
     let mut args = args.iter();
     while let Some(arg) = args.next() {
-        if arg != "--root" {
-            return Err(usage());
+        match arg.as_str() {
+            "--root" => given.push(PathBuf::from(args.next().ok_or_else(usage)?)),
+            "--write" => write = true,
+            _ => return Err(usage()),
         }
-        given.push(PathBuf::from(args.next().ok_or_else(usage)?));
     }
     if given.is_empty() {
         given.push(match std::env::var_os("CLAUDE_PROJECT_DIR") {
@@ -102,7 +110,7 @@ fn roots(args: &[String]) -> Result<Vec<Root>, Failure> {
         }
         roots.push(Root { key, path });
     }
-    Ok(roots)
+    Ok((roots, write))
 }
 
 /// The root's final path component as a key matching `^[a-z0-9][a-z0-9._-]{0,63}$`, with room
@@ -133,6 +141,7 @@ fn key_base(path: &Path) -> String {
 
 struct Server {
     roots: Vec<Root>,
+    write: bool,
     legacy: bool,
     redactor: Redactor,
 }
@@ -258,7 +267,7 @@ impl Server {
                 if params.contains_key("cursor") {
                     return Err(rpc(-32602, "tools/list does not page"));
                 }
-                json!({"tools": TOOLS.iter().map(Tool::describe).collect::<Vec<_>>()})
+                json!({"tools": self.tools().map(Tool::describe).collect::<Vec<_>>()})
             }
             _ => self.call(params)?,
         };
@@ -269,10 +278,15 @@ impl Server {
         Ok(result)
     }
 
+    /// The tool set, fixed for the life of the process: write tools only under `--write`.
+    fn tools(&self) -> impl Iterator<Item = &'static Tool> + '_ {
+        TOOLS.iter().filter(|t| self.write || t.hints.read_only)
+    }
+
     fn call(&self, params: &Map<String, Value>) -> Result<Value, RpcError> {
         let name = params.get("name").and_then(Value::as_str);
-        let tool = TOOLS
-            .iter()
+        let tool = self
+            .tools()
             .find(|t| Some(t.name) == name)
             .ok_or_else(|| rpc(-32602, "Unknown tool"))?;
         let started = Instant::now();
@@ -292,7 +306,7 @@ impl Server {
                 json!({"error": {
                     "code": error.code,
                     "message": error.message,
-                    "retryable": error.code == "io_error",
+                    "retryable": matches!(error.code, "io_error" | "conflict" | "lock_held"),
                     "details": error.details,
                 }}),
                 true,
@@ -321,6 +335,7 @@ impl Server {
             _ => None,
         }
         .map(|r| r.key.clone());
+        let digest = |key| outcome.as_ref().ok().map(|v| v[key].clone());
         let ids: Vec<&str> = args
             .get("id")
             .into_iter()
@@ -340,8 +355,8 @@ impl Server {
             "ids": ids,
             "outcome": if outcome.is_ok() { "ok" } else { "error" },
             "error_code": outcome.as_ref().err().map(|e| e.code),
-            "sha256_before": null,
-            "sha256_after": null,
+            "sha256_before": digest("sha256_before"),
+            "sha256_after": digest("sha256_after"),
             "duration_ms": started.elapsed().as_millis() as u64,
         });
         eprintln!("{line}");
@@ -852,11 +867,202 @@ fn story_lint(server: &Server, args: &Map<String, Value>) -> Result<Value, ToolE
     }))
 }
 
+/// Fields `story set` refuses, plus the fields only `story push` writes.
+const NOT_WRITABLE: [&str; 3] = ["remote", "remote_url", "pending_create"];
+
+fn field_error(code: &'static str, field: &str, message: String) -> ToolError {
+    ToolError {
+        code,
+        message,
+        details: json!({ "field": field }),
+    }
+}
+
+fn conflict(id: &str, expected: &str, current: &str) -> ToolError {
+    ToolError {
+        code: "conflict",
+        message: format!("{id} changed since it was read."),
+        details: json!({"id": id, "expected_sha256": expected, "current_sha256": current}),
+    }
+}
+
+/// The `set` argument as `story set` pairs: a number in JS form, an array joined with commas,
+/// and `null` as the empty value that removes a field.
+fn set_pairs(args: &Map<String, Value>) -> Vec<(String, String)> {
+    let raw = |value: &Value| match value {
+        Value::String(s) => s.clone(),
+        Value::Number(n) => crate::js_number::to_string(n.as_f64().unwrap_or(f64::NAN)),
+        Value::Array(items) => items
+            .iter()
+            .filter_map(Value::as_str)
+            .collect::<Vec<_>>()
+            .join(","),
+        _ => String::new(),
+    };
+    args["set"]
+        .as_object()
+        .into_iter()
+        .flatten()
+        .map(|(key, value)| (key.clone(), raw(value)))
+        .collect()
+}
+
+impl Server {
+    /// The repository with its write lock held until the returned file drops.
+    fn lock(&self, args: &Map<String, Value>) -> Result<(Repo<'_>, fs::File), ToolError> {
+        let repo = self.open(args)?;
+        let lock = lock_repository(&repo.root.path).map_err(|e| match e {
+            TryLockError::WouldBlock => fail(
+                "lock_held",
+                "Another process holds the repository write lock.",
+            ),
+            TryLockError::Error(_) => io_error("lock repository"),
+        })?;
+        Ok((repo, lock))
+    }
+}
+
+impl Repo<'_> {
+    fn save(&self, story: &Js) -> Result<String, ToolError> {
+        list::save(&self.dir, story).map_err(|_| io_error("write story file"))?;
+        Ok(sha(lenient_story::serialize(story).as_bytes()))
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn written(
+        &self,
+        operation: &str,
+        status: &str,
+        story: &Js,
+        before: &str,
+        after: &str,
+        fields: Vec<String>,
+        changelog: Option<String>,
+    ) -> Value {
+        let id = story.get("id").string();
+        let sync = self.settings["sync"].as_str().unwrap_or("off");
+        json!({
+            "status": status,
+            "story": summary(story, Some(&after.to_owned())),
+            "sha256_before": before,
+            "sha256_after": after,
+            "audit": {
+                "operation": operation,
+                "repository": self.root.key,
+                "id": id,
+                "fields": fields,
+                "changelog": changelog,
+                "at": chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true),
+                "server_version": env!("CARGO_PKG_VERSION"),
+            },
+            "publish": {
+                "sync": sync,
+                "tracker": self.settings["tracker"],
+                "pushed": false,
+                "next": (sync != "off").then(|| format!("story push {id}")),
+            },
+        })
+    }
+}
+
+fn story_update(server: &Server, args: &Map<String, Value>) -> Result<Value, ToolError> {
+    let id = args["id"].as_str().unwrap_or_default();
+    let expected = args["expected_sha256"].as_str().unwrap_or_default();
+    let changes = set::changes(&set_pairs(args));
+    let mut wanted = Vec::new();
+    for (key, raw) in &changes {
+        if set::IMMUTABLE.contains(&key.as_str()) || NOT_WRITABLE.contains(&key.as_str()) {
+            let message = format!("Field \"{key}\" cannot be set through MCP.");
+            return Err(field_error("field_not_writable", key, message));
+        }
+        let value = set::coerce(key, raw).map_err(|m| field_error("invalid_value", key, m))?;
+        wanted.push((key.as_str(), value.unwrap_or(Js::Undefined)));
+    }
+    let fields: Vec<String> = changes.iter().map(|(k, _)| k.clone()).collect();
+    let (repo, _lock) = server.lock(args)?;
+    let (current, bytes) = repo.story(id)?;
+    let before = sha(&bytes);
+    if before != expected {
+        if wanted.iter().all(|(key, value)| current.get(key) == value) {
+            return Ok(repo.written(
+                "story_update",
+                "already_applied",
+                &current,
+                &before,
+                &before,
+                fields,
+                None,
+            ));
+        }
+        return Err(conflict(id, expected, &before));
+    }
+    let note = args.get("note").and_then(Value::as_str);
+    let change = set::apply(&current, &changes, note, false, &repo.dir, &repo.root.path).map_err(
+        |refusal| match refusal {
+            set::Refusal::Immutable(key) => field_error(
+                "field_not_writable",
+                &key,
+                format!("Field \"{key}\" cannot be set through MCP."),
+            ),
+            set::Refusal::Invalid(message) => fail("invalid_value", &message),
+            set::Refusal::NotReady(findings) => ToolError {
+                code: "lifecycle_refused",
+                message: format!("{id} is not ready."),
+                details: json!({
+                    "id": id,
+                    "findings": findings
+                        .iter()
+                        .map(|f| json!({"rule": f.rule, "message": f.message}))
+                        .collect::<Vec<_>>(),
+                }),
+            },
+            set::Refusal::Other(message) => repo.malformed(&message),
+        },
+    )?;
+    let after = repo.save(&change.story)?;
+    Ok(repo.written(
+        "story_update",
+        "updated",
+        &change.story,
+        &before,
+        &after,
+        fields,
+        Some(change.line),
+    ))
+}
+
+fn story_note(server: &Server, args: &Map<String, Value>) -> Result<Value, ToolError> {
+    let id = args["id"].as_str().unwrap_or_default();
+    let expected = args["expected_sha256"].as_str().unwrap_or_default();
+    let text = args["note"].as_str().unwrap_or_default();
+    let (repo, _lock) = server.lock(args)?;
+    let (current, bytes) = repo.story(id)?;
+    let before = sha(&bytes);
+    if before != expected {
+        return Err(conflict(id, expected, &before));
+    }
+    let next = note::append(&current, text).map_err(|m| field_error("invalid_value", "note", m))?;
+    let after = repo.save(&next)?;
+    let line = lenient_story::trim(text).to_owned();
+    Ok(repo.written(
+        "story_note",
+        "updated",
+        &next,
+        &before,
+        &after,
+        Vec::new(),
+        Some(line),
+    ))
+}
+
 enum Kind {
     Text(usize),
     Choice(&'static [&'static str]),
     List(&'static Kind, usize),
     Integer { min: i64, max: i64, default: i64 },
+    NonEmpty(usize),
+    Sha256,
+    Changes,
 }
 impl Kind {
     fn schema(&self) -> Value {
@@ -869,6 +1075,17 @@ impl Kind {
             Kind::Integer { min, max, default } => {
                 json!({"type": "integer", "minimum": min, "maximum": max, "default": default})
             }
+            Kind::NonEmpty(max) => json!({"type": "string", "minLength": 1, "maxLength": max}),
+            Kind::Sha256 => json!({"type": "string", "pattern": "^[0-9a-f]{64}$"}),
+            Kind::Changes => json!({
+                "type": "object",
+                "minProperties": 1,
+                "maxProperties": 20,
+                "additionalProperties": {
+                    "type": ["string", "number", "array", "null"],
+                    "items": {"type": "string"},
+                },
+            }),
         }
     }
     fn check(&self, value: &Value, pointer: &str) -> Result<(), ToolError> {
@@ -886,6 +1103,17 @@ impl Kind {
             }
             (Kind::Integer { min, max, .. }, Value::Number(n)) => {
                 n.as_i64().is_some_and(|n| (*min..=*max).contains(&n))
+            }
+            (Kind::NonEmpty(max), Value::String(s)) => (1..=*max).contains(&s.chars().count()),
+            (Kind::Sha256, Value::String(s)) => {
+                s.len() == 64 && s.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'))
+            }
+            (Kind::Changes, Value::Object(changes)) => {
+                (1..=20).contains(&changes.len())
+                    && changes.values().all(|v| match v {
+                        Value::Array(items) => items.iter().all(Value::is_string),
+                        _ => matches!(v, Value::String(_) | Value::Number(_) | Value::Null),
+                    })
             }
             _ => false,
         };
@@ -914,18 +1142,35 @@ const ID: Field = Field {
     kind: Kind::Text(64),
 };
 
+struct Hints {
+    read_only: bool,
+    destructive: bool,
+    idempotent: bool,
+}
+const READ: Hints = Hints {
+    read_only: true,
+    destructive: false,
+    idempotent: true,
+};
+const EXPECTED: Field = Field {
+    name: "expected_sha256",
+    kind: Kind::Sha256,
+};
+
 struct Tool {
     name: &'static str,
     description: &'static str,
+    hints: Hints,
     fields: &'static [Field],
     required: &'static [&'static str],
     output: fn() -> Value,
     run: fn(&Server, &Map<String, Value>) -> Result<Value, ToolError>,
 }
 
-const TOOLS: [Tool; 4] = [
+const TOOLS: [Tool; 6] = [
     Tool {
         name: "story_config",
+        hints: READ,
         description: "The story-time settings of each allowlisted repository, or of one.",
         fields: &[REPOSITORY],
         required: &[],
@@ -934,6 +1179,7 @@ const TOOLS: [Tool; 4] = [
     },
     Tool {
         name: "story_list",
+        hints: READ,
         description: "Story summaries in backlog id order, filtered and paged with a cursor.",
         fields: &[
             REPOSITORY,
@@ -968,6 +1214,7 @@ const TOOLS: [Tool; 4] = [
     },
     Tool {
         name: "story_show",
+        hints: READ,
         description: "One story's frontmatter and sections, with the SHA-256 of its file.",
         fields: &[REPOSITORY, ID],
         required: &["id"],
@@ -976,6 +1223,7 @@ const TOOLS: [Tool; 4] = [
     },
     Tool {
         name: "story_lint",
+        hints: READ,
         description: "The Definition of Ready lint findings for every story, or for the named ids.",
         fields: &[
             REPOSITORY,
@@ -987,6 +1235,52 @@ const TOOLS: [Tool; 4] = [
         required: &[],
         output: lint_schema,
         run: story_lint,
+    },
+    Tool {
+        name: "story_update",
+        hints: Hints {
+            read_only: false,
+            destructive: true,
+            idempotent: true,
+        },
+        description: "Set story fields as `story set` does, given the SHA-256 from story_show. Writes the local file only; publish.next names the push step.",
+        fields: &[
+            REPOSITORY,
+            ID,
+            EXPECTED,
+            Field {
+                name: "set",
+                kind: Kind::Changes,
+            },
+            Field {
+                name: "note",
+                kind: Kind::Text(500),
+            },
+        ],
+        required: &["id", "expected_sha256", "set"],
+        output: write_schema,
+        run: story_update,
+    },
+    Tool {
+        name: "story_note",
+        hints: Hints {
+            read_only: false,
+            destructive: false,
+            idempotent: false,
+        },
+        description: "Append one changelog line as `story note` does, given the SHA-256 from story_show. Writes the local file only.",
+        fields: &[
+            REPOSITORY,
+            ID,
+            EXPECTED,
+            Field {
+                name: "note",
+                kind: Kind::NonEmpty(500),
+            },
+        ],
+        required: &["id", "expected_sha256", "note"],
+        output: write_schema,
+        run: story_note,
     },
 ];
 
@@ -1008,9 +1302,9 @@ impl Tool {
             },
             "outputSchema": (self.output)(),
             "annotations": {
-                "readOnlyHint": true,
-                "destructiveHint": false,
-                "idempotentHint": true,
+                "readOnlyHint": self.hints.read_only,
+                "destructiveHint": self.hints.destructive,
+                "idempotentHint": self.hints.idempotent,
                 "openWorldHint": false,
             },
         })
@@ -1075,9 +1369,9 @@ fn config_schema() -> Value {
     ))
 }
 
-fn list_schema() -> Value {
+fn summary_schema() -> Value {
     let nullable_text = json!({"type": ["string", "null"]});
-    let summary = object(
+    object(
         &[
             "id",
             "title",
@@ -1102,7 +1396,12 @@ fn list_schema() -> Value {
             "updated": nullable_text,
             "sha256": nullable_text,
         }),
-    );
+    )
+}
+
+fn list_schema() -> Value {
+    let nullable_text = json!({"type": ["string", "null"]});
+    let summary = summary_schema();
     with_redactions(object(
         &["repository", "stories", "next_cursor", "total"],
         json!({
@@ -1110,6 +1409,57 @@ fn list_schema() -> Value {
             "stories": {"type": "array", "items": summary},
             "next_cursor": nullable_text,
             "total": {"type": "integer", "minimum": 0},
+        }),
+    ))
+}
+
+fn write_schema() -> Value {
+    let text = json!({"type": "string"});
+    let audit = object(
+        &[
+            "operation",
+            "repository",
+            "id",
+            "fields",
+            "changelog",
+            "at",
+            "server_version",
+        ],
+        json!({
+            "operation": text,
+            "repository": text,
+            "id": text,
+            "fields": texts(),
+            "changelog": {"type": ["string", "null"]},
+            "at": text,
+            "server_version": text,
+        }),
+    );
+    let publish = object(
+        &["sync", "tracker", "pushed", "next"],
+        json!({
+            "sync": {"enum": ["off", "ask", "auto"]},
+            "tracker": text,
+            "pushed": {"const": false, "type": "boolean"},
+            "next": {"type": ["string", "null"]},
+        }),
+    );
+    with_redactions(object(
+        &[
+            "status",
+            "story",
+            "sha256_before",
+            "sha256_after",
+            "audit",
+            "publish",
+        ],
+        json!({
+            "status": {"enum": ["updated", "already_applied"]},
+            "story": summary_schema(),
+            "sha256_before": text,
+            "sha256_after": text,
+            "audit": audit,
+            "publish": publish,
         }),
     ))
 }

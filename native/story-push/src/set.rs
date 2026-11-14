@@ -11,6 +11,7 @@ use crate::{
     Failure,
 };
 use chrono::Utc;
+use std::path::Path;
 
 const STATUSES: [&str; 7] = [
     "draft",
@@ -23,7 +24,7 @@ const STATUSES: [&str; 7] = [
 ];
 const NUMERIC: [&str; 4] = ["value", "time_criticality", "risk_reduction", "size"];
 const LIST: [&str; 2] = ["depends_on", "children"];
-const IMMUTABLE: [&str; 4] = ["id", "created", "updated", "sections"];
+pub(crate) const IMMUTABLE: [&str; 4] = ["id", "created", "updated", "sections"];
 
 pub fn run(args: &[String]) -> Result<String, Failure> {
     let flags = Flags::parse(args)?;
@@ -35,30 +36,89 @@ pub fn run(args: &[String]) -> Result<String, Failure> {
         Some((id, pairs)) if !id.is_empty() && !pairs.is_empty() => (id, pairs),
         _ => return Err(usage("Usage: story set <id> key=value...".into())),
     };
-    let mut changes: Vec<(String, Js)> = Vec::new();
+    let mut parsed = Vec::new();
     for pair in pairs {
-        let (key, raw) = match pair.find('=') {
-            Some(i) if i >= 1 => (pair[..i].replace('-', "_"), &pair[i + 1..]),
+        match pair.find('=') {
+            Some(i) if i >= 1 => parsed.push((pair[..i].to_owned(), pair[i + 1..].to_owned())),
             _ => return Err(usage(format!("Expected key=value, got \"{pair}\"."))),
-        };
-        match changes.iter_mut().find(|(k, _)| *k == key) {
-            Some(entry) => entry.1 = Js::Str(raw.into()),
-            None => changes.push((key, Js::Str(raw.into()))),
         }
     }
-    let changes: Vec<(&str, String)> = ordered(&changes)
-        .into_iter()
-        .map(|(k, v)| (k.as_str(), v.string()))
-        .collect();
-
     let current = list::get(&dir, id)?.ok_or_else(|| format!("Story {id} not found."))?;
-    let mut next = current.props().to_vec();
-    for (key, raw) in &changes {
-        let key = *key;
-        if IMMUTABLE.contains(&key) {
-            return Err(format!("Field \"{key}\" cannot be set directly.").into());
+    let note = flags.value("note");
+    let change = apply(
+        &current,
+        &changes(&parsed),
+        note,
+        flags.has("force"),
+        &dir,
+        &loaded.root,
+    )
+    .map_err(|refusal| match refusal {
+        Refusal::Immutable(key) => format!("Field \"{key}\" cannot be set directly."),
+        Refusal::Invalid(message) | Refusal::Other(message) => message,
+        Refusal::NotReady(findings) => format!(
+            "{id} is not ready:\n{}",
+            findings
+                .iter()
+                .map(|f| format!("  {}: {}", f.rule, f.message))
+                .collect::<Vec<_>>()
+                .join("\n")
+        ),
+    })?;
+    list::save(&dir, &change.story)?;
+    Ok(if flags.has("json") {
+        format!("{}\n", change.story.json())
+    } else {
+        format!("{} updated.\n", change.story.get("id").string())
+    })
+}
+
+/// Requested `key=value` pairs in `story set`'s order: `-` in a key reads as `_`, a repeated key
+/// keeps its first place and its last value, and array-index keys sort first as in a JS object.
+pub(crate) fn changes(pairs: &[(String, String)]) -> Vec<(String, String)> {
+    let mut changes: Vec<(String, Js)> = Vec::new();
+    for (key, raw) in pairs {
+        let key = key.replace('-', "_");
+        match changes.iter_mut().find(|(k, _)| *k == key) {
+            Some(entry) => entry.1 = Js::Str(raw.clone()),
+            None => changes.push((key, Js::Str(raw.clone()))),
         }
-        match coerce(key, raw)? {
+    }
+    ordered(&changes)
+        .into_iter()
+        .map(|(k, v)| (k.clone(), v.string()))
+        .collect()
+}
+
+pub(crate) enum Refusal {
+    Immutable(String),
+    Invalid(String),
+    NotReady(Vec<lint::Finding>),
+    Other(String),
+}
+
+pub(crate) struct Change {
+    pub(crate) story: Js,
+    pub(crate) line: String,
+}
+
+/// `updateStory`: the story with each change coerced, a move to `ready` gated on the lint
+/// unless forced, and one changelog line dated today. The caller saves it.
+pub(crate) fn apply(
+    current: &Js,
+    changes: &[(String, String)],
+    note: Option<&str>,
+    force: bool,
+    dir: &Path,
+    root: &Path,
+) -> Result<Change, Refusal> {
+    let mut next = current.props().to_vec();
+    for (key, raw) in changes {
+        let key = key.as_str();
+        if IMMUTABLE.contains(&key) {
+            return Err(Refusal::Immutable(key.into()));
+        }
+        match coerce(key, raw).map_err(Refusal::Invalid)? {
             Some(value) => Js::set(&mut next, key, value),
             None => next.retain(|(k, _)| k != key),
         }
@@ -66,19 +126,19 @@ pub fn run(args: &[String]) -> Result<String, Failure> {
     let next = Js::Obj(next);
 
     let ready = |s: &Js| matches!(s.get("status"), Js::Str(st) if st == "ready");
-    if ready(&next) && !ready(&current) && !flags.has("force") {
-        let stories = list::stories(&dir, None)?;
+    if ready(&next) && !ready(current) && !force {
+        let stories = list::stories(dir, None).map_err(Refusal::Other)?;
         let ctx = Context {
             stories: Some(&stories),
-            root: Some(&loaded.root),
+            root: Some(root),
         };
-        let errors: Vec<String> = lint::lint_story(&next, &ctx)?
+        let errors: Vec<lint::Finding> = lint::lint_story(&next, &ctx)
+            .map_err(Refusal::Other)?
             .into_iter()
             .filter(|f| f.severity == Severity::Error)
-            .map(|f| format!("  {}: {}", f.rule, f.message))
             .collect();
         if !errors.is_empty() {
-            return Err(format!("{id} is not ready:\n{}", errors.join("\n")).into());
+            return Err(Refusal::NotReady(errors));
         }
     }
 
@@ -87,17 +147,15 @@ pub fn run(args: &[String]) -> Result<String, Failure> {
         .map(|(key, _)| format!("{key}={}", display(&next, key)))
         .collect::<Vec<_>>()
         .join(", ");
-    let note = match flags.value("note") {
+    let note = match note {
         Some(note) if !note.is_empty() => format!(" — {note}"),
         _ => String::new(),
     };
+    let line = format!("set {summary}{note}");
     let date = Utc::now().format("%Y-%m-%d").to_string();
-    let updated = append_changelog(&next, &format!("set {summary}{note}"), &date);
-    list::save(&dir, &updated)?;
-    Ok(if flags.has("json") {
-        format!("{}\n", updated.json())
-    } else {
-        format!("{} updated.\n", updated.get("id").string())
+    Ok(Change {
+        story: append_changelog(&next, &line, &date),
+        line,
     })
 }
 
@@ -105,7 +163,7 @@ fn usage(message: String) -> Failure {
     Failure { code: 2, message }
 }
 
-fn coerce(key: &str, raw: &str) -> Result<Option<Js>, String> {
+pub(crate) fn coerce(key: &str, raw: &str) -> Result<Option<Js>, String> {
     if raw.is_empty() {
         return Ok(None);
     }
