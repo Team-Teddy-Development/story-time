@@ -66,17 +66,30 @@ fn push_parses_flags_like_node() {
             Some("\"remoteId\": \"41\""),
         ),
         (&["push", "--dry-run", "--dir", "--x", "ST-002"], Some("42")),
-        (&["push", "--all", "ST-001", "--dry-run"], Some("ST-002")),
+        (&["push", "--all", "ST-001", "--dry-run"], None),
+        (&["push", "--label", "ST-001", "--all", "--dry-run"], None),
+        (&["push", "--dryrun", "ST-001"], None),
+        (&["push", "--all", "--dry-run", "--dir=x", "y"], None),
+        (&["push", "--dry-run", "--dir"], None),
+        (&["push", "--dry-run"], None),
+    ];
+    let refusals: &[(&[&str], &str)] = &[
+        (
+            &["push", "--all", "ST-001", "--dry-run"],
+            "Use --all or explicit story IDs, not both.",
+        ),
         (
             &["push", "--label", "ST-001", "--all", "--dry-run"],
-            Some("ST-002"),
+            "Unknown push flag --label.",
+        ),
+        (
+            &["push", "--dryrun", "ST-001"],
+            "Unknown push flag --dryrun.",
         ),
         (
             &["push", "--all", "--dry-run", "--dir=x", "y"],
-            Some("ST-002"),
+            "Unknown push flag --dir=x.",
         ),
-        (&["push", "--dry-run", "--dir"], None),
-        (&["push", "--dry-run"], None),
     ];
     for (args, expected) in cases {
         let node = sandbox.run(false, args);
@@ -105,6 +118,9 @@ fn push_parses_flags_like_node() {
                 );
             }
             None => assert_eq!(node.status.code(), Some(2), "{args:?}"),
+        }
+        if let Some(refusal) = refusals.iter().find(|(a, _)| a == args) {
+            assert_eq!(text(&node.stderr), format!("{}\n", refusal.1), "{args:?}");
         }
     }
 }

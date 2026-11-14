@@ -97,6 +97,22 @@ test('push of an unknown story fails before calling the tracker', async () => {
   assert.doesNotMatch(await readFile(join(dir, 'backlog', 'ST-001.md'), 'utf8'), /^remote:/m);
 });
 
+for (const [args, message] of [
+  [['push', '--all', 'ST-001'], 'Use --all or explicit story IDs, not both.'],
+  [['push', '--dryrun', 'ST-001'], 'Unknown push flag --dryrun.'],
+  [['push', '--dir=backlog', 'ST-001'], 'Unknown push flag --dir=backlog.'],
+]) {
+  test(`push ${args.slice(1).join(' ')} refuses before calling the tracker`, async () => {
+    const bin = await makeFakeBin();
+    const dir = await project({ ...GITHUB, sync: 'auto' });
+    const r = await story(dir, bin.dir, args);
+    assert.equal(r.code, 2);
+    assert.equal(r.stderr, `${message}\n`);
+    assert.deepEqual((await bin.readState()).calls, []);
+    assert.doesNotMatch(await readFile(join(dir, 'backlog', 'ST-001.md'), 'utf8'), /^remote:/m);
+  });
+}
+
 test('a tracker CLI failure is reported with its message and the story stays unlinked', async () => {
   const bin = await makeFakeBin();
   const dir = await project({ tracker: 'github', github: { repo: 'nobody/missing' }, sync: 'auto' });
