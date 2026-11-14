@@ -26,20 +26,15 @@ fn main() -> ExitCode {
         print!("{output}");
         return ExitCode::from(code);
     }
-    if args.first().is_some_and(|s| s == "init") {
-        return match story_time_native::init::run(&args[1..]) {
-            Ok(output) => {
-                print!("{output}");
-                ExitCode::SUCCESS
-            }
-            Err(error) => {
-                eprintln!("{}", error.message);
-                ExitCode::from(error.code as u8)
-            }
-        };
-    }
-    if args.first().is_some_and(|s| s == "push") {
-        return match story_time_native::push(&args[1..]) {
+    type Native = fn(&[String]) -> Result<String, story_time_native::Failure>;
+    let native: Option<Native> = match args.first().map(String::as_str) {
+        Some("init") => Some(story_time_native::init::run),
+        Some("push") => Some(story_time_native::push),
+        Some("config") => Some(story_time_native::config::run),
+        _ => None,
+    };
+    if let Some(run) = native {
+        return match run(&args[1..]) {
             Ok(output) => {
                 print!("{output}");
                 ExitCode::SUCCESS
@@ -60,7 +55,7 @@ fn main() -> ExitCode {
             raw["legacyCli"].as_str().map(PathBuf::from)
         });
     let Some(legacy) = legacy else {
-        eprintln!("Commands other than init, push, adopt, and plan require STORY_TIME_LEGACY_CLI or ~/.config/story-time/runtime.json with legacyCli. Init, push, adopt, and plan are fully native and need neither Node nor this setting.");
+        eprintln!("Commands other than init, push, adopt, plan, and config require STORY_TIME_LEGACY_CLI or ~/.config/story-time/runtime.json with legacyCli. Init, push, adopt, plan, and config are fully native and need neither Node nor this setting.");
         return ExitCode::from(1);
     };
     match Command::new("node").arg(legacy).args(args).status() {

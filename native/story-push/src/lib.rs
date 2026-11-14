@@ -1,5 +1,6 @@
 pub mod adoption;
 mod adoption_apply;
+pub mod config;
 pub mod gateway;
 pub mod init;
 pub mod planning;
@@ -328,33 +329,10 @@ struct Context {
     dir: PathBuf,
 }
 fn context(args: &Args) -> Result<Context, String> {
-    let config_path = if let Some(p) = args.config.clone().or_else(|| env("STORY_TIME_CONFIG")) {
-        absolute(p)?
-    } else if Path::new(".story-time/settings.json").exists() {
-        absolute(".story-time/settings.json")?
-    } else if Path::new(".story-time.json").exists() {
-        absolute(".story-time.json")?
-    } else {
-        absolute(".story-time/settings.json")?
-    };
-    let config = match fs::read_to_string(&config_path) {
-        Ok(text) => {
-            let raw = serde_json::from_str(&text)
-                .map_err(|_| format!("{}: invalid JSON configuration.", config_path.display()))?;
-            validate_config(raw).map_err(|e| format!("{}: {e}", config_path.display()))?
-        }
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => validate_config(json!({}))?,
-        Err(e) => return Err(format!("Could not read configuration: {e}")),
-    };
-    let parent = config_path.parent().ok_or("Config has no parent.")?;
-    let root = if parent.file_name().is_some_and(|p| p == ".story-time") {
-        parent
-            .parent()
-            .ok_or("Config has no project root.")?
-            .to_owned()
-    } else {
-        parent.to_owned()
-    };
+    let loaded = config::load(args.config.as_deref())?;
+    let config =
+        validate_config(loaded.raw).map_err(|e| format!("{}: {e}", loaded.path.display()))?;
+    let root = loaded.root;
     let dir = if let Some(p) = args.dir.clone().or_else(|| env("STORY_TIME_DIR")) {
         absolute(p)?
     } else {

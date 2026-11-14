@@ -1,9 +1,6 @@
 use crate::{validate_config, Failure};
 use serde_json::{json, Map, Value};
-use std::{
-    fs,
-    path::{Component, Path, PathBuf},
-};
+use std::{fs, path::Path};
 
 const HELP: &str = "Usage: story init [--from answers.json] [--force] [--config path] [--json]\n\nWrite validated project settings to .story-time/settings.json.\n\n  --from FILE    Read settings from a JSON file; defaults apply when omitted.\n  --force        Replace an existing settings file after validation.\n  --config PATH  Write settings to an explicit path (before STORY_TIME_CONFIG).\n  --json         Print the effective settings as JSON.\n  -h, --help     Show this help without reading or writing project files.\n\nGitHub settings use github.repo as owner/repo, for example acme/shop.\nGitea settings use separate gitea.baseUrl, gitea.owner, and gitea.repo fields.\nInit is native Rust and needs neither Node nor runtime configuration.\n";
 
@@ -47,27 +44,6 @@ impl Init {
         }
         Ok(request)
     }
-}
-
-fn resolved(path: &Path) -> Result<PathBuf, Failure> {
-    let absolute = if path.is_absolute() {
-        path.to_owned()
-    } else {
-        std::env::current_dir()
-            .map_err(|e| e.to_string())?
-            .join(path)
-    };
-    let mut result = PathBuf::new();
-    for part in absolute.components() {
-        match part {
-            Component::CurDir => (),
-            Component::ParentDir => {
-                result.pop();
-            }
-            _ => result.push(part.as_os_str()),
-        }
-    }
-    Ok(result)
 }
 
 fn optional_string(value: Option<&Value>, name: &str) -> Result<Option<Value>, String> {
@@ -187,7 +163,7 @@ pub fn run(args: &[String]) -> Result<String, Failure> {
         .config
         .or_else(|| std::env::var("STORY_TIME_CONFIG").ok())
         .unwrap_or_else(|| ".story-time/settings.json".into());
-    let path = resolved(Path::new(&target))?;
+    let path = crate::config::resolve(Path::new(&target))?;
     let raw = match request.from {
         Some(from) => {
             let text =
