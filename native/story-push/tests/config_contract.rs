@@ -220,6 +220,7 @@ fn invalid_config_fails_like_node() {
         ),
         ("jev key", r#"{"jev":{"key":"secret"}}"#),
         ("jev model", r#"{"jev":{"model":"jev-"}}"#),
+        ("jev model empty", r#"{"jev":{"model":""}}"#),
     ] {
         let s = Sandbox::new();
         s.write(".story-time/settings.json", text);
@@ -244,7 +245,6 @@ fn edge_values_match_node() {
         r#"{"github":0,"gitea":"","jira":false,"linear":null,"jev":{}}"#,
         r#"{"team":"x","project":[],"backlogDir":"","prefix":"A1"}"#,
         r#"{"team":{"velocity":1e2,"sprintDays":14},"jira":"ab","linear":[true]}"#,
-        r#"{"jev":{"model":""}}"#,
     ] {
         let s = Sandbox::new();
         s.write(".story-time/settings.json", text);
