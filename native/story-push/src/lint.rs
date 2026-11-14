@@ -94,7 +94,7 @@ pub(crate) fn ready(findings: &[Finding]) -> bool {
 }
 
 /// JavaScript's `\s`, the characters inside a class.
-const SPACE: &str = r"\t\n\x0B\x0C\r \x{A0}\x{1680}\x{2000}-\x{200A}\x{2028}\x{2029}\x{202F}\x{205F}\x{3000}\x{FEFF}";
+pub(crate) const SPACE: &str = r"\t\n\x0B\x0C\r \x{A0}\x{1680}\x{2000}-\x{200A}\x{2028}\x{2029}\x{202F}\x{205F}\x{3000}\x{FEFF}";
 const SIZE_WARN: f64 = 8.0;
 const SIZE_MAX: f64 = 13.0;
 const AC_MAX: usize = 8;

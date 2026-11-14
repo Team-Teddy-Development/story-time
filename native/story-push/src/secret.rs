@@ -158,6 +158,11 @@ fn status(dir: &Path, json: bool) -> Result<String, Failure> {
     Ok(format!("{text}\n"))
 }
 
+/// The stored TypeSafe (Jev) key in `dir`, refused on the same terms as every other token.
+pub(crate) fn jev_key(dir: &Path) -> Result<Option<String>, String> {
+    load(dir, &PROVIDERS[3])
+}
+
 /// Refuses a group- or world-readable file, or one git tracks, the way ssh refuses a loose private key.
 fn load(dir: &Path, provider: &Provider) -> Result<Option<String>, String> {
     let path = dir.join(provider.file);

@@ -5,6 +5,7 @@ pub mod export;
 pub mod gateway;
 pub mod init;
 mod js_number;
+pub mod judge;
 mod lenient_story;
 pub mod lint;
 pub mod list;
@@ -56,6 +57,7 @@ pub const NATIVE_COMMANDS: &[(&str, Native)] = &[
     ("note", |args| note::run(args).map(|out| (out, 0))),
     ("new", |args| new_story::run(args).map(|out| (out, 0))),
     ("rank", |args| rank::run(args).map(|out| (out, 0))),
+    ("judge", judge::run),
 ];
 
 pub fn legacy_required_message() -> String {
