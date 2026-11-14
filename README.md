@@ -52,7 +52,20 @@ Native `story init`, `story push`, `story adopt preview`, and `story plan`
 require Rust and Cargo. Other commands still require Node 20+ and use the
 existing dependency-free Node CLI.
 
-From the repository root, install the native executable and configure the
+To install a release on a machine in one step, run this from the repository root:
+
+```bash
+cargo run --locked --manifest-path native/story-push/Cargo.toml --bin story-install -- --agent all
+```
+
+It exports the checkout's HEAD commit to `~/.local/share/story-time/releases/<commit>`.
+It saves the current `~/.local/bin/story` and `~/.config/story-time/runtime.json`.
+Then it builds `story` from the export, installs the skills for the chosen
+agents, and points `runtime.json` at the export. Uncommitted changes are not
+installed. Use `--dry-run` to print the plan. Use `--rollback` to restore the
+saved binary and `runtime.json`.
+
+To install by hand instead, install the native executable and configure the
 retained entry point for other commands:
 
 ```bash

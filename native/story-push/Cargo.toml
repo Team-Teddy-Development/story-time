@@ -7,6 +7,10 @@ edition = "2021"
 name = "story"
 path = "src/main.rs"
 
+[[bin]]
+name = "story-install"
+path = "src/bin/story_install.rs"
+
 [dependencies]
 serde = { version = "1", features = ["derive"] }
 ring = "0.17.14"
