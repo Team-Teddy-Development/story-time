@@ -213,7 +213,7 @@ pub(crate) fn line_terminator(c: char) -> bool {
 }
 
 /// `text.split(/\r?\n/)`.
-fn lines(text: &str) -> Vec<&str> {
+pub(crate) fn lines(text: &str) -> Vec<&str> {
     let mut pieces: Vec<&str> = text.split('\n').collect();
     let last = pieces.len() - 1;
     for piece in &mut pieces[..last] {

@@ -62,7 +62,7 @@ The **principle-invest** skill holds the quality bar all of them apply.
 
 ## The `story` tool
 
-Use installed Rust `story` for `init`, `push`, `adopt preview`, `plan`, `config`, `show`, `list`, `stats`, `secret`, `note`, `machine`, `export`, `new`, `table`, and `metrics`.
+Use installed Rust `story` for `init`, `push`, `adopt preview`, `plan`, `config`, `show`, `list`, `lint`, `stats`, `secret`, `note`, `machine`, `export`, `new`, `table`, and `metrics`.
 The skill installer copies skills only; install the executable separately.
 Read `.story-time/settings.json` before selecting a tracker. Install the native
 command from the repository root:
@@ -72,7 +72,7 @@ cargo install --path native/story-push --locked
 ```
 
 `story push` runs entirely in Rust. Do not invoke the historical Node push
-handler. Planning, `story config`, `story show`, `story list`, `story stats`, `story secret`, `story note`, `story machine`, `story export`, `story new`, `story table`, and `story metrics` also run entirely in Rust. Other commands
+handler. Planning, `story config`, `story show`, `story list`, `story lint`, `story stats`, `story secret`, `story note`, `story machine`, `story export`, `story new`, `story table`, and `story metrics` also run entirely in Rust. Other commands
 still use Node 20+.
 Set `STORY_TIME_LEGACY_CLI` to
 this skill's absolute `scripts/story.mjs` path, or configure `legacyCli` in
@@ -98,7 +98,7 @@ part of either Rust push execution path.
 | `story list [--status S]` | List stories |
 | `story show <id>` | Print one story |
 | `story metrics --from YYYY-MM-DD --to YYYY-MM-DD [--json]` | Throughput, WIP, and cycle time for a window from changelog status events, with gaps `unknown`. Native Rust; read-only |
-| `story lint [id...]` | INVEST / Definition of Ready check. Exit 1 if any story has errors |
+| `story lint [id...] [--json]` | INVEST / Definition of Ready check. Exit 1 if any story has errors. Native Rust; read-only |
 | `story rank [--limit N] [--include-refined]` | WSJF ranking of ready, unblocked stories, plus why others were excluded |
 | `story set <id> key=value... [--note N]` | Update fields with a changelog entry. `status=ready` is lint-gated |
 | `story note <id> "why"` | Log a prose edit (sections) in the changelog. Native Rust |
