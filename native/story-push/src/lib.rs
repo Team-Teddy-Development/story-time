@@ -4,6 +4,7 @@ pub mod config;
 pub mod gateway;
 pub mod init;
 pub mod planning;
+pub mod show;
 pub mod story;
 
 use chrono::Utc;
@@ -310,7 +311,7 @@ fn segment(s: &str) -> bool {
         && s.bytes()
             .all(|c| c.is_ascii_alphanumeric() || b"_.-".contains(&c))
 }
-fn valid_id(s: &str) -> bool {
+pub(crate) fn valid_id(s: &str) -> bool {
     let Some((prefix, n)) = s.rsplit_once('-') else {
         return false;
     };

@@ -56,7 +56,7 @@ The **principle-invest** skill holds the quality bar all of them apply.
 
 ## The `story` tool
 
-Use installed Rust `story` for `init`, `push`, `adopt preview`, and `plan`.
+Use installed Rust `story` for `init`, `push`, `adopt preview`, `plan`, `config`, and `show`.
 The skill installer copies skills only; install the executable separately.
 Read `.story-time/settings.json` before selecting a tracker. Install the native
 command from the repository root:
@@ -66,7 +66,7 @@ cargo install --path native/story-push --locked
 ```
 
 `story push` runs entirely in Rust. Do not invoke the historical Node push
-handler. Planning and `story config` also run entirely in Rust. Other commands
+handler. Planning, `story config`, and `story show` also run entirely in Rust. Other commands
 still use Node 20+.
 Set `STORY_TIME_LEGACY_CLI` to
 this skill's absolute `scripts/story.mjs` path, or configure `legacyCli` in
