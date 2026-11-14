@@ -385,3 +385,40 @@ fn documented_example_matches_node() {
     let s = Sandbox::new();
     s.every_action("model/state/enrollment.toml", example);
 }
+
+#[test]
+fn large_integers_match_node() {
+    let big = "9".repeat(400);
+    let s = Sandbox::new();
+    let entity = |value: &str| {
+        with(
+            &[("entity = \"enrollment\"", &format!("entity = {value}"))],
+            "",
+        )
+    };
+    let cases = [
+        entity("9007199254740992"),
+        entity("9007199254740993"),
+        entity("1_000_000_000_000_000_000_000"),
+        entity("100_000_000_000_000_000_000"),
+        entity("-123456789012345678901234567"),
+        entity(&big),
+        entity(&format!("-{big}")),
+        entity(&format!("[{big}, -9007199254740993]")),
+        with(
+            &[
+                ("guard = \"complete\"", "guard = 9007199254740993"),
+                ("complete = \"every", "9007199254740992 = \"every"),
+            ],
+            "",
+        ),
+        with(
+            &[],
+            &format!("\n[[transitions]]\nfrom = {big}\nto = \"draft\"\nevent = \"submit\"\n\n[[transitions]]\nfrom = -{big}\nto = 1_000_000_000_000_000_000_000\nevent = \"submit\"\nguard = {big}\n"),
+        ),
+    ];
+    for (i, text) in cases.iter().enumerate() {
+        let codes = s.every_action(&format!("model/state/large{i}.toml"), text);
+        assert!(codes.iter().all(|c| *c == 0 || *c == 1), "{i}: {codes:?}");
+    }
+}

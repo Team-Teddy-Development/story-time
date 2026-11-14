@@ -253,6 +253,28 @@ fn edge_values_match_node() {
 }
 
 #[test]
+fn settings_numbers_echo_as_node_prints_them() {
+    for text in [
+        r#"{"tracker":5e-324}"#,
+        r#"{"tracker":-5e-324}"#,
+        r#"{"sync":5e-324}"#,
+        r#"{"sync":-5e-324}"#,
+        r#"{"tracker":1e21}"#,
+    ] {
+        let s = Sandbox::new();
+        s.write(".story-time/settings.json", text);
+        let node = s.run(false, &[], &[]);
+        let native = s.compare(&[], &[]);
+        assert_eq!(native.status.code(), Some(1), "{text} should fail");
+        assert_eq!(
+            String::from_utf8_lossy(&native.stderr),
+            String::from_utf8_lossy(&node.stderr),
+            "stderr differs for {text}"
+        );
+    }
+}
+
+#[test]
 fn usage_errors_match_node() {
     let s = Sandbox::new();
     for args in [&["--config"][..], &["--help"][..], &["--dir"][..]] {

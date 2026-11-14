@@ -1,7 +1,7 @@
 //! File and output handling shared by the checked design models (`story machine`, `story table`),
 //! as the Node CLI's `readModel`, `modelName`, `reportDefects`, and `out` do it.
 
-use crate::{config, toml_subset, Failure};
+use crate::{js_number, toml_subset, Failure};
 use serde::Serialize;
 use serde_json::{json, Map, Value};
 use std::io::ErrorKind;
@@ -38,7 +38,7 @@ pub(crate) fn read_model(file: &str) -> Result<Value, Failure> {
 /// `console.log(flags.json ? JSON.stringify(data, null, 2) : human)`.
 pub(crate) fn out(json: bool, data: &impl Serialize, human: impl FnOnce() -> String) -> String {
     let text = if json {
-        serde_json::to_string_pretty(data).expect("model output serializes")
+        js_number::model_stringify(data, true)
     } else {
         human()
     };
@@ -56,7 +56,7 @@ pub(crate) fn report_defects(
         json,
         &json!({"ok": defects.is_empty(), "defects": defects}),
         || {
-            let name = config::js_string(name);
+            let name = js_number::model_string(name);
             if defects.is_empty() {
                 return format!("{name}: OK ({})", summary());
             }
