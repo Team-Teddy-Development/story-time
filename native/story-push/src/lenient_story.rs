@@ -238,7 +238,7 @@ pub(crate) struct Read {
     /// Frontmatter keys whose value is nested YAML data (a flow mapping or an array inside an
     /// array), which `parseStory` flattens into a string or a one-level array.
     pub(crate) nested: Vec<String>,
-    /// Identity keys (`id`, `remote`) given twice with different values; `parseStory` keeps the
+    /// Identity keys (`id`, `remote`, `remote_url`) given twice with different values; `parseStory` keeps the
     /// last one, so the story's identity is ambiguous.
     pub(crate) conflicting: Vec<String>,
 }
@@ -294,7 +294,7 @@ pub(crate) fn read(text: &str) -> Result<Read, String> {
         }
         let value = value(raw)?;
         if let Some((_, prev)) = story.iter().find(|(k, _)| k == key) {
-            if matches!(key, "id" | "remote") && !prev.same(&value) {
+            if matches!(key, "id" | "remote" | "remote_url") && !prev.same(&value) {
                 conflicting.push(key.to_owned());
             }
             dropped.push(format!("duplicate frontmatter key {key}"));
