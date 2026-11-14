@@ -151,8 +151,8 @@ fn serve(mut stream: TcpStream, state: &Mutex<Tracker>) {
             issue.state = body["state"].as_str().unwrap().to_owned();
             json!({"number":n})
         }
-        ("PUT", _, Some(n)) => {
-            tracker.writes.push(format!("PUT {n} labels"));
+        ("POST", _, Some(n)) => {
+            tracker.writes.push(format!("POST {n} labels"));
             json!([])
         }
         _ => {
@@ -220,7 +220,7 @@ fn closed_story_with_a_lost_create_links_and_closes_the_open_item() {
             .map(|i| (i.number, i.state.as_str()))
             .collect();
         assert_eq!(states, vec![(7, "closed"), (8, "open")], "{status}");
-        assert_eq!(state.writes, vec!["PATCH 7", "PUT 7 labels"], "{status}");
+        assert_eq!(state.writes, vec!["PATCH 7", "POST 7 labels"], "{status}");
         let story = fs::read_to_string(f.0.join("backlog/ST-001.md")).unwrap();
         assert!(story.contains("\nremote: 7\n"), "{status}: {story}");
         assert!(!story.contains("pending_create"), "{status}: {story}");
