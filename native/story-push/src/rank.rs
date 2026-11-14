@@ -4,7 +4,7 @@ use crate::{
     config::{self, Flags},
     js_number,
     lenient_story::Js,
-    list, stats, table, Failure,
+    list, table, Failure,
 };
 use std::cmp::Ordering;
 
@@ -156,7 +156,7 @@ fn to_fixed(x: f64) -> String {
 
 /// `Array.prototype.slice(0, Number(limit))`'s end.
 fn slice_end(limit: &str, len: usize) -> usize {
-    let n = stats::number(limit);
+    let n = js_number::string_to_number(limit);
     if n.is_nan() {
         return 0;
     }

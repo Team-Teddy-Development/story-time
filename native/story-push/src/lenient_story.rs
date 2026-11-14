@@ -412,7 +412,7 @@ fn value(raw: &str) -> Result<Js, String> {
         return Ok(Js::Bool(raw == "true"));
     }
     if crate::story::numeric_literal(raw) {
-        return Ok(Js::Num(raw.parse().map_err(|_| "Invalid number")?));
+        return Ok(Js::Num(crate::js_number::string_to_number(raw)));
     }
     Ok(Js::Str(raw.into()))
 }

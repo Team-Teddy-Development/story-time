@@ -60,11 +60,7 @@ pub(crate) fn parse(text: &str) -> serde_json::Result<Value> {
         let token = &rest[..end];
         if is_number(token) {
             let index = numbers.len().to_string();
-            numbers.push(
-                token
-                    .parse::<f64>()
-                    .expect("a JSON number is an f64 literal"),
-            );
+            numbers.push(string_to_number(token));
             rewritten.push_str(&index);
             rewritten.push_str(&" ".repeat(token.len().saturating_sub(index.len())));
         } else {
@@ -129,6 +125,74 @@ fn restore(value: &mut Value, numbers: &[f64]) {
         Value::Object(entries) => entries.values_mut().for_each(|v| restore(v, numbers)),
         _ => (),
     }
+}
+
+/// `Number(string)`: the ECMAScript StringToNumber every command uses to read a numeric argument.
+pub(crate) fn string_to_number(s: &str) -> f64 {
+    let s = crate::lenient_story::trim(s);
+    if s.is_empty() {
+        return 0.0;
+    }
+    for (prefix, radix) in [("0x", 16), ("0o", 8), ("0b", 2)] {
+        let digits = s
+            .strip_prefix(prefix)
+            .or_else(|| s.strip_prefix(&prefix.to_uppercase()));
+        if let Some(digits) = digits {
+            return if !digits.is_empty() && digits.chars().all(|c| c.is_digit(radix)) {
+                radix_integer(digits, radix)
+            } else {
+                f64::NAN
+            };
+        }
+    }
+    let unsigned = s.strip_prefix(['+', '-']).unwrap_or(s);
+    if unsigned == "Infinity" {
+        return if s.starts_with('-') {
+            f64::NEG_INFINITY
+        } else {
+            f64::INFINITY
+        };
+    }
+    let (mantissa, exponent) = match unsigned.find(['e', 'E']) {
+        Some(i) => (&unsigned[..i], Some(&unsigned[i + 1..])),
+        None => (unsigned, None),
+    };
+    let digits = |s: &str| s.bytes().all(|c| c.is_ascii_digit());
+    let (whole, fraction) = mantissa.split_once('.').unwrap_or((mantissa, ""));
+    let valid = digits(whole)
+        && digits(fraction)
+        && !(whole.is_empty() && fraction.is_empty())
+        && exponent.is_none_or(|e| {
+            let e = e.strip_prefix(['+', '-']).unwrap_or(e);
+            !e.is_empty() && digits(e)
+        });
+    if valid {
+        s.parse().expect("a validated decimal literal is an f64")
+    } else {
+        f64::NAN
+    }
+}
+
+/// A base 2, 8, or 16 integer rounded once to the nearest f64, ties to even: folding digit by digit
+/// rounds at every step past 2^53 and can land one ulp away from the value Node gives.
+fn radix_integer(digits: &str, radix: u32) -> f64 {
+    let width = radix.trailing_zeros();
+    let bits: Vec<bool> = digits
+        .chars()
+        .flat_map(|c| {
+            let d = c.to_digit(radix).expect("digits were checked");
+            (0..width).rev().map(move |i| d >> i & 1 == 1)
+        })
+        .skip_while(|b| !b)
+        .collect();
+    let (kept, dropped) = bits.split_at(bits.len().min(53));
+    let mut mantissa = kept.iter().fold(0_u64, |n, &b| n << 1 | u64::from(b));
+    if let Some((&half, rest)) = dropped.split_first() {
+        if half && (mantissa & 1 == 1 || rest.contains(&true)) {
+            mantissa += 1;
+        }
+    }
+    mantissa as f64 * 2_f64.powi(dropped.len() as i32)
 }
 
 /// `String(n)`.
@@ -445,35 +509,20 @@ mod tests {
         cases
     }
 
-    fn mismatches(port: fn(&str) -> f64) -> Vec<String> {
+    #[test]
+    fn string_to_number_matches_node() {
         let long_hex = format!("0x{}", "f".repeat(300));
-        node_table(&long_hex)
+        let mismatches = node_table(&long_hex)
             .into_iter()
             .filter_map(|(input, node)| {
-                let got = port(input);
+                let got = string_to_number(input);
                 let same = match node {
                     "NaN" => got.is_nan(),
                     _ => got.to_bits() == node.parse::<f64>().unwrap().to_bits(),
                 };
                 (!same).then(|| format!("Number({input:?}) is {node} in Node, {got:?} here"))
             })
-            .collect()
-    }
-
-    #[test]
-    fn number_of_a_string_matches_node() {
-        let ports: [(&str, fn(&str) -> f64); 2] = [
-            ("stats::number", crate::stats::number),
-            ("new_story::js_number", crate::new_story::js_number),
-        ];
-        let found: Vec<_> = ports
-            .into_iter()
-            .flat_map(|(name, port)| {
-                mismatches(port)
-                    .into_iter()
-                    .map(move |m| format!("{name}: {m}"))
-            })
-            .collect();
-        assert_eq!(found, Vec::<String>::new());
+            .collect::<Vec<_>>();
+        assert_eq!(mismatches, Vec::<String>::new());
     }
 }

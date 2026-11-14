@@ -29,7 +29,7 @@ pub(crate) fn format_id(prefix: &str, n: f64) -> String {
 pub(crate) fn number(id: &str, prefix: &str) -> Option<f64> {
     let digits = id.strip_prefix(prefix)?.strip_prefix('-')?;
     (!digits.is_empty() && digits.bytes().all(|b| b.is_ascii_digit()))
-        .then(|| digits.parse().unwrap())
+        .then(|| crate::js_number::string_to_number(digits))
 }
 
 fn local_ids(dir: &Path) -> Result<Vec<String>, String> {

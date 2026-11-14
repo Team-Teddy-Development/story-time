@@ -3,6 +3,7 @@
 
 use crate::{
     config::{self, Flags},
+    js_number,
     lenient_story::{trim, Js},
     list::{self, backlog_dir},
     next_id::next_id,
@@ -101,7 +102,7 @@ fn create(flags: &Flags, dir: &Path, prefix: &str, date: &str) -> Result<Js, Str
         ("size", "size"),
     ] {
         if let Some(value) = flags.value(flag) {
-            fields.push((field.into(), Js::Num(js_number(value))));
+            fields.push((field.into(), Js::Num(js_number::string_to_number(value))));
         }
     }
     if let Some(timebox) = flags.value("timebox") {
@@ -116,76 +117,4 @@ fn create(flags: &Flags, dir: &Path, prefix: &str, date: &str) -> Result<Js, Str
     let story = Js::Obj(fields);
     list::save(dir, &story)?;
     Ok(story)
-}
-
-/// JavaScript's `Number(string)`.
-pub(crate) fn js_number(s: &str) -> f64 {
-    let t = trim(s);
-    if t.is_empty() {
-        return 0.0;
-    }
-    for (marker, radix) in [("0x", 16), ("0o", 8), ("0b", 2)] {
-        let digits = t
-            .strip_prefix(marker)
-            .or_else(|| t.strip_prefix(&marker.to_uppercase()));
-        if let Some(digits) = digits {
-            return if !digits.is_empty() && digits.chars().all(|c| c.is_digit(radix)) {
-                digits.chars().fold(0.0, |n, c| {
-                    n * f64::from(radix) + f64::from(c.to_digit(radix).unwrap())
-                })
-            } else {
-                f64::NAN
-            };
-        }
-    }
-    let (sign, body) = match t.strip_prefix('-') {
-        Some(body) => (-1.0, body),
-        None => (1.0, t.strip_prefix('+').unwrap_or(t)),
-    };
-    if body == "Infinity" {
-        return sign * f64::INFINITY;
-    }
-    let (mantissa, exponent) = match body.find(['e', 'E']) {
-        Some(i) => (&body[..i], Some(&body[i + 1..])),
-        None => (body, None),
-    };
-    let (int, frac) = mantissa.split_once('.').unwrap_or((mantissa, ""));
-    let digits = |s: &str| s.bytes().all(|b| b.is_ascii_digit());
-    let valid_exponent = exponent.is_none_or(|e| {
-        let e = e.strip_prefix(['+', '-']).unwrap_or(e);
-        !e.is_empty() && digits(e)
-    });
-    if (int.is_empty() && frac.is_empty()) || !digits(int) || !digits(frac) || !valid_exponent {
-        return f64::NAN;
-    }
-    sign * body.parse::<f64>().unwrap_or(f64::NAN)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::js_number;
-
-    #[test]
-    fn strings_convert_like_javascript_number() {
-        for (input, expected) in [
-            ("3", 3.0),
-            (" 1e3 ", 1000.0),
-            ("", 0.0),
-            ("0x10", 16.0),
-            ("0B101", 5.0),
-            (".5", 0.5),
-            ("5.", 5.0),
-            ("-1.50", -1.5),
-            ("+2", 2.0),
-            ("-Infinity", f64::NEG_INFINITY),
-        ] {
-            assert_eq!(js_number(input), expected, "{input:?}");
-        }
-        for input in [
-            "abc", "1_000", "inf", "NaN", "0x", "-0x10", "1e", ".", "+-5",
-        ] {
-            assert!(js_number(input).is_nan(), "{input:?}");
-        }
-        assert!(js_number("-0").is_sign_negative());
-    }
 }
