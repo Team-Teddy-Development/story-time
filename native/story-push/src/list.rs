@@ -163,6 +163,39 @@ pub(crate) fn get(dir: &Path, id: &str) -> Result<Option<Js>, String> {
 /// `FileSystemStoryRepository.save(story)`: `<dir>/<story.id>.md`, written to a temporary file
 /// and renamed into place, so the file takes the default mode the way Node's `writeFile` does.
 pub(crate) fn save(dir: &Path, story: &Js) -> Result<(), String> {
+    let (target, tmp) = staged(dir, story)?;
+    fs::rename(&tmp, &target).map_err(|e| format!("{}: {e}", target.display()))
+}
+
+/// Writes a new story file like `save`, but publishes it with a hard link, which fails with
+/// `AlreadyExists` instead of replacing a story another process created after the id was chosen.
+pub(crate) fn create(dir: &Path, story: &Js) -> Result<(), CreateError> {
+    let (target, tmp) = staged(dir, story).map_err(CreateError::Other)?;
+    let linked = fs::hard_link(&tmp, &target);
+    let _ = fs::remove_file(&tmp);
+    linked.map_err(|e| {
+        let message = format!("{}: {e}", target.display());
+        match e.kind() {
+            std::io::ErrorKind::AlreadyExists => CreateError::Taken(message),
+            _ => CreateError::Other(message),
+        }
+    })
+}
+
+pub(crate) enum CreateError {
+    Taken(String),
+    Other(String),
+}
+
+impl From<CreateError> for String {
+    fn from(error: CreateError) -> Self {
+        match error {
+            CreateError::Taken(message) | CreateError::Other(message) => message,
+        }
+    }
+}
+
+fn staged(dir: &Path, story: &Js) -> Result<(std::path::PathBuf, std::path::PathBuf), String> {
     let id = match story.get("id") {
         Js::Str(id) if valid_id(id) => id,
         id => return Err(format!("Invalid story id: {}", id.string())),
@@ -171,6 +204,6 @@ pub(crate) fn save(dir: &Path, story: &Js) -> Result<(), String> {
     let tmp = dir.join(format!("{id}.md.{}.tmp", std::process::id()));
     fs::create_dir_all(dir)
         .and_then(|()| fs::write(&tmp, lenient_story::serialize(story)))
-        .and_then(|()| fs::rename(&tmp, &target))
-        .map_err(|e| format!("{}: {e}", target.display()))
+        .map_err(|e| format!("{}: {e}", target.display()))?;
+    Ok((target, tmp))
 }
