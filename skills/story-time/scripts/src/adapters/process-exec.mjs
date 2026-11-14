@@ -18,6 +18,10 @@ export function processExec(cmd, args, { input, env = {} } = {}) {
       reject(e.code === 'ENOENT' ? new Error(`${cmd} is not installed or not on PATH. ${INSTALL[cmd] ?? ''}`.trim()) : e),
     );
     child.on('close', (code) => (code === 0 ? resolve(stdout) : reject(new Error(stderr.trim() || `${cmd} exited with code ${code}`))));
+    // A tracker CLI may exit without reading stdin; its exit code still reports the outcome.
+    child.stdin.on('error', (e) => {
+      if (e.code !== 'EPIPE') reject(e);
+    });
     child.stdin.end(input ?? '');
   });
 }
