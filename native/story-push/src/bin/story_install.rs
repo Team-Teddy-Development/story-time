@@ -83,7 +83,7 @@ impl Step {
                 dir.display()
             ),
             Step::Build { crate_dir } => format!(
-                "cargo install --path {} --locked --root {} --force",
+                "cargo install --path {} --locked --root {} --force, in a new temporary target directory",
                 crate_dir.display(),
                 layout.bin_root.display()
             ),
@@ -103,14 +103,27 @@ impl Step {
             } => export(source, commit, release),
             Step::Backup { dir } => backup(layout, dir).map_err(|e| e.to_string()),
             Step::Build { crate_dir } => {
+                // A shared target directory can hold a newer build of an older release: exported
+                // files carry the commit time, so cargo would judge that build fresh.
+                let target = std::env::temp_dir().join(format!(
+                    "story-install-target-{}-{}",
+                    std::process::id(),
+                    SystemTime::now()
+                        .duration_since(UNIX_EPOCH)
+                        .unwrap_or_default()
+                        .as_nanos()
+                ));
                 let status = Command::new("cargo")
                     .arg("install")
                     .arg("--path")
                     .arg(crate_dir)
                     .args(["--locked", "--force", "--bin", "story", "--root"])
                     .arg(&layout.bin_root)
-                    .status()
-                    .map_err(|e| format!("could not start cargo: {e}"))?;
+                    .arg("--target-dir")
+                    .arg(&target)
+                    .status();
+                let _ = fs::remove_dir_all(&target);
+                let status = status.map_err(|e| format!("could not start cargo: {e}"))?;
                 if status.success() {
                     Ok(())
                 } else {
