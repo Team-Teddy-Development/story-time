@@ -331,11 +331,11 @@ fn project_status_counts_a_notes_blocker_only_when_it_names_what_the_story_waits
     let text = skill("project-status");
     position(
         &text,
-        "A Notes blocker names that item: a story ID, an issue, a person, or a named external deliverable",
+        "names the item: a story ID, an issue, a person, or a named external deliverable",
     );
     position(
         &text,
-        "Notes that mention risks or \"blockers\" without naming what the story waits for are not a blocker",
+        "Other Notes text, such as \"blockers\" or \"absent\", is not a blocker",
     );
 }
 

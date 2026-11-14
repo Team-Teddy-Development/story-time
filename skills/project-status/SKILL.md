@@ -81,7 +81,7 @@ or prose.
 Never compute a figure yourself. Copy each figure from `story metrics` with
 its window and units. Copy a count directly from `story list --json` or
 `story metrics` output and cite the command. Copy each count as printed;
-never add, subtract, or total counts. Never estimate a figure or
+never add, subtract, or total counts. A count from `story list --json` is the number of its entries with that status, cited as `story list --json`. Never estimate a figure or
 derive a rate or forecast, and do not convert points to hours or days.
 Comparing two copied and cited numbers is allowed, such as the `in-progress`
 count against the WIP limit from `story config --json`; state both numbers.
@@ -100,10 +100,10 @@ with none appears only in the `open` counts.
 - `blocked`: any open story with a named blocker, whatever its status. A
   `blocked` row names its blocker: a `depends_on` story that is not `done`,
   or an item that a flow-review report or the story Notes say the story is
-  blocked on or waits for. A Notes blocker names that item: a story ID, an
-  issue, a person, or a named external deliverable. Notes that mention risks
-  or "blockers" without naming what the story waits for are not a blocker;
-  such text may become a risk row that cites the Notes.
+  blocked on or waits for. A Notes blocker is a sentence that says "blocked on" or "waits for" (or
+  "waiting for") and names the item: a story ID, an issue, a person, or a named
+  external deliverable. Other Notes text, such as "blockers" or "absent", is not
+  a blocker; such text may become a risk row that cites the Notes.
 - `forecast`: work expected later. A forecast is not a commitment. Label it
   as a forecast and cite a basis that already states a date or scope: a
   sprint plan, a release manifest, or an epic map order. An epic map's slice
