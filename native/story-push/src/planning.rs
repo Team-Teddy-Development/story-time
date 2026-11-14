@@ -351,7 +351,7 @@ fn snapshot(root: &Path) -> Result<Snapshot> {
                     .map_err(|_| "unsafe_path: non-UTF8 backlog filename")?;
                 let relative = format!("{backlog_dir}/{name}");
                 safe_path(root, &relative)?;
-                if name.ends_with(".md") {
+                if name.ends_with(".map.md") || crate::story_file_id(&name).is_some() {
                     if !entry.file_type().map_err(|e| e.to_string())?.is_file() {
                         return Err(format!("malformed_story: not a regular file: {relative}"));
                     }

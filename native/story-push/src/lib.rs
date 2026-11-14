@@ -83,6 +83,12 @@ impl From<&str> for Failure {
     }
 }
 
+/// The one rule for which backlog files are stories: `<PREFIX>-<digits>.md`. Every other name,
+/// `*.map.md` epic maps included, is not a story file.
+pub(crate) fn story_file_id(name: &str) -> Option<&str> {
+    name.strip_suffix(".md").filter(|id| valid_id(id))
+}
+
 pub(crate) fn valid_id(s: &str) -> bool {
     let Some((prefix, n)) = s.rsplit_once('-') else {
         return false;

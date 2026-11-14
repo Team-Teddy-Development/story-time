@@ -2,7 +2,7 @@
 //! for `prefix` among the backlog files and the backlog folder on every local and remote-tracking
 //! branch, so two branches never hand out the same id.
 
-use crate::{lenient_story::Js, valid_id};
+use crate::lenient_story::Js;
 use std::{
     fs,
     path::Path,
@@ -43,10 +43,8 @@ fn local_ids(dir: &Path) -> Result<Vec<String>, String> {
         let name = entry
             .map_err(|e| format!("{}: {e}", dir.display()))?
             .file_name();
-        if let Some(id) = name.to_str().and_then(|n| n.strip_suffix(".md")) {
-            if valid_id(id) {
-                ids.push(id.to_owned());
-            }
+        if let Some(id) = name.to_str().and_then(crate::story_file_id) {
+            ids.push(id.to_owned());
         }
     }
     Ok(ids)
@@ -94,7 +92,7 @@ fn reserved_ids(dir: &Path) -> Result<Vec<String>, String> {
             continue;
         }
         for name in String::from_utf8_lossy(&names.stdout).split('\n') {
-            if let Some(id) = name.strip_suffix(".md").filter(|id| valid_id(id)) {
+            if let Some(id) = crate::story_file_id(name) {
                 if !ids.iter().any(|known| known == id) {
                     ids.push(id.to_owned());
                 }
