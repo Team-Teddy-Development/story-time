@@ -1,12 +1,12 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFile } from 'node:child_process';
-import { mkdtemp, mkdir, writeFile } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { mkdir, writeFile } from 'node:fs/promises';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 import { READY_MD, ENROLLMENT, PROMOTION } from './fixtures.mjs';
+import { makeTempDir } from './temp-dir.mjs';
 
 const CLI = join(dirname(fileURLToPath(import.meta.url)), '..', 'story.mjs');
 const run = promisify(execFile);
@@ -24,7 +24,7 @@ async function story(cwd, ...args) {
 }
 
 async function project(files) {
-  const root = await mkdtemp(join(tmpdir(), 'story-design-'));
+  const root = await makeTempDir('story-design-');
   for (const [path, text] of Object.entries(files)) {
     await mkdir(dirname(join(root, path)), { recursive: true });
     await writeFile(join(root, path), text);

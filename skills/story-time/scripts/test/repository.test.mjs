@@ -1,15 +1,15 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, readdir, readFile } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { readdir, readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { runRepositoryContract } from './repository.contract.mjs';
 import { InMemoryStoryRepository } from '../src/adapters/memory-story-repository.mjs';
 import { FileSystemStoryRepository } from '../src/adapters/fs-story-repository.mjs';
 import { assertStoryRepository } from '../src/ports/story-repository.mjs';
 import { story } from './fixtures.mjs';
+import { makeTempDir } from './temp-dir.mjs';
 
-const tempDir = () => mkdtemp(join(tmpdir(), 'story-time-'));
+const tempDir = () => makeTempDir('story-time-');
 
 runRepositoryContract('InMemoryStoryRepository', async () => new InMemoryStoryRepository());
 runRepositoryContract('FileSystemStoryRepository', async () => new FileSystemStoryRepository(await tempDir()));

@@ -1,10 +1,10 @@
 // In-process simulators of the `gh` and `az boards` CLIs, shaped like the
 // injected exec(cmd, args, { input }) the gateways use. The same simulators
 // back fake binaries on PATH for CLI end-to-end tests (see makeFakeBin).
-import { mkdtemp, writeFile, readFile, chmod } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { writeFile, readFile, chmod } from 'node:fs/promises';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { makeTempDir } from './temp-dir.mjs';
 
 export function newState() {
   return { next: 0, issues: {}, items: {}, labels: [], calls: [] };
@@ -121,7 +121,7 @@ export function fakeAz(state, { failOn } = {}) {
 // Writes executable `gh` and `az` scripts that run the simulators against a
 // JSON state file, so the real process-exec adapter can be tested end to end.
 export async function makeFakeBin() {
-  const dir = await mkdtemp(join(tmpdir(), 'story-fakebin-'));
+  const dir = await makeTempDir('story-fakebin-');
   const stateFile = join(dir, 'state.json');
   await writeFile(stateFile, JSON.stringify(newState()));
   const self = fileURLToPath(import.meta.url);

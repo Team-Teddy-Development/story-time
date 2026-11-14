@@ -1,12 +1,12 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFile } from 'node:child_process';
-import { mkdtemp, writeFile, readdir } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { writeFile, readdir } from 'node:fs/promises';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 import { READY_MD } from './fixtures.mjs';
+import { makeTempDir } from './temp-dir.mjs';
 
 const CLI = join(dirname(fileURLToPath(import.meta.url)), '..', 'story.mjs');
 const run = promisify(execFile);
@@ -20,7 +20,7 @@ async function story(dir, ...args) {
   }
 }
 
-const tempDir = () => mkdtemp(join(tmpdir(), 'story-cli-'));
+const tempDir = () => makeTempDir('story-cli-');
 
 test('help lists every command', async () => {
   const r = await story(await tempDir(), 'help');

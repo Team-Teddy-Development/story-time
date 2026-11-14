@@ -2,14 +2,14 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFile } from 'node:child_process';
-import { mkdtemp, mkdir, writeFile, readFile, stat } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { mkdir, writeFile, readFile, stat } from 'node:fs/promises';
 import { join, dirname, delimiter } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { promisify } from 'node:util';
 import { makeFakeBin } from './fake-trackers.mjs';
 import { READY_MD } from './fixtures.mjs';
 import { runCli } from './run-cli.mjs';
+import { makeTempDir } from './temp-dir.mjs';
 
 const CLI = join(dirname(fileURLToPath(import.meta.url)), '..', 'story.mjs');
 const run = promisify(execFile);
@@ -28,7 +28,7 @@ function story(cwd, bin, args, { input, env, preload } = {}) {
 }
 
 async function project(settings) {
-  const dir = await mkdtemp(join(tmpdir(), 'story-push-'));
+  const dir = await makeTempDir('story-push-');
   await mkdir(join(dir, '.story-time'), { recursive: true });
   await writeFile(join(dir, '.story-time', 'settings.json'), JSON.stringify(settings));
   await mkdir(join(dir, 'backlog'));
