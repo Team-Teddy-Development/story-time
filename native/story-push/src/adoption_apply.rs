@@ -234,6 +234,23 @@ pub(crate) fn lock_repository(root: &Path) -> Result<File, TryLockError> {
     Ok(file)
 }
 
+/// The same lock for a CLI write, as the message the CLI prints. A root that does not exist has
+/// no holder to wait for, so the write runs without one.
+pub(crate) fn lock_for_write(root: &Path) -> Result<Option<File>, String> {
+    match lock_repository(root) {
+        Ok(file) => Ok(Some(file)),
+        Err(TryLockError::WouldBlock) => Err(format!(
+            "Another process holds the repository write lock on {}. Wait for it to finish, then rerun the command.",
+            root.display()
+        )),
+        Err(TryLockError::Error(e)) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(TryLockError::Error(e)) => Err(format!(
+            "Could not lock the repository {}: {e}",
+            root.display()
+        )),
+    }
+}
+
 fn lock(root: &Path) -> Result<File, Stop> {
     match lock_repository(root) {
         Ok(file) => Ok(file),

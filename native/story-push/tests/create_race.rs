@@ -57,6 +57,11 @@ fn titles(root: &Path) -> BTreeSet<String> {
         .collect()
 }
 
+/// A racer that found another writer holding the repository lock (ST-116) and wrote nothing.
+fn refused_by_lock(stderr: &[u8]) -> bool {
+    String::from_utf8_lossy(stderr).starts_with("Another process holds the repository write lock")
+}
+
 #[test]
 fn concurrent_creates_never_replace_a_story() {
     let sandbox = project("new");
@@ -70,15 +75,21 @@ fn concurrent_creates_never_replace_a_story() {
                 (title, child)
             })
             .collect();
+        let mut created = 0;
         for (title, child) in racers {
             let out = child.wait_with_output().unwrap();
-            assert!(
-                out.status.success(),
-                "story new \"{title}\" failed: {}",
-                String::from_utf8_lossy(&out.stderr)
-            );
-            expected.insert(title);
+            if out.status.success() {
+                created += 1;
+                expected.insert(title);
+            } else {
+                assert!(
+                    refused_by_lock(&out.stderr),
+                    "story new \"{title}\" failed: {}",
+                    String::from_utf8_lossy(&out.stderr)
+                );
+            }
         }
+        assert!(created > 0, "round {round} created no story");
     }
     let leftovers: Vec<_> = fs::read_dir(root.join("backlog"))
         .unwrap()
@@ -143,8 +154,9 @@ fn a_split_racing_creates_never_replaces_a_story() {
             } else {
                 let stderr = String::from_utf8_lossy(&out.stderr);
                 assert!(
-                    made[0].starts_with("Child") && stderr.contains("File exists"),
-                    "only a split may fail, and only because an id was taken: {stderr}"
+                    refused_by_lock(&out.stderr)
+                        || (made[0].starts_with("Child") && stderr.contains("File exists")),
+                    "a racer may fail only on the lock, or a split only because an id was taken: {stderr}"
                 );
             }
         }
