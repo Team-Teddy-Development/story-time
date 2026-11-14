@@ -14,6 +14,7 @@ export const EXPECTED = [
   'sprint-planning',
   'gap-sweep',
   'flow-review',
+  'sprint-review',
   'story-pick',
   'story-map',
   'spike',
