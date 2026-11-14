@@ -15,7 +15,7 @@ cargo install --path native/story-push --locked
 ```
 
 The native `story` binary runs every command, including `story config` and
-`story plan`, and no command requires Node.
+`story plan`, and no `story` command requires Node.
 
 The retained Node skill installer copies skills only. It does not install native
 `story`, Cargo, or documentation outside the skills tree. Copied skills include
