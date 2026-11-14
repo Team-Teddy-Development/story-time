@@ -24,6 +24,8 @@ gap-sweep finds work with no story and hands approved rows to story-create.
 sprint-planning consumes ordered ready candidates and produces local proposals.
 flow-review reports blocked, aging, and over-WIP work and sends pulls to story-pick.
 sprint-review records the goal outcome, links feedback, and decides unfinished work; it marks no story done.
+release-planning writes a release manifest and uses only approved deployment capabilities; it can run before sprint review.
+retrospective revisits previous improvement actions and proposes at most three owned ones; it changes no policy.
 story-edit changes any story at any stage.
 state-machine and decision-table write checked models that acceptance-criteria and story-kickoff build on.
 ```
@@ -44,6 +46,8 @@ state-machine and decision-table write checked models that acceptance-criteria a
 | "plan a sprint", goal and capacity planning | **sprint-planning** skill |
 | "flow review", "what is stuck?", "are we over WIP?" | **flow-review** skill |
 | "sprint review", "close the sprint" | **sprint-review** skill |
+| "plan a release", "what is in this release?" | **release-planning** skill |
+| "retrospective", "retro", "how do we work better?" | **retrospective** skill |
 | "what should I work on next?" | **story-pick** skill |
 | "map out this epic / feature" | **story-map** skill |
 | "we don't know enough to estimate" | **spike** skill |

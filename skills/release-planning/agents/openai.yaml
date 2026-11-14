@@ -1,0 +1,4 @@
+interface:
+  display_name: "Release planning"
+  short_description: "Release manifest with rollout, recovery, and evidence"
+  default_prompt: "Use $release-planning to write a release manifest that separates planned, accepted, and released work and uses only approved deployment capabilities."

@@ -16,6 +16,8 @@ export const EXPECTED = [
   'flow-review',
   'sprint-review',
   'project-discovery',
+  'retrospective',
+  'release-planning',
   'story-pick',
   'story-map',
   'spike',
