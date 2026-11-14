@@ -1,12 +1,9 @@
-use std::{path::PathBuf, process::Command};
+use std::process::Command;
 
 #[test]
 fn story_help_lists_the_native_plan_and_adopt_commands() {
-    let legacy =
-        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../skills/story-time/scripts/story.mjs");
     let output = Command::new(env!("CARGO_BIN_EXE_story"))
         .arg("help")
-        .env("STORY_TIME_LEGACY_CLI", legacy)
         .current_dir(std::env::temp_dir())
         .output()
         .unwrap();

@@ -33,9 +33,6 @@ fn binary() -> PathBuf {
         .map(PathBuf::from)
         .unwrap_or_else(|| env!("CARGO_BIN_EXE_story").into())
 }
-fn legacy() -> PathBuf {
-    root().join("skills/story-time/scripts/story.mjs")
-}
 fn skill() -> PathBuf {
     std::env::var_os("STORY_TIME_TEST_SETUP_SKILL")
         .map(PathBuf::from)
@@ -98,7 +95,6 @@ fn github_example_round_trips_through_the_real_cli() {
         .args(["init", "--from"])
         .arg(&answers)
         .current_dir(&sandbox.0)
-        .env("STORY_TIME_LEGACY_CLI", legacy())
         .env_remove("STORY_TIME_CONFIG")
         .env_remove("STORY_TIME_DIR")
         .output()
@@ -111,7 +107,6 @@ fn github_example_round_trips_through_the_real_cli() {
     let show = Command::new(binary())
         .args(["config", "--json"])
         .current_dir(&sandbox.0)
-        .env("STORY_TIME_LEGACY_CLI", legacy())
         .env_remove("STORY_TIME_CONFIG")
         .env_remove("STORY_TIME_DIR")
         .output()
@@ -137,7 +132,6 @@ fn github_example_bare_repository_mutant_is_rejected_without_writes() {
         .args(["init", "--from"])
         .arg(&answers)
         .current_dir(&sandbox.0)
-        .env("STORY_TIME_LEGACY_CLI", legacy())
         .env_remove("STORY_TIME_CONFIG")
         .env_remove("STORY_TIME_DIR")
         .output()

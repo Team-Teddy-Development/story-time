@@ -74,12 +74,8 @@ cargo install --path native/story-push --locked
 ```
 
 `story push` runs entirely in Rust. Do not invoke the historical Node push
-handler. `story init`, `story adopt preview`, `story plan`, `story config`, `story show`, `story list`, `story lint`, `story stats`, `story secret`, `story issues`, `story note`, `story machine`, `story export`, `story new`, `story rank`, `story set`, `story split`, `story table`, `story judge`, `story help`, and `story metrics` also run entirely in Rust. Other commands
-still use Node 20+.
-Set `STORY_TIME_LEGACY_CLI` to
-this skill's absolute `scripts/story.mjs` path, or configure `legacyCli` in
-`~/.config/story-time/runtime.json`. The dispatcher uses that path only for
-retained commands only. Plan JSON is the default output; retained commands use `--json`.
+handler. `story init`, `story adopt preview`, `story plan`, `story config`, `story show`, `story list`, `story lint`, `story stats`, `story secret`, `story issues`, `story note`, `story machine`, `story export`, `story new`, `story rank`, `story set`, `story split`, `story table`, `story judge`, `story help`, and `story metrics` also run entirely in Rust. No command needs Node.
+Plan JSON is the default output; other commands use `--json`.
 
 The separate Rust `gitea-gateway story-push` interface remains available in
 [Gitea Story Time](../../docs/gitea-story-time.md). It takes explicit Markdown

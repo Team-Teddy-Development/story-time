@@ -13,11 +13,6 @@ const LISTS: &[DocList] = &[
         end: "\nBuild it with",
     },
     DocList {
-        file: "AGENTS.md",
-        start: "for commands other than ",
-        end: ". Retain the old init source",
-    },
-    DocList {
         file: "README.md",
         start: "Native `story init`",
         end: " require Rust and Cargo.",

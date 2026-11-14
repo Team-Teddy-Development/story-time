@@ -10,3 +10,7 @@ pub fn run(args: &[String]) -> Result<String, Failure> {
     config::parse(&loaded.raw).map_err(|e| format!("{}: {e}", loaded.path.display()))?;
     Ok(USAGE.into())
 }
+
+pub fn unknown_command(command: &str) -> String {
+    format!("Unknown command \"{command}\".\n\n{}", USAGE.trim_end())
+}

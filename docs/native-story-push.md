@@ -19,11 +19,8 @@ The retained Node reference suite runs with `node scripts/run-tests.mjs`. It doe
 
 ```sh
 cargo install --path native/story-push --locked
-export STORY_TIME_LEGACY_CLI="$PWD/skills/story-time/scripts/story.mjs"
 story push --all --dry-run --json
 ```
-
-Keep the legacy path in a persistent checkout, not a worktree scheduled for removal. For a persistent setting, put `{"legacyCli":"/absolute/path/to/story.mjs"}` in `~/.config/story-time/runtime.json`. This is a runtime path, not a credential. Push does not read it or invoke Node.
 
 If `story` already exists, preserve that exact entry before replacing it. Record its symlink target or save the executable. Install the new binary at the same path, then run the native regression against that installed path:
 

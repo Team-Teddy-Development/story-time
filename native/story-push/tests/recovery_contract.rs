@@ -63,11 +63,8 @@ fn new_help_runs_without_legacy_runtime_or_writes() {
 #[test]
 fn new_help_does_not_reach_the_legacy_flag_parser() {
     let sandbox = Sandbox::new();
-    let legacy =
-        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../skills/story-time/scripts/story.mjs");
     let output = Command::new(binary())
         .args(["new", "--help"])
-        .env("STORY_TIME_LEGACY_CLI", legacy)
         .current_dir(&sandbox.0)
         .output()
         .unwrap();
@@ -97,11 +94,8 @@ fn create_then_push_uses_the_returned_id_instead_of_guessing() {
     )
     .unwrap();
     fs::write(sandbox.0.join("backlog/REC-067.md"), "---\nid: REC-067\ntitle: Existing\nstatus: draft\ntype: story\n---\n\n## Story\nExisting\n").unwrap();
-    let legacy =
-        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../skills/story-time/scripts/story.mjs");
     let created = Command::new(binary())
         .args(["new", "--title", "Build a bridge", "--json"])
-        .env("STORY_TIME_LEGACY_CLI", legacy)
         .current_dir(&sandbox.0)
         .output()
         .unwrap();
