@@ -1,7 +1,7 @@
 // End to end: the real CLI and process-exec adapter against fake gh/az on PATH.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { execFile, spawn } from 'node:child_process';
+import { execFile } from 'node:child_process';
 import { mkdtemp, mkdir, writeFile, readFile, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, dirname, delimiter } from 'node:path';
@@ -9,6 +9,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { promisify } from 'node:util';
 import { makeFakeBin } from './fake-trackers.mjs';
 import { READY_MD } from './fixtures.mjs';
+import { runCli } from './run-cli.mjs';
 
 const CLI = join(dirname(fileURLToPath(import.meta.url)), '..', 'story.mjs');
 const run = promisify(execFile);
@@ -21,17 +22,9 @@ function cleanEnv(bin, extra = {}) {
   return env;
 }
 
-async function story(cwd, bin, args, { input, env, preload } = {}) {
-  return new Promise((resolve) => {
-    const node = preload ? ['--import', pathToFileURL(preload).href] : [];
-    const child = spawn(process.execPath, [...node, CLI, ...args], { cwd, env: cleanEnv(bin, env) });
-    let stdout = '';
-    let stderr = '';
-    child.stdout.on('data', (d) => (stdout += d));
-    child.stderr.on('data', (d) => (stderr += d));
-    child.on('close', (code) => resolve({ code, stdout, stderr }));
-    child.stdin.end(input ?? '');
-  });
+function story(cwd, bin, args, { input, env, preload } = {}) {
+  const nodeArgs = preload ? ['--import', pathToFileURL(preload).href] : [];
+  return runCli(CLI, args, { cwd, env: cleanEnv(bin, env), input, nodeArgs });
 }
 
 async function project(settings) {
