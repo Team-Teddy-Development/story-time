@@ -3,13 +3,15 @@
 
 use crate::{config, toml_subset, Failure};
 use serde::Serialize;
-use serde_json::{json, Value};
+use serde_json::{json, Map, Value};
 use std::io::ErrorKind;
 
 #[derive(Serialize)]
 pub(crate) struct Defect {
     pub code: &'static str,
     pub message: String,
+    #[serde(flatten)]
+    pub extra: Map<String, Value>,
 }
 
 /// The file name without its directory and `.toml` suffix, like `basename(file).replace(/\.toml$/, '')`.

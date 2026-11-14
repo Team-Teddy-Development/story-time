@@ -104,7 +104,11 @@ fn name_list(value: Option<&Value>, allow_empty_names: bool) -> Option<Vec<Strin
 }
 
 fn defect(code: &'static str, message: String) -> Defect {
-    Defect { code, message }
+    Defect {
+        code,
+        message,
+        extra: Map::new(),
+    }
 }
 
 /// Normalizes a parsed document into a machine and lists every defect, in the Node checker's order.

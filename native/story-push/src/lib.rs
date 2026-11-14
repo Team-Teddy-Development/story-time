@@ -12,6 +12,7 @@ pub mod planning;
 pub mod secret;
 pub mod show;
 pub mod story;
+pub mod table;
 mod toml_subset;
 
 use chrono::Utc;
@@ -39,6 +40,7 @@ pub const NATIVE_COMMANDS: &[(&str, Native)] = &[
     ("list", |args| list::run(args).map(|out| (out, 0))),
     ("secret", |args| secret::run(args).map(|out| (out, 0))),
     ("machine", machine::run),
+    ("table", table::run),
     ("metrics", |args| metrics::run(args).map(|out| (out, 0))),
 ];
 
