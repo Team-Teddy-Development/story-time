@@ -5,7 +5,8 @@ use chrono::NaiveDate;
 use serde_json::{json, Value};
 use std::{fs, path::Path};
 
-const SOURCE: &str = "changelog `set status=` lines in the backlog story files, day resolution";
+const SOURCE: &str =
+    "changelog `set status=` and `split into` lines in the backlog story files, day resolution";
 const NO_SPRINT: &str = "no sprint record is stored";
 const USAGE: &str = "Usage: story metrics --from YYYY-MM-DD --to YYYY-MM-DD [--json]";
 
@@ -80,7 +81,7 @@ fn histories(dir: &Path) -> Result<Vec<History>, String> {
         .collect()
 }
 
-/// Reads `- DATE set k=v, status=S — note` lines; a status named only in the note is not an event.
+/// Reads `- DATE set k=v, status=S — note` and `- DATE split into ...` lines; a status named only in the note is not an event.
 fn history(id: String, parsed: &Value) -> History {
     let log = parsed["sections"]["Changelog"].as_str().unwrap_or("");
     let events: Vec<(NaiveDate, String)> = log
@@ -88,6 +89,9 @@ fn history(id: String, parsed: &Value) -> History {
         .filter_map(|line| {
             let (date, rest) = line.strip_prefix("- ")?.split_once(' ')?;
             let date = NaiveDate::parse_from_str(date, "%Y-%m-%d").ok()?;
+            if rest.starts_with("split into ") {
+                return Some((date, "split".to_owned()));
+            }
             let assignments = rest.strip_prefix("set ")?.split(" \u{2014} ").next()?;
             let status = assignments
                 .split(", ")
