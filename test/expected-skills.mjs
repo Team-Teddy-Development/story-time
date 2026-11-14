@@ -12,6 +12,7 @@ export const EXPECTED = [
   'backlog-groom',
   'refinement',
   'sprint-planning',
+  'gap-sweep',
   'story-pick',
   'story-map',
   'spike',
