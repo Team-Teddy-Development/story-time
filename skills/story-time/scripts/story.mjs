@@ -176,6 +176,7 @@ const commands = {
       throw new Error(`${ctx.configPath} already exists. Re-run with --force to replace it.`);
     }
     await mkdir(dirname(ctx.configPath), { recursive: true });
+    await mkdir(join(ctx.root, CONFIG_DIR), { recursive: true });
     await ensureGitignore(join(ctx.root, CONFIG_DIR));
     await writeFile(ctx.configPath, `${JSON.stringify(config, null, 2)}\n`, 'utf8');
     out(f, config, () => `Wrote ${ctx.configPath} (tracker: ${config.tracker}).`);
