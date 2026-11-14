@@ -1,6 +1,7 @@
 pub mod adoption;
 mod adoption_apply;
 pub mod config;
+pub mod export;
 pub mod gateway;
 pub mod init;
 mod lenient_story;
@@ -47,6 +48,7 @@ pub const NATIVE_COMMANDS: &[(&str, Native)] = &[
     ("machine", machine::run),
     ("table", table::run),
     ("metrics", |args| metrics::run(args).map(|out| (out, 0))),
+    ("export", |args| export::run(args).map(|out| (out, 0))),
     ("note", |args| note::run(args).map(|out| (out, 0))),
     ("new", |args| new_story::run(args).map(|out| (out, 0))),
 ];
