@@ -36,7 +36,7 @@ impl Js {
         }
     }
 
-    fn set(entries: &mut Vec<(String, Js)>, key: &str, value: Js) {
+    pub(crate) fn set(entries: &mut Vec<(String, Js)>, key: &str, value: Js) {
         if key == "__proto__" {
             return;
         }

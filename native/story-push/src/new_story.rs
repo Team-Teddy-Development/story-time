@@ -11,7 +11,7 @@ use crate::{
 use chrono::Utc;
 use std::path::Path;
 
-const TYPES: [&str; 4] = ["story", "spike", "bug", "chore"];
+pub(crate) const TYPES: [&str; 4] = ["story", "spike", "bug", "chore"];
 const STATEMENT_TODO: &str = "TODO: As a <persona>, I want <goal>, so that <benefit>.";
 
 pub fn run(args: &[String]) -> Result<String, Failure> {

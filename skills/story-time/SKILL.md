@@ -102,7 +102,7 @@ part of either Rust push execution path.
 | `story metrics --from YYYY-MM-DD --to YYYY-MM-DD [--json]` | Throughput, WIP, and cycle time for a window from changelog status events, with gaps `unknown`. Native Rust; read-only |
 | `story lint [id...] [--json]` | INVEST / Definition of Ready check. Exit 1 if any story has errors. Native Rust; read-only |
 | `story rank [--limit N] [--include-refined]` | WSJF ranking of ready, unblocked stories, plus why others were excluded. Native Rust; read-only |
-| `story set <id> key=value... [--note N]` | Update fields with a changelog entry. `status=ready` is lint-gated |
+| `story set <id> key=value... [--note N]` | Update fields with a changelog entry. `status=ready` is lint-gated. Native Rust |
 | `story note <id> "why"` | Log a prose edit (sections) in the changelog. Native Rust |
 | `story split <id> --from children.json` | Split into children atomically. A failure rolls everything back |
 | `story stats [--stale-days 30] [--json]` | Counts, points, unestimated and stale stories. Native Rust; read-only |
