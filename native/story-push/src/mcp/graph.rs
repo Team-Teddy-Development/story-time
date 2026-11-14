@@ -391,6 +391,7 @@ pub(super) const TOOLS: [Tool; 2] = [
             read_only: false,
             destructive: true,
             idempotent: true,
+            open_world: true,
         },
         description: "Replace this repository's Neo4j projection with its current stories, depends_on links, and epic membership. Writes Neo4j only, never story files.",
         fields: &[REPOSITORY],
@@ -404,6 +405,7 @@ pub(super) const TOOLS: [Tool; 2] = [
             read_only: true,
             destructive: false,
             idempotent: true,
+            open_world: true,
         },
         description: "Story and Epic nodes with DEPENDS_ON and IN_EPIC edges from the Neo4j projection: the stories within depth links of id, or the whole repository, at most limit nodes.",
         fields: &[

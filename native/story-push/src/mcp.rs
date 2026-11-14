@@ -1288,11 +1288,13 @@ struct Hints {
     read_only: bool,
     destructive: bool,
     idempotent: bool,
+    open_world: bool,
 }
 const READ: Hints = Hints {
     read_only: true,
     destructive: false,
     idempotent: true,
+    open_world: false,
 };
 const EXPECTED: Field = Field {
     name: "expected_sha256",
@@ -1384,6 +1386,7 @@ const TOOLS: [Tool; 7] = [
             read_only: false,
             destructive: true,
             idempotent: true,
+            open_world: false,
         },
         description: "Set story fields as `story set` does, given the SHA-256 from story_show. Refuses status=done until every criterion is ticked and ## Evidence is filled, as story-accept leaves it. Writes the local file only; publish.next names the push step.",
         fields: &[
@@ -1409,6 +1412,7 @@ const TOOLS: [Tool; 7] = [
             read_only: false,
             destructive: false,
             idempotent: false,
+            open_world: false,
         },
         description: "Append one changelog line as `story note` does, given the SHA-256 from story_show. Writes the local file only.",
         fields: &[
@@ -1430,6 +1434,7 @@ const TOOLS: [Tool; 7] = [
             read_only: false,
             destructive: false,
             idempotent: false,
+            open_world: false,
         },
         description: "File a draft story as `story new` does and return its new id. Refuses a title an existing story has (trimmed, case-folded) unless allow_duplicate_title is true. Writes the local file only; publish.next names the push step.",
         fields: &[
@@ -1486,7 +1491,7 @@ impl Tool {
                 "readOnlyHint": self.hints.read_only,
                 "destructiveHint": self.hints.destructive,
                 "idempotentHint": self.hints.idempotent,
-                "openWorldHint": false,
+                "openWorldHint": self.hints.open_world,
             },
         })
     }
