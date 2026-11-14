@@ -133,3 +133,116 @@ fn project_status_changes_no_story_and_uses_no_long_dashes() {
 fn the_router_sends_status_requests_to_project_status() {
     assert!(skill("story-time").contains("**project-status** skill"));
 }
+
+#[test]
+fn project_status_metrics_command_uses_a_window_placeholder_and_the_native_binary() {
+    let text = skill("project-status");
+    position(
+        &text,
+        "story metrics --from <YYYY-MM-DD> --to <YYYY-MM-DD> --json",
+    );
+    assert!(
+        !text.contains("--from 20") && !text.contains("--to 20"),
+        "no hard-coded metrics window"
+    );
+    position(
+        &text,
+        "`story metrics` runs only in the native Rust `story` binary",
+    );
+}
+
+#[test]
+fn project_status_names_where_review_reports_come_from() {
+    let text = skill("project-status");
+    position(&text, "write no report file at a fixed path");
+    position(&text, "With no named report, the input is absent");
+}
+
+#[test]
+fn project_status_defines_and_states_its_scope() {
+    let text = skill("project-status");
+    position(
+        &text,
+        "The default scope is every story in `story list --json` except `archived` ones",
+    );
+    position(&text, "The report states its scope");
+}
+
+#[test]
+fn project_status_allows_copied_counts_and_forbids_derived_figures() {
+    let text = skill("project-status");
+    assert!(!text.contains("Do not count stories by hand"));
+    position(
+        &text,
+        "Copy a count directly from `story list --json` or `story metrics` output and cite the command",
+    );
+    position(
+        &text,
+        "Never estimate a figure or derive a rate or forecast",
+    );
+}
+
+#[test]
+fn project_status_blocked_covers_any_open_story_with_a_named_blocker() {
+    let text = skill("project-status");
+    assert!(!text.contains("in progress and stopped"));
+    position(&text, "`blocked`: any open story with a named blocker");
+}
+
+#[test]
+fn project_status_places_every_other_status() {
+    let text = skill("project-status");
+    for status in ["`draft`", "`refined`", "`ready`", "`split`", "`archived`"] {
+        position(&text, status);
+    }
+    position(&text, "one `open` count per status");
+    position(&text, "excluded, with their counts");
+    let rows = assert_every_row_cites_a_record(&text, "| Work | State | Claim | Record |");
+    assert!(rows.iter().any(|row| row[1] == "`open`"));
+}
+
+#[test]
+fn project_status_forecast_cites_a_stated_basis_and_is_never_computed() {
+    let text = skill("project-status");
+    position(&text, "a basis that already states a date or scope");
+    position(&text, "epic map order");
+    position(&text, "Never compute a forecast");
+    assert!(!text.contains("or a metrics window"));
+}
+
+#[test]
+fn project_status_owners_come_from_records_and_the_lead_is_defined() {
+    let text = skill("project-status");
+    position(&text, "Story data has no owner field");
+    position(&text, "the user, a decision record, or a report");
+    position(
+        &text,
+        "With no lead named, the lead is the report's audience",
+    );
+}
+
+#[test]
+fn project_status_reads_decision_logs_and_changelog_dates() {
+    let text = skill("project-status");
+    position(&text, "decision log under `docs/planning/`");
+    position(&text, "docs/planning/decisions.tsv");
+    position(
+        &text,
+        "A story Changelog date is the date of its status decision",
+    );
+}
+
+#[test]
+fn project_status_formats_empty_states_and_non_interactive_runs() {
+    let text = skill("project-status");
+    position(&text, "A state with no entries gets one row with `none`");
+    position(&text, "In a non-interactive run, write for the requester");
+}
+
+#[test]
+fn project_status_records_absence_and_never_cites_itself() {
+    let text = skill("project-status");
+    position(&text, "A Record that cites a missing file records absence");
+    position(&text, "name the missing path in Gaps");
+    position(&text, "A Record never cites the report itself");
+}
