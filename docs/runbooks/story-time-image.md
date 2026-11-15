@@ -24,6 +24,8 @@ not push an image.
 ## Build and push
 
 Spark is an arm64 machine and the cluster nodes are amd64, so name the platform.
+The Dockerfile cross-compiles: the Rust compiler runs as arm64 and makes an
+amd64 binary. Only the small runtime stage runs under emulation.
 
 1.  Set the tag from the commit:
 
