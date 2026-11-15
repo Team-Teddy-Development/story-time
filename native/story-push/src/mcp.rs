@@ -75,7 +75,7 @@ pub fn run(args: &[String]) -> Result<(String, u8), Failure> {
     let mut redactor = Redactor::from_env();
     redactor
         .values
-        .extend(graph.as_ref().map(|g| g.password.clone()));
+        .extend(graph.as_ref().and_then(|g| g.password().cloned()));
     let (args, workspace) = workspace::launch(&args, &redactor.live)?;
     let workspace = workspace.map(Arc::new);
     let (args, http) = http::launch(&args)?;
@@ -381,7 +381,11 @@ impl Server {
             .iter()
             .filter(move |t| t.hints.read_only || (local && (self.hosted || self.write)))
             .chain(REGISTRY_TOOLS.iter().filter(move |_| !local))
-            .chain(graph::TOOLS.iter().filter(|_| self.graph.is_some()))
+            .chain(
+                graph::TOOLS
+                    .iter()
+                    .filter(move |t| self.graph.is_some() && (local || t.hints.read_only)),
+            )
     }
 
     /// The registered tools that `caller` may see.
@@ -1782,6 +1786,9 @@ impl Tool {
                 output["properties"][key] = json!({"type": "string"});
                 output["required"].as_array_mut().unwrap().push(json!(key));
             }
+        }
+        if registry && self.name == "story_graph" {
+            graph::registry_schema(&mut output);
         }
         if registry && self.name == "story_config" {
             let entry = &mut output["properties"]["repositories"]["items"]["properties"];
