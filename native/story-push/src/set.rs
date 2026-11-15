@@ -137,6 +137,7 @@ pub(crate) fn apply(
             stories: Some(&stories),
             root: Some(root),
             org,
+            declared: None,
         };
         let errors: Vec<lint::Finding> = lint::lint_story(&next, &ctx)
             .map_err(Refusal::Other)?

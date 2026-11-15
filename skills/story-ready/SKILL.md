@@ -26,6 +26,7 @@ Every `error` blocks. Route each one to the skill that fixes it:
 | `independent.foreign_unresolved` | A warning: the link names a story of another repository. Check it with `story mcp --root <this repo> --root <that repo>` |
 | `links.ambiguous` | Two repositories declare the prefix of a linked id. Give each repository its own `prefix` |
 | `links.prose_mention` | A warning: add the named story to `depends_on` or `relates_to` with **story-edit** |
+| `links.undeclared_prefix` | Only on a hosted server: add the prefix of the story to the `prefixes` of its repository in the registry file |
 | `spike.unblocks` | Link the waiting story (`story set <story> depends_on=<spike>`), or archive the spike. A spike nobody waits on buys nothing |
 | `spike.*` | **spike** skill |
 | `state_machine.exists` | **state-machine** skill |
