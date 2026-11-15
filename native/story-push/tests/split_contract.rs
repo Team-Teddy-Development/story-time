@@ -283,24 +283,56 @@ fn failures_and_rollback_match_node() {
     assert_eq!(out.status.code(), Some(1));
 }
 
-fn git(dir: &Path, args: &[&str]) {
-    let out = Command::new("git")
-        .arg("-C")
+fn fixture_git(dir: &Path) -> Command {
+    let mut cmd = Command::new("git");
+    cmd.arg("-C")
         .arg(dir)
-        .args(args)
         .env("GIT_CONFIG_NOSYSTEM", "1")
         .env("GIT_CONFIG_GLOBAL", "/dev/null")
         .env("GIT_AUTHOR_NAME", "Fixture")
         .env("GIT_AUTHOR_EMAIL", "fixture@example.invalid")
         .env("GIT_COMMITTER_NAME", "Fixture")
-        .env("GIT_COMMITTER_EMAIL", "fixture@example.invalid")
-        .output()
-        .unwrap();
+        .env("GIT_COMMITTER_EMAIL", "fixture@example.invalid");
+    cmd
+}
+
+fn git(dir: &Path, args: &[&str]) {
+    let out = fixture_git(dir).args(args).output().unwrap();
     assert!(
         out.status.success(),
         "git {args:?}: {}",
         String::from_utf8_lossy(&out.stderr)
     );
+}
+
+/// The template is copied right after its last commit. A detached auto-maintenance process
+/// holds `.git/objects/maintenance.lock` for a moment after the commit returns, so a copy that
+/// catches the lock differs from one that does not.
+#[test]
+fn fixture_commits_start_no_background_maintenance() {
+    let dir = std::env::temp_dir().join(format!(
+        "story-split-probe-{}-{}",
+        std::process::id(),
+        NEXT.fetch_add(1, Ordering::Relaxed)
+    ));
+    let trace = dir.with_extension("trace");
+    fs::create_dir_all(&dir).unwrap();
+    git(&dir, &["init", "-q", "-b", "main"]);
+    let out = fixture_git(&dir)
+        .env("GIT_TRACE2", &trace)
+        .args(["commit", "-q", "--allow-empty", "-m", "probe"])
+        .output()
+        .unwrap();
+    let log = fs::read_to_string(&trace).unwrap_or_default();
+    let _ = fs::remove_dir_all(&dir);
+    let _ = fs::remove_file(&trace);
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(log.contains("cmd_name commit"), "no trace: {log}");
+    assert!(!log.contains("git maintenance"), "{log}");
 }
 
 fn copy_tree(from: &Path, to: &Path) {
