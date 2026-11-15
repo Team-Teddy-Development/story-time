@@ -131,11 +131,11 @@ impl Org {
         let mut stdin = child.stdin.take().unwrap();
         for (n, (name, arguments)) in calls.iter().enumerate() {
             let message = json!({"jsonrpc": "2.0", "id": n, "method": "tools/call", "params": {
-                "name": name, "arguments": arguments,
-                "_meta": {
-                    "io.modelcontextprotocol/protocolVersion": "2026-07-28",
-                    "io.modelcontextprotocol/clientCapabilities": {}
-                }}});
+            "name": name, "arguments": arguments,
+            "_meta": {
+                "io.modelcontextprotocol/protocolVersion": "2026-07-28",
+                "io.modelcontextprotocol/clientCapabilities": {}
+            }}});
             writeln!(stdin, "{message}").unwrap();
         }
         drop(stdin);
@@ -155,7 +155,12 @@ impl Org {
             .collect()
     }
     /// The findings of one story as `(rule, severity, message)`, linted through `story mcp`.
-    fn findings(&self, roots: &[&str], repository: &str, id: &str) -> Vec<(String, String, String)> {
+    fn findings(
+        &self,
+        roots: &[&str],
+        repository: &str,
+        id: &str,
+    ) -> Vec<(String, String, String)> {
         let content = self
             .mcp(
                 roots,
@@ -198,10 +203,7 @@ fn cli_lint(org: &Org, root: &str, id: &str) -> (Option<i32>, Vec<(String, Strin
         panic!("{e}: {}", String::from_utf8_lossy(&output.stderr));
     });
     let findings = parsed[0]["findings"].as_array().unwrap();
-    (
-        output.status.code(),
-        findings.iter().map(finding).collect(),
-    )
+    (output.status.code(), findings.iter().map(finding).collect())
 }
 
 #[test]
@@ -209,7 +211,10 @@ fn a_link_to_a_story_in_another_root_resolves() {
     let org = Org::new();
     let linked = org.findings(&["web", "core"], "web", "VE-046");
     assert!(errors(&linked).is_empty(), "{linked:?}");
-    assert!(of_rule(&linked, "independent.deps").is_empty(), "{linked:?}");
+    assert!(
+        of_rule(&linked, "independent.deps").is_empty(),
+        "{linked:?}"
+    );
     assert!(of_rule(&linked, "links.ambiguous").is_empty(), "{linked:?}");
 
     // A dependency in another root that is not done keeps the warning a local one gets.
@@ -263,7 +268,10 @@ fn a_prefix_that_two_roots_declare_is_ambiguous() {
         ambiguous[0].2.contains("other") && ambiguous[0].2.contains("web"),
         "{ambiguous:?}"
     );
-    assert!(of_rule(&findings, "independent.deps").is_empty(), "{findings:?}");
+    assert!(
+        of_rule(&findings, "independent.deps").is_empty(),
+        "{findings:?}"
+    );
 
     // A story of an ambiguous prefix that names its own prefix gets the same error.
     let own = org.findings(&["web", "core", "other"], "web", "VE-052");
@@ -286,11 +294,44 @@ fn a_mention_in_the_text_without_a_link_is_a_warning() {
 
     // A linked id, an id of the story's own repository, and an undeclared prefix raise nothing.
     let linked = org.findings(&["web", "core"], "web", "VE-046");
-    assert!(of_rule(&linked, "links.prose_mention").is_empty(), "{linked:?}");
+    assert!(
+        of_rule(&linked, "links.prose_mention").is_empty(),
+        "{linked:?}"
+    );
+
+    // A story that keeps an old prefix names a story of its own repository: not a mention of
+    // another repository. varsity-core holds ST-001 and ST-002 beside its VC stories.
+    org.story("core", "ST-001", "draft", "depends_on: []\n", "See VC-109.");
+    let whole = org
+        .mcp(
+            &["web", "core"],
+            false,
+            &[("story_lint", json!({"repository": "core"}))],
+        )
+        .remove(0);
+    let legacy = whole["results"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|result| result["id"] == "ST-001")
+        .unwrap_or_else(|| panic!("{whole}"));
+    let legacy: Vec<_> = legacy["findings"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(finding)
+        .collect();
+    assert!(
+        of_rule(&legacy, "links.prose_mention").is_empty(),
+        "{legacy:?}"
+    );
 
     // One root cannot tell which prefixes other repositories declare.
     let alone = org.findings(&["web"], "web", "VE-048");
-    assert!(of_rule(&alone, "links.prose_mention").is_empty(), "{alone:?}");
+    assert!(
+        of_rule(&alone, "links.prose_mention").is_empty(),
+        "{alone:?}"
+    );
 }
 
 #[test]
@@ -330,7 +371,10 @@ fn a_spike_that_a_story_in_another_root_waits_on_unblocks_a_story() {
     assert_eq!(of_rule(&alone, "spike.unblocks").len(), 1, "{alone:?}");
 
     let together = org.findings(&["core", "web"], "core", "VC-120");
-    assert!(of_rule(&together, "spike.unblocks").is_empty(), "{together:?}");
+    assert!(
+        of_rule(&together, "spike.unblocks").is_empty(),
+        "{together:?}"
+    );
     assert!(errors(&together).is_empty(), "{together:?}");
 }
 
@@ -360,7 +404,11 @@ fn story_update_moves_a_story_to_ready_when_its_dependency_in_another_root_is_do
     assert!(results[0].get("error").is_none(), "{}", results[0]);
     assert!(org.read("web", "VE-050").contains("\nstatus: ready\n"));
 
-    assert_eq!(results[1]["error"]["code"], "lifecycle_refused", "{}", results[1]);
+    assert_eq!(
+        results[1]["error"]["code"], "lifecycle_refused",
+        "{}",
+        results[1]
+    );
     let refused = results[1]["error"]["details"]["findings"].to_string();
     assert!(refused.contains("VC-999"), "{refused}");
     assert!(org.read("web", "VE-047").contains("\nstatus: draft\n"));
@@ -370,7 +418,11 @@ fn story_update_moves_a_story_to_ready_when_its_dependency_in_another_root_is_do
 fn relates_to_is_a_list_field_saved_directly_after_depends_on() {
     let org = Org::new();
     let set = org.cli("web", &["set", "VE-046", "size=3"]);
-    assert!(set.status.success(), "{}", String::from_utf8_lossy(&set.stderr));
+    assert!(
+        set.status.success(),
+        "{}",
+        String::from_utf8_lossy(&set.stderr)
+    );
     assert!(
         org.read("web", "VE-046")
             .contains("\nsize: 3\ndepends_on: [VC-109]\nrelates_to: [VC-110]\n"),
@@ -379,7 +431,11 @@ fn relates_to_is_a_list_field_saved_directly_after_depends_on() {
     );
 
     let set = org.cli("web", &["set", "VE-050", "relates_to=VC-110, VC-109"]);
-    assert!(set.status.success(), "{}", String::from_utf8_lossy(&set.stderr));
+    assert!(
+        set.status.success(),
+        "{}",
+        String::from_utf8_lossy(&set.stderr)
+    );
     assert!(
         org.read("web", "VE-050")
             .contains("\ndepends_on: [VC-109]\nrelates_to: [VC-110, VC-109]\n"),
@@ -389,5 +445,6 @@ fn relates_to_is_a_list_field_saved_directly_after_depends_on() {
 
     let cleared = org.cli("web", &["set", "VE-050", "relates_to="]);
     assert!(cleared.status.success());
-    assert!(org.read("web", "VE-050").contains("\nrelates_to: []\n"));
+    // An empty value removes the field, as it does for every field of `story set`.
+    assert!(!org.read("web", "VE-050").contains("\nrelates_to:"));
 }

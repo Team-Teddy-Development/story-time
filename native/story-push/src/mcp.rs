@@ -12,7 +12,9 @@ use crate::{
     config,
     lenient_story::{self, Js},
     lint::{self, Severity},
-    list, new_story, note, set, valid_id, Failure,
+    list, new_story, note,
+    org_index::{OrgIndex, OrgRepo},
+    set, valid_id, Failure,
 };
 use regex_lite::Regex;
 use serde_json::{json, Map, Value};
@@ -488,6 +490,34 @@ impl Server {
     }
 }
 
+impl Server {
+    /// The stories of every root, when the server has several: the org that links between
+    /// repositories resolve in. Each root declares the prefix in its settings. A root with no
+    /// story-time settings is not part of the org.
+    fn org(&self) -> Result<Option<OrgIndex>, ToolError> {
+        if self.roots.len() < 2 {
+            return Ok(None);
+        }
+        let mut repos = Vec::new();
+        for root in &self.roots {
+            let named = Map::from_iter([("repository".to_owned(), json!(root.key))]);
+            let repo = match self.open(&named) {
+                Ok(repo) => repo,
+                Err(error) if error.code == "not_configured" => continue,
+                Err(error) => return Err(error),
+            };
+            let (stories, _) = repo.stories()?;
+            let prefix = repo.settings["prefix"].as_str().unwrap_or("ST");
+            repos.push(OrgRepo {
+                key: root.key.clone(),
+                prefixes: vec![prefix.to_owned()],
+                stories,
+            });
+        }
+        Ok(Some(OrgIndex::new(repos)))
+    }
+}
+
 fn send(output: &mut impl Write, message: &Value) -> io::Result<()> {
     serde_json::to_writer(&mut *output, message)?;
     output.write_all(b"\n")?;
@@ -921,9 +951,11 @@ fn story_lint(server: &Server, args: &Map<String, Value>) -> Result<Value, ToolE
             })
             .collect::<Result<_, _>>()?,
     };
+    let org = server.org()?;
     let ctx = lint::Context {
         stories: Some(&all),
         root: Some(&repo.root.path),
+        org: org.as_ref(),
     };
     let (mut errors, mut warnings) = (0, 0);
     let mut results = Vec::new();
@@ -1101,28 +1133,36 @@ fn story_update(server: &Server, args: &Map<String, Value>) -> Result<Value, Too
         }
     }
     let note = args.get("note").and_then(Value::as_str);
-    let change = set::apply(&current, &changes, note, false, &repo.dir, &repo.root.path).map_err(
-        |refusal| match refusal {
-            set::Refusal::Immutable(key) => field_error(
-                "field_not_writable",
-                &key,
-                format!("Field \"{key}\" cannot be set through MCP."),
-            ),
-            set::Refusal::Invalid(message) => fail("invalid_value", &message),
-            set::Refusal::NotReady(findings) => ToolError {
-                code: "lifecycle_refused",
-                message: format!("{id} is not ready."),
-                details: json!({
-                    "id": id,
-                    "findings": findings
-                        .iter()
-                        .map(|f| json!({"rule": f.rule, "message": f.message}))
-                        .collect::<Vec<_>>(),
-                }),
-            },
-            set::Refusal::Other(message) => repo.malformed(&message),
+    let org = server.org()?;
+    let change = set::apply(
+        &current,
+        &changes,
+        note,
+        false,
+        &repo.dir,
+        &repo.root.path,
+        org.as_ref(),
+    )
+    .map_err(|refusal| match refusal {
+        set::Refusal::Immutable(key) => field_error(
+            "field_not_writable",
+            &key,
+            format!("Field \"{key}\" cannot be set through MCP."),
+        ),
+        set::Refusal::Invalid(message) => fail("invalid_value", &message),
+        set::Refusal::NotReady(findings) => ToolError {
+            code: "lifecycle_refused",
+            message: format!("{id} is not ready."),
+            details: json!({
+                "id": id,
+                "findings": findings
+                    .iter()
+                    .map(|f| json!({"rule": f.rule, "message": f.message}))
+                    .collect::<Vec<_>>(),
+            }),
         },
-    )?;
+        set::Refusal::Other(message) => repo.malformed(&message),
+    })?;
     let after = repo.save(&change.story)?;
     Ok(repo.written(
         "story_update",
