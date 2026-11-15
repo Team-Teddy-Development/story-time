@@ -13,6 +13,7 @@ const KEY_ORDER: &[&str] = &[
     "size",
     "timebox",
     "depends_on",
+    "relates_to",
     "parent",
     "children",
     "remote",

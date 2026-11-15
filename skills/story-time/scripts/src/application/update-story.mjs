@@ -3,7 +3,7 @@ import { lintStory } from '../domain/invest.mjs';
 import { assertStoryRepository } from '../ports/story-repository.mjs';
 
 const NUMERIC = new Set(['value', 'time_criticality', 'risk_reduction', 'size']);
-const LIST = new Set(['depends_on', 'children']);
+const LIST = new Set(['depends_on', 'relates_to', 'children']);
 const IMMUTABLE = new Set(['id', 'created', 'updated', 'sections']);
 
 // Applies field changes with domain validation and an audit trail.
