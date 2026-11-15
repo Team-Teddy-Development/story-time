@@ -29,6 +29,14 @@ pub(crate) fn prefix_of(id: &str) -> Option<&str> {
     (numbered && !prefix.is_empty()).then_some(prefix)
 }
 
+/// Where a story is: the key of the one repository that holds it.
+#[derive(Debug, PartialEq)]
+pub(crate) enum Located<'a> {
+    In(&'a str),
+    Missing,
+    Ambiguous,
+}
+
 fn has_id(story: &Js, id: &str) -> bool {
     matches!(story.get("id"), Js::Str(own) if own == id)
 }
@@ -51,30 +59,53 @@ impl OrgIndex {
     /// prefix no repository declares resolves when exactly one repository holds it, which
     /// covers a repository that keeps stories from before it changed its prefix.
     pub(crate) fn resolve(&self, id: &str) -> Resolved<'_> {
+        match self.holders(id) {
+            Err(owners) => Resolved::Ambiguous(owners),
+            Ok(holders) => match holders.as_slice() {
+                [repo] => repo
+                    .stories
+                    .iter()
+                    .rev()
+                    .find(|s| has_id(s, id))
+                    .map_or(Resolved::Missing, Resolved::Found),
+                [] => Resolved::Missing,
+                many => Resolved::Ambiguous(many.iter().map(|repo| repo.key.as_str()).collect()),
+            },
+        }
+    }
+
+    /// The repositories that can hold `id`: the one that declares its prefix, or each one that
+    /// holds the id when no repository declares the prefix. `Err` names the repositories that
+    /// declare one prefix.
+    fn holders(&self, id: &str) -> Result<Vec<&OrgRepo>, Vec<&str>> {
         let owners = prefix_of(id).map(|p| self.owners(p)).unwrap_or_default();
-        let holders: Vec<&OrgRepo> = match owners.len() {
-            0 => self
-                .repos
-                .iter()
-                .filter(|repo| repo.stories.iter().any(|s| has_id(s, id)))
-                .collect(),
-            1 => self
+        let holds = |repo: &&OrgRepo| repo.stories.iter().any(|s| has_id(s, id));
+        match owners.len() {
+            0 => Ok(self.repos.iter().filter(holds).collect()),
+            1 => Ok(self
                 .repos
                 .iter()
                 .filter(|repo| repo.key == owners[0])
-                .collect(),
-            _ => return Resolved::Ambiguous(owners),
-        };
-        match holders.as_slice() {
-            [repo] => repo
-                .stories
-                .iter()
-                .rev()
-                .find(|s| has_id(s, id))
-                .map_or(Resolved::Missing, Resolved::Found),
-            [] => Resolved::Missing,
-            many => Resolved::Ambiguous(many.iter().map(|repo| repo.key.as_str()).collect()),
+                .collect()),
+            _ => Err(owners),
         }
+    }
+
+    /// The repository that holds the story `id`, by the rules of `resolve`.
+    pub(crate) fn locate(&self, id: &str) -> Located<'_> {
+        match self.holders(id).as_deref() {
+            Ok([repo]) if repo.stories.iter().any(|s| has_id(s, id)) => Located::In(&repo.key),
+            Ok([_] | []) => Located::Missing,
+            Ok(_) | Err(_) => Located::Ambiguous,
+        }
+    }
+
+    /// The stories of the repository `key`.
+    pub(crate) fn stories(&self, key: &str) -> &[Js] {
+        self.repos
+            .iter()
+            .find(|repo| repo.key == key)
+            .map_or(&[], |repo| &repo.stories)
     }
 
     /// Whether a story of any repository lists `id` in `depends_on`.
@@ -168,6 +199,24 @@ mod tests {
             org.resolve("VE-046"),
             Resolved::Ambiguous(vec!["web", "other"])
         );
+    }
+
+    #[test]
+    fn a_story_is_located_in_the_one_repository_that_holds_it() {
+        let org = org();
+        assert_eq!(org.locate("VC-109"), Located::In("core"));
+        assert_eq!(org.locate("ST-001"), Located::In("core"));
+        assert_eq!(org.locate("VC-999"), Located::Missing);
+        assert_eq!(org.locate("XX-1"), Located::Missing);
+        assert_eq!(org.stories("web").len(), 1);
+        assert!(org.stories("none").is_empty());
+        let two = OrgIndex::new(vec![
+            repo("core", &["VC"], vec![story("ST-001", &[])]),
+            repo("web", &["VE"], vec![story("ST-001", &[])]),
+            repo("other", &["VE"], vec![]),
+        ]);
+        assert_eq!(two.locate("ST-001"), Located::Ambiguous);
+        assert_eq!(two.locate("VE-1"), Located::Ambiguous);
     }
 
     #[test]
