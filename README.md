@@ -368,7 +368,7 @@ args = ["mcp", "--root", "<repo>", "--write"]
 default_tools_approval_mode = "writes"
 ```
 
-With `--graph`, the server also offers `story_graph_sync` and `story_graph`. They project the backlog into Neo4j through its HTTP transactional Cypher API and read it back as `Story` and `Epic` nodes with `DEPENDS_ON` and `IN_EPIC` edges. The Markdown stories stay the source of truth; each sync replaces one repository's projection in one transaction, and a missing `depends_on` target becomes a node with `missing: true`. `story_graph` returns the stories within `depth` (1 to 3) links of `id`, or the whole repository, at most `limit` (200) nodes. Pass the password through an environment variable and name it; it never goes on the command line or in a result:
+With `--graph`, the server also offers `story_graph_sync` and `story_graph`. They project the backlog into Neo4j through its HTTP transactional Cypher API and read it back as `Story` and `Epic` nodes with `DEPENDS_ON`, `RELATES_TO`, and `IN_EPIC` edges. The Markdown stories stay the source of truth; each sync replaces one repository's projection in one transaction, and a missing `depends_on` target becomes a node with `missing: true`. `story_graph` returns the stories within `depth` (1 to 3) links of `id`, or the whole repository, at most `limit` (200) nodes. `direction` limits the links from `id`: `dependents` are the stories that wait on it, `dependencies` are the stories it waits on, and `both` is the default. A `RELATES_TO` neighbor comes at depth 1 only. For a Neo4j with no authentication, give neither `--neo4j-user` nor `--neo4j-password-env`. Pass the password through an environment variable and name it; it never goes on the command line or in a result:
 
 ```bash
 NEO4J_PASSWORD=... story mcp --root <repo> --graph --neo4j-url http://127.0.0.1:7474 --neo4j-user neo4j --neo4j-password-env NEO4J_PASSWORD [--neo4j-database neo4j]
@@ -447,6 +447,14 @@ The server refuses to start when an entry names `forge = "gitea"`, when two entr
 - `story_lint` checks links across every registered repository, and reports `links.undeclared_prefix` for a story whose prefix the registry does not declare for its repository.
 
 A registry server has no write tool.
+
+With `--graph`, a registry server projects every registered repository into Neo4j in one transaction, with `DEPENDS_ON` and `RELATES_TO` edges between repositories. It has no `story_graph_sync` tool. Each `story_graph` call compares the commits that Neo4j holds with the commits the server reads, and syncs first when they differ. What the result adds:
+
+- Each node names its `repository`, and a node key is `Story:<repository>/<id>`.
+- `sync.repositories` lists each repository with the `sha` that the graph was synced from.
+- `sync.skipped_ambiguous` counts the links that the sync skipped because two repositories hold the target and no repository declares its prefix.
+
+When Neo4j does not answer, `story_graph` returns the retryable error `graph_unavailable`. `story_lint` does not use Neo4j, so it keeps working.
 
 For private repositories, make a GitHub App with the permissions Contents: read and Metadata: read, install it on each repository, and give the server the App ID and the private key as two files. The server signs a 10-minute JWT with the key and exchanges it for an installation token of one repository. It gives that token to `git` only in the environment of the `git` process: the token is not in a URL, an argument, a file, a log line, or a tool result. The server sends the token only to an `https` URL.
 
