@@ -446,7 +446,20 @@ The server refuses to start when an entry names `forge = "gitea"`, when two entr
 - A repository that the server cannot reach returns the retryable error `repository_unavailable`. The other repositories keep working, and `/readyz` stays 200.
 - `story_lint` checks links across every registered repository, and reports `links.undeclared_prefix` for a story whose prefix the registry does not declare for its repository.
 
-A registry server has no write tool.
+#### Writes: one branch and one pull request for each story
+
+A registry server has no working tree, so it does not change a story file in place. With the GitHub App flags, a client with the `write` scope has `story_update`, `story_note`, and `story_create`. Without those flags, a registry server has no write tool.
+
+- Each write is one commit on the branch `story-time/<ID>`. The author is the App's bot, and the trailer `Requested-by:` names the client.
+- The server pushes with `--force-with-lease`. When the branch moved at the remote, the call returns `conflict` and pushes nothing.
+- The first write of a story opens one pull request to the default branch. Its body starts with `Stories: <ID>`. Later writes add commits to that pull request.
+- The result adds `state` (`proposed` or `unchanged`), `pr_url`, `branch`, and `head_sha`. `publish.next` is `null`: the server does not publish tracker issues.
+- While the pull request is open, `story_show` returns `proposed` with `ref`, `content_sha256`, and `pr_url`. Send that `content_sha256` as `expected_sha256` for the next write, and read the branch with `ref`.
+- When the pull request is closed or merged, the next write starts from the default branch and replaces the old branch.
+- `story_create` takes an id above every id on every branch, so two open pull requests do not carry one id.
+- When GitHub does not open the pull request, the server removes the branch it pushed and returns the retryable error `forge_unavailable`.
+
+The App needs the permissions `Contents: write` and `Pull requests: write` on each registered repository.
 
 With `--graph`, a registry server projects every registered repository into Neo4j in one transaction, with `DEPENDS_ON` and `RELATES_TO` edges between repositories. It has no `story_graph_sync` tool. Each `story_graph` call compares the commits that Neo4j holds with the commits the server reads, and syncs first when they differ. What the result adds:
 

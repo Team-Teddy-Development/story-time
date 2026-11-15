@@ -246,7 +246,7 @@ Write tools keep the existing argument `expected_sha256` (`mcp.rs:1299-1302`).
 **Branch lifecycle:**
 
 *   **Open PR:** While story `<ID>` has an open PR, reads of that story also return `proposed: {ref, content_sha256, pr_url}`. Writes then compare `expected_sha256` against the file at `story-time/<ID>`.
-*   **No open PR:** When story `<ID>` has no open PR, the server deletes any leftover `story-time/<ID>` branch. The next write starts from the default branch.
+*   **No open PR:** When story `<ID>` has no open PR, the next write starts from the default branch. Its one leased push replaces any leftover `story-time/<ID>` branch. (As built in ST-133: the push replaces the branch instead of a separate delete, so the remote never has a moment with no branch and no lease.)
 *   **Default branch moves:** When the default branch moves under an open PR, the server does nothing. GitHub shows that PR as conflicted.
 
 **Write steps.** For each write, the server takes these steps under the repository's mutex:
@@ -657,7 +657,7 @@ Each slice below is its own story with Given/When/Then criteria and its own PR. 
         *   `prune()` runs on start.
     *   **S4:**
         *   `write(key, story_id, expected_sha256, op)` follows Component 4, including the branch lifecycle.
-        *   It also checks for an open PR for each story, and deletes the branch when no PR is open.
+        *   It also checks for an open PR for each story, and replaces the branch when no PR is open.
 
 ##### 10. `native/story-push/src/org_index.rs` (Create, S2)
 

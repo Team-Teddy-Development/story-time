@@ -29,7 +29,7 @@ pub fn run(args: &[String]) -> Result<String, Failure> {
     };
     let _lock = adoption_apply::lock_for_write(&loaded.root)?;
     let date = Utc::now().format("%Y-%m-%d").to_string();
-    let story = create(&flags, &dir, &prefix, &date, usize::MAX).map_err(String::from)?;
+    let story = create(&flags, &dir, &prefix, &date, usize::MAX, 0.0).map_err(String::from)?;
     let id = story.get("id").string();
     Ok(if flags.has("json") {
         format!("{}\n", story.json())
@@ -40,13 +40,15 @@ pub fn run(args: &[String]) -> Result<String, Failure> {
 
 /// `createStory` followed by `FileSystemStoryRepository.save`, except that an id another process
 /// took after `next_id` read the backlog is skipped instead of overwritten, for at most
-/// `attempts` ids; then the last id taken is the error.
+/// `attempts` ids; then the last id taken is the error. The number of the id is above `floor`,
+/// for a caller that knows ids the backlog directory does not hold.
 pub(crate) fn create(
     flags: &Flags,
     dir: &Path,
     prefix: &str,
     date: &str,
     attempts: usize,
+    floor: f64,
 ) -> Result<Js, CreateError> {
     let title = flags
         .value("title")
@@ -89,7 +91,7 @@ pub(crate) fn create(
     }
     sections.push(("Changelog".into(), text(&format!("- {date} created"))));
 
-    let mut taken = (0.0, String::new());
+    let mut taken = (floor, String::new());
     for _ in 0..attempts {
         let next = next_id(dir, prefix).map_err(CreateError::Other)?;
         let n = number(&next, prefix).unwrap_or(0.0).max(taken.0 + 1.0);
