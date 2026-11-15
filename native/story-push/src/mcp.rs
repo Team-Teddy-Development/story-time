@@ -6,7 +6,8 @@
 //! `story set` and `story note` under the repository lock and a SHA-256 precondition, and
 //! `story_create`, which files a story through the code of `story new` under the same lock. With
 //! `--registry`, an HTTP server reads the registered repositories from bare clones that it fetches
-//! (ADR 0007); such a server has no write tool.
+//! (ADR 0007). When such a server has a GitHub App, its write tools propose each change as a commit
+//! on the branch `story-time/<ID>` and one pull request (`mcp/propose.rs`).
 
 use crate::{
     adoption::sha,
@@ -21,9 +22,11 @@ use crate::{
 use regex_lite::Regex;
 use serde_json::{json, Map, Value};
 mod caller;
+mod forge;
 mod forge_auth;
 mod graph;
 mod http;
+mod propose;
 mod registry;
 mod workspace;
 use caller::{Caller, Scope};
@@ -374,12 +377,16 @@ impl Server {
 
     /// The tool set, fixed for the life of the process. A local server has write tools only
     /// under `--write`; a hosted server registers every tool and lets scopes select. A server
-    /// with a registry has no write tool: its repositories are clones, not working trees.
+    /// with a registry has write tools only when it has a GitHub App to propose changes with.
     fn registered(&self) -> impl Iterator<Item = &'static Tool> + '_ {
         let local = self.workspace.is_none();
+        let writes = match &self.workspace {
+            Some(workspace) => self.hosted && workspace.writes(),
+            None => self.hosted || self.write,
+        };
         TOOLS
             .iter()
-            .filter(move |t| t.hints.read_only || (local && (self.hosted || self.write)))
+            .filter(move |t| t.hints.read_only || writes)
             .chain(REGISTRY_TOOLS.iter().filter(move |_| !local))
             .chain(
                 graph::TOOLS
@@ -428,7 +435,7 @@ impl Server {
             .ok_or_else(|| rpc(-32602, "Unknown tool"))?;
         let run = |args: &Map<String, Value>| {
             self.permit(caller, tool, args)
-                .and_then(|()| tool.run(self, args))
+                .and_then(|()| tool.run(self, caller, args))
         };
         let started = Instant::now();
         let empty = Map::new();
@@ -447,7 +454,7 @@ impl Server {
                 json!({"error": {
                     "code": error.code,
                     "message": error.message,
-                    "retryable": matches!(error.code, "io_error" | "conflict" | "lock_held" | "id_taken" | "graph_unavailable" | "repository_unavailable"),
+                    "retryable": matches!(error.code, "io_error" | "conflict" | "lock_held" | "id_taken" | "graph_unavailable" | "repository_unavailable" | "forge_unavailable"),
                     "details": error.details,
                 }}),
                 true,
@@ -527,15 +534,21 @@ impl Server {
 
     /// The repository that `args` names. For a repository of the registry, this fetches when
     /// the TTL has passed and reads the commit of `ref`, or of the default branch.
-    fn root(&self, args: &Map<String, Value>) -> Result<Root, ToolError> {
+    /// The key of the repository that `args` names.
+    fn key(&self, args: &Map<String, Value>) -> Result<String, ToolError> {
         let refuse = |message| Err(fail("repository_not_allowed", message));
-        let keys = self.keys();
-        let key = match args.get("repository").and_then(Value::as_str) {
-            Some(key) if keys.iter().any(|k| k == key) => key,
-            Some(_) => return refuse("That repository is not allowlisted."),
-            None if keys.len() == 1 => keys[0].as_str(),
-            None => return refuse("Name a repository; this server serves several."),
-        };
+        let mut keys = self.keys();
+        match args.get("repository").and_then(Value::as_str) {
+            Some(key) if keys.iter().any(|k| k == key) => Ok(key.to_owned()),
+            Some(_) => refuse("That repository is not allowlisted."),
+            None if keys.len() == 1 => Ok(keys.remove(0)),
+            None => refuse("Name a repository; this server serves several."),
+        }
+    }
+
+    fn root(&self, args: &Map<String, Value>) -> Result<Root, ToolError> {
+        let key = self.key(args)?;
+        let key = key.as_str();
         let Some(workspace) = &self.workspace else {
             return Ok(self.roots.iter().find(|r| r.key == key).unwrap().clone());
         };
@@ -543,36 +556,9 @@ impl Server {
         if branch.is_some_and(|branch| !registry::branch_ok(branch)) {
             return Err(invalid("/ref", "/ref is not a branch name.".into()));
         }
-        let checkout = workspace.checkout(key, branch).map_err(|refusal| {
-            let (code, message, details) = match refusal {
-                Refusal::UnknownRepository => {
-                    return fail(
-                        "repository_not_allowed",
-                        "That repository is not allowlisted.",
-                    )
-                }
-                Refusal::Unavailable(reason) => (
-                    "repository_unavailable",
-                    "The server has no copy of that repository yet. Try again later.",
-                    json!({"repository": key, "reason": reason}),
-                ),
-                Refusal::RefNotFound => (
-                    "ref_not_found",
-                    "The repository has no branch with that name.",
-                    json!({"repository": key, "ref": branch}),
-                ),
-                Refusal::Git(reason) => (
-                    "io_error",
-                    "Could not read the repository.",
-                    json!({"operation": "read repository", "reason": reason}),
-                ),
-            };
-            ToolError {
-                code,
-                message: message.into(),
-                details,
-            }
-        })?;
+        let checkout = workspace
+            .checkout(key, branch)
+            .map_err(|refusal| refused(refusal, key, branch))?;
         Ok(Root {
             key: key.to_owned(),
             path: checkout.tree.path.clone(),
@@ -581,7 +567,11 @@ impl Server {
     }
 
     fn open(&self, args: &Map<String, Value>) -> Result<Repo, ToolError> {
-        let root = self.root(args)?;
+        self.repo_at(self.root(args)?)
+    }
+
+    /// The repository whose story files are under `root.path`.
+    fn repo_at(&self, root: Root) -> Result<Repo, ToolError> {
         let settings = match settings(&root.path) {
             Settings::Ok(settings) => settings,
             Settings::Missing => {
@@ -646,6 +636,38 @@ impl Server {
         let repos = self.workspace.as_ref()?.repos();
         let repo = repos.iter().find(|repo| repo.key == key)?;
         Some(&repo.prefixes)
+    }
+}
+
+/// A refusal of the workspace as a tool error.
+fn refused(refusal: Refusal, key: &str, branch: Option<&str>) -> ToolError {
+    let (code, message, details) = match refusal {
+        Refusal::UnknownRepository => {
+            return fail(
+                "repository_not_allowed",
+                "That repository is not allowlisted.",
+            )
+        }
+        Refusal::Unavailable(reason) => (
+            "repository_unavailable",
+            "The server has no current copy of that repository. Try again later.",
+            json!({"repository": key, "reason": reason}),
+        ),
+        Refusal::RefNotFound => (
+            "ref_not_found",
+            "The repository has no branch with that name.",
+            json!({"repository": key, "ref": branch}),
+        ),
+        Refusal::Git(reason) => (
+            "io_error",
+            "Could not read the repository.",
+            json!({"operation": "read repository", "reason": reason}),
+        ),
+    };
+    ToolError {
+        code,
+        message: message.into(),
+        details,
     }
 }
 
@@ -1080,15 +1102,31 @@ fn story_show(server: &Server, args: &Map<String, Value>) -> Result<Value, ToolE
         .dir
         .strip_prefix(&repo.root.path)
         .unwrap_or(Path::new(""));
-    Ok(repo.at(json!({
+    let path = dir.join(format!("{id}.md")).to_string_lossy().into_owned();
+    let mut shown = repo.at(json!({
         "repository": repo.root.key,
         "id": id,
-        "path": dir.join(format!("{id}.md")).to_string_lossy(),
+        "path": path,
         "sha256": sha(&bytes),
         "bytes": bytes.len(),
         "frontmatter": frontmatter,
         "sections": sections,
-    })))
+    }));
+    if let Some(workspace) = &server.workspace {
+        // A read of the default branch names the open proposal of the story, when there is one.
+        let branch = propose::branch(id);
+        let proposal = match args.get("ref") {
+            None => workspace.proposal(&repo.root.key, &branch),
+            Some(_) => None,
+        };
+        shown["proposed"] = proposal
+            .and_then(|(head, url)| {
+                let content = workspace.blob(&repo.root.key, &head, &path)?;
+                Some(json!({"ref": branch, "content_sha256": sha(&content), "pr_url": url}))
+            })
+            .unwrap_or(Value::Null);
+    }
+    Ok(shown)
 }
 
 fn story_lint(server: &Server, args: &Map<String, Value>) -> Result<Value, ToolError> {
@@ -1243,6 +1281,12 @@ impl Repo {
 }
 
 fn story_update(server: &Server, args: &Map<String, Value>) -> Result<Value, ToolError> {
+    let (repo, _lock) = server.lock(args)?;
+    update_in(server, &repo, args)
+}
+
+/// `story_update` on the story files of `repo`, which the caller holds for writing.
+fn update_in(server: &Server, repo: &Repo, args: &Map<String, Value>) -> Result<Value, ToolError> {
     let id = args["id"].as_str().unwrap_or_default();
     let expected = args["expected_sha256"].as_str().unwrap_or_default();
     let changes = set::changes(&set_pairs(args));
@@ -1256,7 +1300,6 @@ fn story_update(server: &Server, args: &Map<String, Value>) -> Result<Value, Too
         wanted.push((key.as_str(), value.unwrap_or(Js::Undefined)));
     }
     let fields: Vec<String> = changes.iter().map(|(k, _)| k.clone()).collect();
-    let (repo, _lock) = server.lock(args)?;
     let (current, bytes) = repo.story(id)?;
     let before = sha(&bytes);
     if before != expected {
@@ -1369,10 +1412,14 @@ fn acceptance_gaps(story: &Js) -> Vec<(&'static str, String)> {
 }
 
 fn story_note(server: &Server, args: &Map<String, Value>) -> Result<Value, ToolError> {
+    let (repo, _lock) = server.lock(args)?;
+    note_in(&repo, args)
+}
+
+fn note_in(repo: &Repo, args: &Map<String, Value>) -> Result<Value, ToolError> {
     let id = args["id"].as_str().unwrap_or_default();
     let expected = args["expected_sha256"].as_str().unwrap_or_default();
     let text = args["note"].as_str().unwrap_or_default();
-    let (repo, _lock) = server.lock(args)?;
     let (current, bytes) = repo.story(id)?;
     let before = sha(&bytes);
     if before != expected {
@@ -1400,6 +1447,13 @@ fn story_repos(server: &Server, _: &Map<String, Value>) -> Result<Value, ToolErr
 }
 
 fn story_create(server: &Server, args: &Map<String, Value>) -> Result<Value, ToolError> {
+    let (repo, _lock) = server.lock(args)?;
+    create_in(&repo, args, 0.0)
+}
+
+/// `story_create` on the story files of `repo`. The new id is above `floor` and above each id
+/// in the backlog directory.
+fn create_in(repo: &Repo, args: &Map<String, Value>, floor: f64) -> Result<Value, ToolError> {
     let title = args["title"].as_str().unwrap_or_default();
     if lenient_story::trim(title).is_empty() {
         return Err(invalid("/title", "/title is blank.".into()));
@@ -1424,7 +1478,6 @@ fn story_create(server: &Server, args: &Map<String, Value>) -> Result<Value, Too
         }
     }
     let flags = config::Flags::parse(&argv).map_err(|e| invalid("", e.message))?;
-    let (repo, _lock) = server.lock(args)?;
     if args.get("allow_duplicate_title") != Some(&Value::Bool(true)) {
         let normalized = |title: &str| lenient_story::trim(title).to_lowercase();
         let wanted = normalized(title);
@@ -1444,7 +1497,8 @@ fn story_create(server: &Server, args: &Map<String, Value>) -> Result<Value, Too
     }
     let prefix = repo.settings["prefix"].as_str().unwrap_or("ST");
     let date = chrono::Utc::now().format("%Y-%m-%d").to_string();
-    let story = new_story::create(&flags, &repo.dir, prefix, &date, 2).map_err(|e| match e {
+    let made = new_story::create(&flags, &repo.dir, prefix, &date, 2, floor);
+    let story = made.map_err(|e| match e {
         list::CreateError::Taken(_) => fail(
             "id_taken",
             "Another process took each id this call allocated.",
@@ -1787,6 +1841,16 @@ impl Tool {
                 output["required"].as_array_mut().unwrap().push(json!(key));
             }
         }
+        if registry && propose::handles(self.name) {
+            propose::schema(&mut output);
+        }
+        if registry && self.name == "story_show" {
+            output["properties"]["proposed"] = propose::proposed_schema();
+            output["required"]
+                .as_array_mut()
+                .unwrap()
+                .push(json!("proposed"));
+        }
         if registry && self.name == "story_graph" {
             graph::registry_schema(&mut output);
         }
@@ -1816,7 +1880,12 @@ impl Tool {
         })
     }
 
-    fn run(&self, server: &Server, args: &Map<String, Value>) -> Result<Value, ToolError> {
+    fn run(
+        &self,
+        server: &Server,
+        caller: &Caller,
+        args: &Map<String, Value>,
+    ) -> Result<Value, ToolError> {
         for (key, value) in args {
             let pointer = format!("/{}", key.replace('~', "~0").replace('/', "~1"));
             match self.fields.iter().find(|f| f.name == key) {
@@ -1833,7 +1902,12 @@ impl Tool {
                 format!("/{missing} is required."),
             ));
         }
-        (self.run)(server, args)
+        match &server.workspace {
+            Some(workspace) if propose::handles(self.name) => {
+                propose::run(server, workspace, caller, self.name, args)
+            }
+            _ => (self.run)(server, args),
+        }
     }
 }
 

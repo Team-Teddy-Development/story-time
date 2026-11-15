@@ -84,6 +84,16 @@ fn target(clone: &str) -> Result<Option<Target>, String> {
     if authority.is_empty() || !(scheme == "https" || (scheme == "http" && loopback)) {
         return Err("a token goes only to an https URL".into());
     }
+    let (owner, name) = named(path)?;
+    Ok(Some(Target {
+        origin: format!("{scheme}://{authority}"),
+        owner,
+        name,
+    }))
+}
+
+/// The owner and name in the last two steps of a clone URL's path.
+fn named(path: &str) -> Result<(String, String), String> {
     let mut steps = path.trim_end_matches('/').rsplit('/');
     let name = steps.next().unwrap_or_default();
     let name = name.strip_suffix(".git").unwrap_or(name);
@@ -99,11 +109,16 @@ fn target(clone: &str) -> Result<Option<Target>, String> {
     if !step_ok(owner) || !step_ok(name) {
         return Err("the clone URL does not end in <owner>/<repository>".into());
     }
-    Ok(Some(Target {
-        origin: format!("{scheme}://{authority}"),
-        owner: owner.to_owned(),
-        name: name.to_owned(),
-    }))
+    Ok((owner.to_owned(), name.to_owned()))
+}
+
+/// The owner and name of the repository that a clone URL of any scheme names. The forge API
+/// addresses the repository by them.
+pub(super) fn repository(clone: &str) -> Result<(String, String), String> {
+    let (_, rest) = clone
+        .split_once("://")
+        .ok_or("the clone URL has no scheme")?;
+    named(rest.split_once('/').map_or("", |(_, path)| path))
 }
 
 struct Token {
@@ -119,6 +134,8 @@ pub(super) struct App {
     /// Installation tokens by `owner/name`. The lock is held while a token is requested, so
     /// that two callers do not request two tokens.
     tokens: Mutex<HashMap<String, Token>>,
+    /// The App's slug, which names its bot user. It is read once.
+    slug: Mutex<Option<String>>,
 }
 
 fn now() -> i64 {
@@ -158,6 +175,7 @@ impl App {
             api: api.trim_end_matches('/').to_owned(),
             client,
             tokens: Mutex::new(HashMap::new()),
+            slug: Mutex::new(None),
         })
     }
 
@@ -182,31 +200,54 @@ impl App {
         Ok(format!("{message}.{}", encode(&signed, URL_SAFE, false)))
     }
 
-    fn request(&self, target: &Target) -> Result<Token, String> {
-        let jwt = self.jwt(now())?;
-        let send = |request: reqwest::blocking::RequestBuilder, step: &str| {
-            let response = request
-                .bearer_auth(&jwt)
-                .header("Accept", "application/vnd.github+json")
-                .header("X-GitHub-Api-Version", "2022-11-28")
-                .send()
-                .map_err(|_| format!("GitHub did not answer the {step} request"))?;
-            let status = response.status();
-            if !status.is_success() {
-                return Err(format!(
-                    "GitHub answered the {step} request with status {}",
-                    status.as_u16()
-                ));
-            }
-            response
-                .json::<Value>()
-                .map_err(|_| format!("GitHub answered the {step} request with invalid JSON"))
-        };
+    /// Sends a request that the App itself signs, and returns the JSON of a 2xx answer.
+    fn send(
+        &self,
+        request: reqwest::blocking::RequestBuilder,
+        step: &str,
+    ) -> Result<Value, String> {
+        let response = request
+            .bearer_auth(self.jwt(now())?)
+            .header("Accept", "application/vnd.github+json")
+            .header("X-GitHub-Api-Version", "2022-11-28")
+            .send()
+            .map_err(|_| format!("GitHub did not answer the {step} request"))?;
+        let status = response.status();
+        if !status.is_success() {
+            return Err(format!(
+                "GitHub answered the {step} request with status {}",
+                status.as_u16()
+            ));
+        }
+        response
+            .json::<Value>()
+            .map_err(|_| format!("GitHub answered the {step} request with invalid JSON"))
+    }
+
+    /// The name of the App's bot user, `<slug>[bot]`, which is the author of the commits that
+    /// the server makes. When GitHub does not name the slug, the name is `story-time[bot]`.
+    pub(super) fn bot(&self) -> String {
+        let mut slug = self.slug.lock().unwrap_or_else(|e| e.into_inner());
+        if slug.is_none() {
+            *slug = self
+                .send(self.client.get(format!("{}/app", self.api)), "app")
+                .ok()
+                .and_then(|app| app["slug"].as_str().map(str::to_owned))
+                .filter(|slug| {
+                    !slug.is_empty()
+                        && slug
+                            .bytes()
+                            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'_' | b'-'))
+                });
+        }
+        format!("{}[bot]", slug.as_deref().unwrap_or("story-time"))
+    }
+
+    fn request(&self, owner: &str, name: &str) -> Result<Token, String> {
+        let send = |request, step| self.send(request, step);
         let installation = send(
-            self.client.get(format!(
-                "{}/repos/{}/{}/installation",
-                self.api, target.owner, target.name
-            )),
+            self.client
+                .get(format!("{}/repos/{owner}/{name}/installation", self.api)),
             "installation",
         )?;
         let installation = installation["id"]
@@ -218,7 +259,7 @@ impl App {
                     "{}/app/installations/{installation}/access_tokens",
                     self.api
                 ))
-                .json(&json!({"repositories": [target.name]})),
+                .json(&json!({"repositories": [name]})),
             "token",
         )?;
         let value = granted["token"]
@@ -241,14 +282,21 @@ impl App {
         let Some(target) = target(clone)? else {
             return Ok(Access::default());
         };
-        let name = format!("{}/{}", target.owner, target.name);
+        let token = self.token(&target.owner, &target.name)?;
+        Ok(access(&target.origin, &token))
+    }
+
+    /// The installation token of the repository `owner/name`. One token serves until it has
+    /// less than five minutes to live.
+    pub(super) fn token(&self, owner: &str, name: &str) -> Result<String, String> {
+        let full = format!("{owner}/{name}");
         let mut tokens = self.tokens.lock().unwrap_or_else(|e| e.into_inner());
         let fresh = |token: &Token| token.expires - now() > REFRESH_BEFORE;
-        if !tokens.get(&name).is_some_and(fresh) {
-            let token = self.request(&target)?;
-            tokens.insert(name.clone(), token);
+        if !tokens.get(&full).is_some_and(fresh) {
+            let token = self.request(owner, name)?;
+            tokens.insert(full.clone(), token);
         }
-        Ok(access(&target.origin, &tokens[&name].value))
+        Ok(tokens[&full].value.clone())
     }
 }
 
