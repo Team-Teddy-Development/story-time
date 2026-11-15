@@ -585,7 +585,7 @@ fn the_registry_is_the_org_for_links_and_declares_each_prefix() {
         "A story id is VE- followed by digits."
     );
 
-    // Writes arrive with ST-133: until then a registry server offers no write tool.
+    // This server has no GitHub App to propose changes with, so it offers no write tool.
     for token in [READER, WRITER] {
         let names: Vec<String> = server
             .tools(token)
@@ -777,7 +777,14 @@ fn a_private_repository_is_fetched_with_an_installation_token_that_no_output_sho
 
     let seen = stub.seen.lock().unwrap().clone();
     // The App authenticates to the API with a signed JWT that names the App and lasts 10 minutes.
-    let api_calls: Vec<_> = seen.iter().filter(|s| s.1.starts_with("/api/")).collect();
+    // The fixture has the branch `story-time/VC-109`, so the read also asks the forge for the
+    // open pull request of that branch, with the installation token.
+    let (pulls, api_calls): (Vec<_>, Vec<_>) = seen
+        .iter()
+        .filter(|s| s.1.starts_with("/api/"))
+        .partition(|s| s.1.ends_with("/pulls"));
+    assert_eq!(pulls.len(), 1, "{seen:?}");
+    assert_eq!(pulls[0].2, format!("Bearer {INSTALLATION_TOKEN}"));
     assert_eq!(
         api_calls.len(),
         2,

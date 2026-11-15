@@ -5,19 +5,21 @@
 //! commands. A repository that the server cannot reach does not stop the other repositories.
 
 use super::{
-    forge_auth::App,
+    forge::{self, GitHub},
+    forge_auth::{self, App},
     registry::{branch_ok, Registry, RegistryRepo},
 };
 use crate::Failure;
 use serde_json::{json, Value};
 use std::{
+    collections::HashMap,
     fs,
     io::{Read, Write},
     path::{Path, PathBuf},
     process::{Command, Stdio},
     sync::{
         atomic::{AtomicU64, Ordering},
-        Arc, Mutex, RwLock,
+        Arc, Mutex, MutexGuard, RwLock,
     },
     time::{Duration, Instant},
 };
@@ -39,12 +41,49 @@ pub(super) struct Workspace {
     registry: Registry,
     data: PathBuf,
     app: Option<App>,
+    forge: Option<GitHub>,
     secrets: Secrets,
     slots: Vec<Mutex<Slot>>,
+    /// One lock for each repository, held for the whole of a write: fetch, commit, push, and
+    /// pull request. It is apart from the slot, so that reads go on during a write.
+    writes: Vec<Mutex<()>>,
+    /// The open pull request of each story branch, as the forge last reported it.
+    proposals: Mutex<HashMap<(usize, String), Proposal>>,
+    /// The forge token that each repository last used, which leaves `Secrets` when replaced.
+    forge_tokens: Vec<Mutex<Option<String>>>,
+    /// The login and the numeric user id of the App's bot. They are read once.
+    bot: Mutex<Option<(String, u64)>>,
     /// What `story_repos` reports. It is apart from the slot, so that the report does not wait
     /// for a fetch that holds the slot.
     status: Vec<Mutex<Status>>,
     next: AtomicU64,
+}
+
+struct Proposal {
+    head: String,
+    at: Instant,
+    url: Option<String>,
+}
+
+/// What one `git` child returned.
+struct Ran {
+    ok: bool,
+    stdout: Vec<u8>,
+    stderr: Vec<u8>,
+}
+
+/// A write of one repository in progress. It holds the repository's write lock.
+pub(super) struct Writing<'a> {
+    workspace: &'a Workspace,
+    index: usize,
+    pub(super) default_branch: String,
+    _lock: MutexGuard<'a, ()>,
+}
+
+pub(super) enum Pushed {
+    Done,
+    /// The branch at the remote was not where the server last saw it.
+    Rejected,
 }
 
 #[derive(Default)]
@@ -162,10 +201,22 @@ pub(super) fn launch(
             ))
         }
     };
+    let forge = match &app {
+        Some(_) => Some(GitHub::new(api).map_err(|e| refuse(format!("{e}.")))?),
+        None => None,
+    };
     let data = flags.get("data").map_or(DEFAULT_DATA, |s| s);
-    let workspace = Workspace::open(registry, Path::new(data), app, secrets.clone())
+    let workspace = Workspace::open(registry, Path::new(data), app, forge, secrets.clone())
         .map_err(|e| refuse(format!("--data {data}: {e}.")))?;
     Ok((rest, Some(workspace)))
+}
+
+/// The git command in `args`, for an error text.
+fn operation<'a>(args: &[&'a str]) -> &'a str {
+    args.iter()
+        .find(|arg| !arg.starts_with('-'))
+        .copied()
+        .unwrap_or("git")
 }
 
 fn now() -> String {
@@ -178,6 +229,7 @@ impl Workspace {
         registry: Registry,
         data: &Path,
         app: Option<App>,
+        forge: Option<GitHub>,
         secrets: Secrets,
     ) -> Result<Self, String> {
         let made = |path: PathBuf| {
@@ -189,16 +241,24 @@ impl Workspace {
         let data = data
             .canonicalize()
             .map_err(|e| format!("could not resolve the data directory ({})", e.kind()))?;
-        let _ = fs::remove_dir_all(data.join("trees"));
+        // What an earlier process left when it stopped inside a read or a write.
+        for name in ["trees", "tmp"] {
+            let _ = fs::remove_dir_all(data.join(name));
+        }
         for name in ["repos", "trees", "home", "tmp"] {
             made(data.join(name))?;
         }
         let workspace = Self {
             slots: registry.repos.iter().map(|_| Mutex::default()).collect(),
             status: registry.repos.iter().map(|_| Mutex::default()).collect(),
+            writes: registry.repos.iter().map(|_| Mutex::default()).collect(),
+            forge_tokens: registry.repos.iter().map(|_| Mutex::default()).collect(),
+            proposals: Mutex::default(),
+            bot: Mutex::default(),
             registry,
             data,
             app,
+            forge,
             secrets,
             next: AtomicU64::new(0),
         };
@@ -249,11 +309,32 @@ impl Workspace {
         input: Option<&[u8]>,
         timeout: Duration,
     ) -> Result<String, String> {
-        let operation = args
-            .iter()
-            .find(|arg| !arg.starts_with('-'))
-            .copied()
-            .unwrap_or("git");
+        let ran = self.run(repo, args, environment, input, timeout)?;
+        if ran.ok {
+            Ok(String::from_utf8_lossy(&ran.stdout).into_owned())
+        } else {
+            Err(self.failed(args, &ran))
+        }
+    }
+
+    fn failed(&self, args: &[&str], ran: &Ran) -> String {
+        format!(
+            "git {} failed: {}",
+            operation(args),
+            self.plain(&String::from_utf8_lossy(&ran.stderr))
+        )
+    }
+
+    /// Runs one `git` child to its end. `Err` is a child that did not start or did not end.
+    fn run(
+        &self,
+        repo: &RegistryRepo,
+        args: &[&str],
+        environment: &[(String, String)],
+        input: Option<&[u8]>,
+        timeout: Duration,
+    ) -> Result<Ran, String> {
+        let operation = operation(args);
         let mut child = Command::new("git")
             .arg("--git-dir")
             .arg(self.bare(repo))
@@ -313,11 +394,11 @@ impl Workspace {
         let stdout = stdout.join().unwrap_or_default();
         let stderr = stderr.join().unwrap_or_default();
         match status {
-            Some(status) if status.success() => Ok(String::from_utf8_lossy(&stdout).into_owned()),
-            Some(_) => Err(format!(
-                "git {operation} failed: {}",
-                self.plain(&String::from_utf8_lossy(&stderr))
-            )),
+            Some(status) => Ok(Ran {
+                ok: status.success(),
+                stdout,
+                stderr,
+            }),
             None => Err(format!(
                 "git {operation} did not end in {} seconds",
                 timeout.as_secs()
@@ -554,6 +635,134 @@ impl Workspace {
         outcome.map(|()| tree)
     }
 
+    /// Whether this server can change stories: it has a GitHub App to push and to open pull
+    /// requests with.
+    pub(super) fn writes(&self) -> bool {
+        self.app.is_some() && self.forge.is_some()
+    }
+
+    fn index(&self, key: &str) -> Option<usize> {
+        self.registry.repos.iter().position(|repo| repo.key == key)
+    }
+
+    /// Starts a write of `key`: takes its write lock and fetches it, whatever the TTL. A write
+    /// needs the current heads, so a failed fetch refuses the write.
+    pub(super) fn write(&self, key: &str) -> Result<Writing<'_>, Refusal> {
+        let index = self.index(key).ok_or(Refusal::UnknownRepository)?;
+        let lock = self.writes[index].lock().unwrap_or_else(|e| e.into_inner());
+        let writing = Writing {
+            workspace: self,
+            index,
+            default_branch: String::new(),
+            _lock: lock,
+        };
+        let default_branch = writing.fetch()?;
+        Ok(Writing {
+            default_branch,
+            ..writing
+        })
+    }
+
+    /// The forge token of a repository. It joins `Secrets`, and the token it replaces leaves.
+    fn forge_access(&self, index: usize) -> Result<forge::Access, String> {
+        let app = self.app.as_ref().ok_or("the server has no GitHub App")?;
+        let (owner, name) = forge_auth::repository(&self.registry.repos[index].clone)?;
+        let token = app.token(&owner, &name)?;
+        let mut last = self.forge_tokens[index]
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        if last.as_deref() != Some(&token) {
+            let mut secrets = self.secrets.write().unwrap_or_else(|e| e.into_inner());
+            secrets.retain(|secret| Some(secret) != last.as_ref());
+            secrets.push(token.clone());
+            *last = Some(token.clone());
+        }
+        Ok(forge::Access { owner, name, token })
+    }
+
+    /// Calls the forge for the repository `key`, with its token.
+    pub(super) fn forge<T>(
+        &self,
+        key: &str,
+        call: impl FnOnce(&GitHub, &forge::Access) -> Result<T, String>,
+    ) -> Result<T, String> {
+        let index = self.index(key).ok_or("the repository is not registered")?;
+        let forge = self.forge.as_ref().ok_or("the server has no GitHub App")?;
+        call(forge, &self.forge_access(index)?)
+    }
+
+    /// The owner and name of the repository `key` at the forge.
+    pub(super) fn forge_repository(&self, key: &str) -> Result<(String, String), String> {
+        let index = self.index(key).ok_or("the repository is not registered")?;
+        forge_auth::repository(&self.registry.repos[index].clone)
+    }
+
+    /// The login and the numeric user id of the App's bot, asked of the forge once.
+    pub(super) fn bot(&self, key: &str) -> Result<(String, u64), String> {
+        let mut bot = self.bot.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some(known) = bot.as_ref() {
+            return Ok(known.clone());
+        }
+        let app = self.app.as_ref().ok_or("the server has no GitHub App")?;
+        let login = app.bot();
+        let id = self.forge(key, |forge, access| forge.user_id(access, &login))?;
+        *bot = Some((login.clone(), id));
+        Ok((login, id))
+    }
+
+    /// The open pull request of `branch` in `key`: the head of the branch and the URL. `None`
+    /// when the branch does not exist or has no open pull request. The forge is asked again
+    /// when the head moved or the answer is older than the TTL; when the forge does not
+    /// answer, the last answer for this head stands.
+    pub(super) fn proposal(&self, key: &str, branch: &str) -> Option<(String, String)> {
+        let index = self.index(key)?;
+        let head = self.head(&self.registry.repos[index], branch)?;
+        let ttl = Duration::from_secs(self.registry.fetch_ttl_seconds);
+        let at = (index, branch.to_owned());
+        let mut proposals = self.proposals.lock().unwrap_or_else(|e| e.into_inner());
+        let known = proposals.get(&at).filter(|known| known.head == head);
+        let (had, current) = (
+            known.is_some(),
+            known.is_some_and(|known| known.at.elapsed() < ttl),
+        );
+        if !current {
+            let asked = self.forge_access(index).and_then(|access| {
+                let forge = self.forge.as_ref().ok_or("no forge")?;
+                forge.open_pull(&access, branch)
+            });
+            match asked {
+                Ok(url) => {
+                    let found = Proposal {
+                        head: head.clone(),
+                        at: Instant::now(),
+                        url,
+                    };
+                    proposals.insert(at.clone(), found);
+                }
+                Err(_) if had => {}
+                Err(_) => return None,
+            }
+        }
+        let url = proposals.get(&at)?.url.clone()?;
+        Some((head, url))
+    }
+
+    /// The bytes of the file `path` in commit `sha` of `key`.
+    pub(super) fn blob(&self, key: &str, sha: &str, path: &str) -> Option<Vec<u8>> {
+        let repo = &self.registry.repos[self.index(key)?];
+        let object = format!("{sha}:{path}");
+        let ran = self
+            .run(
+                repo,
+                &["cat-file", "blob", &object],
+                &[],
+                None,
+                LOCAL_TIMEOUT,
+            )
+            .ok()?;
+        ran.ok.then_some(ran.stdout)
+    }
+
     /// The state of each repository for `story_repos`. It does not fetch, and it does not wait
     /// for a fetch that runs.
     pub(super) fn states(&self) -> Vec<Value> {
@@ -591,4 +800,200 @@ fn backlog_dir(tree: &Path) -> String {
                 })
         })
         .unwrap_or_else(|| "backlog".into())
+}
+
+impl Writing<'_> {
+    fn repo(&self) -> &RegistryRepo {
+        &self.workspace.registry.repos[self.index]
+    }
+
+    /// Fetches the repository now, and returns its default branch.
+    pub(super) fn fetch(&self) -> Result<String, Refusal> {
+        let workspace = self.workspace;
+        let mut slot = workspace.slots[self.index]
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        slot.tried = None;
+        workspace.refresh(self.index, &mut slot);
+        match (&slot.last_error, &slot.default_branch) {
+            (None, Some(branch)) if slot.cloned => Ok(branch.clone()),
+            (reason, _) => {
+                Err(Refusal::Unavailable(reason.clone().unwrap_or_else(|| {
+                    "the repository is not cloned yet".into()
+                })))
+            }
+        }
+    }
+
+    pub(super) fn head(&self, branch: &str) -> Option<String> {
+        self.workspace.head(self.repo(), branch)
+    }
+
+    /// The story files of commit `sha` in a directory of this write alone.
+    pub(super) fn scratch(&self, sha: &str) -> Result<Arc<Tree>, String> {
+        self.workspace.materialize(self.repo(), sha)
+    }
+
+    /// The id of each story file in `backlog` on every branch. A new story takes an id above
+    /// them all, so that two open pull requests do not carry one id.
+    pub(super) fn ids(&self, backlog: &str) -> Result<Vec<String>, String> {
+        let git = |args: &[&str]| self.workspace.git(self.repo(), args, &[], None);
+        let refs = git(&["for-each-ref", "--format=%(refname)", "refs/heads"])?;
+        let folder = format!("{backlog}/");
+        let mut ids = Vec::new();
+        for reference in refs.lines().filter(|line| !line.is_empty()) {
+            let names = git(&["ls-tree", "--name-only", reference, "--", &folder])?;
+            for name in names.lines() {
+                let file = name.rsplit('/').next().unwrap_or(name);
+                if let Some(id) = crate::story_file_id(file) {
+                    ids.push(id.to_owned());
+                }
+            }
+        }
+        Ok(ids)
+    }
+
+    /// Makes the commit that puts `bytes` at `path` on top of `base`, and returns its id. The
+    /// commit is in the clone only; `push` sends it.
+    pub(super) fn commit(
+        &self,
+        base: &str,
+        path: &str,
+        bytes: &[u8],
+        message: &str,
+        author: &str,
+    ) -> Result<String, String> {
+        let workspace = self.workspace;
+        let n = workspace.next.fetch_add(1, Ordering::Relaxed);
+        let index = workspace
+            .data
+            .join("tmp")
+            .join(format!("index.{}.{n}", self.repo().key));
+        let email = format!("{author}@users.noreply.github.com");
+        let mut environment = vec![(
+            "GIT_INDEX_FILE".to_owned(),
+            index.to_string_lossy().into_owned(),
+        )];
+        for role in ["AUTHOR", "COMMITTER"] {
+            environment.push((format!("GIT_{role}_NAME"), author.to_owned()));
+            environment.push((format!("GIT_{role}_EMAIL"), email.clone()));
+        }
+        let git = |args: &[&str], input: Option<&[u8]>| {
+            workspace
+                .git(self.repo(), args, &environment, input)
+                .map(|out| out.trim().to_owned())
+        };
+        let made = (|| {
+            git(&["read-tree", base], None)?;
+            let blob = git(&["hash-object", "-w", "--stdin"], Some(bytes))?;
+            let entry = format!("100644,{blob},{path}");
+            git(&["update-index", "--add", "--cacheinfo", &entry], None)?;
+            let tree = git(&["write-tree"], None)?;
+            git(
+                &["commit-tree", &tree, "-p", base],
+                Some(message.as_bytes()),
+            )
+        })();
+        let _ = fs::remove_file(&index);
+        made
+    }
+
+    fn push_with_lease(
+        &self,
+        branch: &str,
+        source: &str,
+        expected: &str,
+    ) -> Result<Pushed, String> {
+        let workspace = self.workspace;
+        let access = match &workspace.app {
+            Some(app) => app.git_environment(&self.repo().clone)?,
+            None => Default::default(),
+        };
+        let reference = format!("refs/heads/{branch}");
+        let lease = format!("--force-with-lease={reference}:{expected}");
+        let refspec = format!("{source}:{reference}");
+        let args = ["push", "--porcelain", &lease, "origin", &refspec];
+        let ran = workspace.run(
+            self.repo(),
+            &args,
+            &access.environment,
+            None,
+            NETWORK_TIMEOUT,
+        )?;
+        let stale = String::from_utf8_lossy(&ran.stdout)
+            .lines()
+            .any(|line| line.starts_with('!') && line.contains("stale info"));
+        match (ran.ok, stale) {
+            (true, _) => Ok(Pushed::Done),
+            (false, true) => Ok(Pushed::Rejected),
+            (false, false) => Err(workspace.failed(&args, &ran)),
+        }
+    }
+
+    /// Pushes `commit` to `branch` at the remote, when the branch is still at `expected` there:
+    /// `None` is a branch that does not exist. Then the clone has the branch at `commit`.
+    pub(super) fn push(
+        &self,
+        branch: &str,
+        commit: &str,
+        expected: Option<&str>,
+    ) -> Result<Pushed, String> {
+        let pushed = self.push_with_lease(branch, commit, expected.unwrap_or(""))?;
+        if matches!(pushed, Pushed::Done) {
+            let reference = format!("refs/heads/{branch}");
+            self.workspace
+                .git(self.repo(), &["update-ref", &reference, commit], &[], None)?;
+        }
+        Ok(pushed)
+    }
+
+    /// Removes `branch` at the remote and in the clone, when it is still at `expected`.
+    pub(super) fn delete(&self, branch: &str, expected: &str) -> Result<(), String> {
+        self.push_with_lease(branch, "", expected)?;
+        let reference = format!("refs/heads/{branch}");
+        self.workspace
+            .git(self.repo(), &["update-ref", "-d", &reference], &[], None)
+            .map(|_| ())
+    }
+
+    /// The name of the bot that is the author of this server's commits.
+    pub(super) fn author(&self) -> String {
+        match &self.workspace.app {
+            Some(app) => app.bot(),
+            None => "story-time[bot]".into(),
+        }
+    }
+
+    /// The URL of the open pull request of `branch`, asked of the forge now.
+    pub(super) fn open_pull(&self, branch: &str) -> Result<Option<String>, String> {
+        let access = self.workspace.forge_access(self.index)?;
+        let forge = self.workspace.forge.as_ref().ok_or("no forge")?;
+        forge.open_pull(&access, branch)
+    }
+
+    /// Opens the pull request of `branch` to the default branch, and returns its URL.
+    pub(super) fn create_pull(
+        &self,
+        branch: &str,
+        title: &str,
+        body: &str,
+    ) -> Result<String, String> {
+        let access = self.workspace.forge_access(self.index)?;
+        let forge = self.workspace.forge.as_ref().ok_or("no forge")?;
+        forge.create_pull(&access, branch, &self.default_branch, title, body)
+    }
+
+    /// Records the pull request of `branch` at `head`, so that the next read names it.
+    pub(super) fn remember(&self, branch: &str, head: &str, url: &str) {
+        let found = Proposal {
+            head: head.to_owned(),
+            at: Instant::now(),
+            url: Some(url.to_owned()),
+        };
+        self.workspace
+            .proposals
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .insert((self.index, branch.to_owned()), found);
+    }
 }
