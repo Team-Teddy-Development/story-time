@@ -374,6 +374,45 @@ With `--graph`, the server also offers `story_graph_sync` and `story_graph`. The
 NEO4J_PASSWORD=... story mcp --root <repo> --graph --neo4j-url http://127.0.0.1:7474 --neo4j-user neo4j --neo4j-password-env NEO4J_PASSWORD [--neo4j-database neo4j]
 ```
 
+### Hosted MCP over HTTP
+
+`story mcp --http` serves the same tools at `POST /mcp` ([ADR 0007](docs/adr/0007-hosted-story-mcp.md)). It needs a clients file and refuses to start without one.
+
+```bash
+story mcp --http 127.0.0.1:8080 --root <repo> --clients <clients.toml> [--allowed-origin ORIGIN]... [--workers 8] [--request-timeout-seconds 30]
+```
+
+The clients file holds one table for each client. It holds the SHA-256 hash of each token, never the token:
+
+```toml
+[[client]]
+id = "agent-a"
+token_sha256 = "<64 lowercase hexadecimal digits>"
+scopes = ["read", "write"]   # read, write, comment
+prefixes = ["ST"]            # optional; limits write and comment to these story prefixes
+```
+
+Make a token and its hash:
+
+```bash
+token=$(head -c 32 /dev/urandom | base64 | tr '+/' '-_' | tr -d '=')
+printf '%s' "$token" | sha256sum
+```
+
+Each client sees only the tools its scopes allow, and a call outside its scopes returns `scope_refused`. A request with no known token gets HTTP 401. To revoke a token, remove its table and restart the server. The server speaks plain HTTP: put it behind a proxy that ends TLS. `GET /healthz` and `GET /readyz` return 200 without a token.
+
+Register the server with your agent. Replace `<url>` with the address of the server and `<token>` with the client token:
+
+```bash
+claude mcp add --transport http story-time-hosted <url>/mcp --header "Authorization: Bearer <token>"
+```
+
+For Codex, keep the token in an environment variable and name that variable:
+
+```bash
+codex mcp add story-time-hosted --url <url>/mcp --bearer-token-env-var STORY_TIME_TOKEN
+```
+
 ## The backlog
 
 Stories are markdown files in `./backlog/` of the project you're planning,
