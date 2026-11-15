@@ -27,7 +27,7 @@ This design makes that server usable from anywhere, across all the repositories 
 *   **Coffee cluster:** The team's Kubernetes cluster. Argo CD deploys it from the Gitea repository `team-teddy/coffee-apps`.
 *   **`cc_deploy` and `cc_rollback`:** Tools of the `coffee-cluster-mcp` server. They pin an image tag in coffee-apps through a PR and wait for Argo CD to report the app as healthy.
 *   **Registry org:** The set of repositories in one registry file.
-*   **Forge org:** A GitHub owner. The Varsity registry org spans two forge orgs, `Varsity-Engine` and `Team-Teddy-Development`.
+*   **Forge org:** A GitHub owner. Both Varsity repositories are in one forge org, `Varsity-Engine`. A registry org can span several forge orgs, so the server gets a token for each one.
 *   **Jev:** TypeSafe Jev, a typed-judgment service. A Jev score is its probability (0 to 1) that a choice is the best one, given the evidence it received.
 
 ## Problem Statement
@@ -164,7 +164,7 @@ stdio and HTTP share one dispatch function and one tool table, so no tool can ex
  └──────────────────────────────────────────────────────────────────────────────┘
         │ git fetch/push, REST
         ▼
-  github.com (Varsity-Engine, Team-Teddy-Development)
+  github.com (Varsity-Engine)
 ```
 
 ### Components
@@ -212,7 +212,7 @@ default_branch = "main"        # optional; default is the remote HEAD
 prefixes = ["VC", "ST"]        # varsity-core holds ST-001 and ST-002 from before its VC prefix
 [[repo]]
 key = "varsity-web"
-clone = "https://github.com/Team-Teddy-Development/varsity-engine.git"
+clone = "https://github.com/Varsity-Engine/varsity-web.git"
 forge = "github"
 prefixes = ["VE"]
 ```
@@ -868,7 +868,7 @@ Each slice below is its own story with Given/When/Then criteria and its own PR. 
 *   **Proposed Changes**:
     *   **S1:**
         *   Create the GitHub App `storytime`, with Contents: read and Metadata: read.
-        *   Install it on `Varsity-Engine/varsity-core` and `Team-Teddy-Development/varsity-engine`.
+        *   Install it on `Varsity-Engine/varsity-core` and `Varsity-Engine/varsity-web`.
         *   Store `global/infra.story-time.github-app-id`, `global/infra.story-time.github-app-key`, and `global/infra.story-time.clients` in Vault. `clients` is the clients TOML with token hashes.
     *   **S4:**
         *   Add Contents: write, Pull requests: write, and Issues: write.
