@@ -1,4 +1,5 @@
-//! `story mcp [--root DIR]... [--write]`: an MCP server over stdio (ADR 0006). The contracts are
+//! `story mcp [--root DIR]... [--write]`: an MCP server over stdio (ADR 0006), and over HTTP with
+//! `--http` (ADR 0007). Both transports share one dispatch and one tool table. The contracts are
 //! in `docs/spikes/ST-006-mcp-server.md`. Tools take a repository key and story ids, never paths,
 //! and read through the same `config`, `list`, `lenient_story`, and `lint` code as the CLI. With
 //! `--write` it adds `story_update` and `story_note`, which change stories through the code of
@@ -15,7 +16,10 @@ use crate::{
 };
 use regex_lite::Regex;
 use serde_json::{json, Map, Value};
+mod caller;
 mod graph;
+mod http;
+use caller::{Caller, Scope};
 
 use std::{
     collections::HashMap,
@@ -56,21 +60,25 @@ const TYPES: &[&str] = &["story", "spike", "bug", "chore"];
 
 pub fn run(args: &[String]) -> Result<(String, u8), Failure> {
     let (args, graph) = graph::launch(args)?;
+    let (args, http) = http::launch(&args)?;
     let (roots, write) = roots(&args)?;
     let mut redactor = Redactor::from_env();
     redactor
         .values
         .extend(graph.as_ref().map(|g| g.password.clone()));
-    let mut server = Server {
+    let server = Server {
         roots,
         write,
-        legacy: false,
+        hosted: http.is_some(),
         redactor,
         graph,
     };
-    server
-        .serve(io::stdin().lock(), io::stdout().lock())
-        .map_err(|e| format!("story mcp: {e}"))?;
+    match http {
+        Some(http) => http.serve(server).map_err(|e| format!("story mcp: {e}"))?,
+        None => server
+            .serve(io::stdin().lock(), io::stdout().lock())
+            .map_err(|e| format!("story mcp: {e}"))?,
+    }
     Ok((String::new(), 0))
 }
 
@@ -83,8 +91,9 @@ fn roots(args: &[String]) -> Result<(Vec<Root>, bool), Failure> {
     let usage = || Failure {
         code: 2,
         message: format!(
-            "Usage: story mcp [--root DIR]... [--write] {}",
-            graph::USAGE
+            "Usage: story mcp [--root DIR]... [--write] {} {}",
+            graph::USAGE,
+            http::USAGE
         ),
     };
     let mut given = Vec::new();
@@ -153,7 +162,8 @@ fn key_base(path: &Path) -> String {
 struct Server {
     roots: Vec<Root>,
     write: bool,
-    legacy: bool,
+    /// Serving HTTP clients: every tool is registered, and each client's scopes select its tools.
+    hosted: bool,
     redactor: Redactor,
     graph: Option<graph::Neo4j>,
 }
@@ -172,7 +182,11 @@ fn rpc(code: i64, message: &str) -> RpcError {
 }
 
 impl Server {
-    fn serve(&mut self, mut input: impl BufRead, mut output: impl Write) -> io::Result<()> {
+    /// The stdio loop. Its one client is local, and its protocol era lasts for the connection:
+    /// `initialize` makes the later requests legacy.
+    fn serve(&self, mut input: impl BufRead, mut output: impl Write) -> io::Result<()> {
+        let caller = Caller::local();
+        let mut legacy = false;
         loop {
             let mut line = Vec::new();
             if input
@@ -196,13 +210,15 @@ impl Server {
             if line.iter().all(u8::is_ascii_whitespace) {
                 continue;
             }
-            if let Some(reply) = self.handle(&line) {
+            if let Some(reply) = self.handle(&caller, &mut legacy, &line) {
                 send(&mut output, &reply)?;
             }
         }
     }
 
-    fn handle(&mut self, line: &[u8]) -> Option<Value> {
+    /// Answers one JSON-RPC message. `legacy` is the protocol era of this request's connection;
+    /// the server itself holds no protocol state, so requests of both eras can interleave.
+    fn handle(&self, caller: &Caller, legacy: &mut bool, line: &[u8]) -> Option<Value> {
         let Ok(message) = serde_json::from_slice::<Value>(line) else {
             return Some(response(Value::Null, Err(rpc(-32700, "Parse error"))));
         };
@@ -221,16 +237,22 @@ impl Server {
             return Some(response(id, Err(rpc(-32600, "Invalid Request"))));
         };
         let id = id?.clone();
-        Some(response(id, self.dispatch(method, &params)))
+        Some(response(id, self.dispatch(caller, legacy, method, &params)))
     }
 
-    fn dispatch(&mut self, method: &str, params: &Map<String, Value>) -> Result<Value, RpcError> {
+    fn dispatch(
+        &self,
+        caller: &Caller,
+        legacy: &mut bool,
+        method: &str,
+        params: &Map<String, Value>,
+    ) -> Result<Value, RpcError> {
         if method == "initialize" {
             let requested = params.get("protocolVersion").and_then(Value::as_str);
             let version = requested
                 .filter(|v| LEGACY_VERSIONS.contains(v))
                 .unwrap_or(LEGACY);
-            self.legacy = true;
+            *legacy = true;
             return Ok(json!({
                 "protocolVersion": version,
                 "capabilities": capabilities(),
@@ -262,7 +284,7 @@ impl Server {
                 });
             }
             Some(_) => return Err(rpc(-32602, "Invalid _meta protocol version")),
-            None if self.legacy => false,
+            None if *legacy => false,
             None => {
                 return Err(rpc(
                     -32602,
@@ -279,9 +301,9 @@ impl Server {
                 if params.contains_key("cursor") {
                     return Err(rpc(-32602, "tools/list does not page"));
                 }
-                json!({"tools": self.tools().map(Tool::describe).collect::<Vec<_>>()})
+                json!({"tools": self.tools(caller).map(Tool::describe).collect::<Vec<_>>()})
             }
-            _ => self.call(params)?,
+            _ => self.call(caller, params)?,
         };
         if modern {
             result["resultType"] = json!("complete");
@@ -290,31 +312,68 @@ impl Server {
         Ok(result)
     }
 
-    /// The tool set, fixed for the life of the process: write tools only under `--write`.
-    fn tools(&self) -> impl Iterator<Item = &'static Tool> + '_ {
+    /// The tool set, fixed for the life of the process. A local server has write tools only
+    /// under `--write`; a hosted server registers every tool and lets scopes select.
+    fn registered(&self) -> impl Iterator<Item = &'static Tool> + '_ {
         TOOLS
             .iter()
-            .filter(|t| self.write || t.hints.read_only)
+            .filter(|t| self.hosted || self.write || t.hints.read_only)
             .chain(graph::TOOLS.iter().filter(|_| self.graph.is_some()))
     }
 
-    fn call(&self, params: &Map<String, Value>) -> Result<Value, RpcError> {
+    /// The registered tools that `caller` may see.
+    fn tools<'a>(&'a self, caller: &'a Caller) -> impl Iterator<Item = &'static Tool> + 'a {
+        self.registered()
+            .filter(move |t| !self.hosted || caller.has(t.scope()))
+    }
+
+    /// Refuses a hosted call that the caller's scopes or prefixes do not cover. The target
+    /// prefix is that of the story id, or the repository's own prefix for a call with no id.
+    fn permit(
+        &self,
+        caller: &Caller,
+        tool: &Tool,
+        args: &Map<String, Value>,
+    ) -> Result<(), ToolError> {
+        let scope = tool.scope();
+        let prefix = match args.get("id").and_then(Value::as_str) {
+            _ if !self.hosted || scope == Scope::Read => None,
+            Some(id) => id.rsplit_once('-').map(|(prefix, _)| prefix.to_owned()),
+            None => self
+                .open(args)
+                .ok()
+                .and_then(|repo| repo.settings["prefix"].as_str().map(str::to_owned)),
+        };
+        if self.hosted && !caller.permits(scope, prefix.as_deref()) {
+            return Err(fail(
+                "scope_refused",
+                "The scopes of this client do not cover that call.",
+            ));
+        }
+        Ok(())
+    }
+
+    fn call(&self, caller: &Caller, params: &Map<String, Value>) -> Result<Value, RpcError> {
         let name = params.get("name").and_then(Value::as_str);
         let tool = self
-            .tools()
+            .registered()
             .find(|t| Some(t.name) == name)
             .ok_or_else(|| rpc(-32602, "Unknown tool"))?;
+        let run = |args: &Map<String, Value>| {
+            self.permit(caller, tool, args)
+                .and_then(|()| tool.run(self, args))
+        };
         let started = Instant::now();
         let empty = Map::new();
         let (args, outcome) = match params.get("arguments") {
-            None | Some(Value::Null) => (&empty, tool.run(self, &empty)),
-            Some(Value::Object(args)) => (args, tool.run(self, args)),
+            None | Some(Value::Null) => (&empty, run(&empty)),
+            Some(Value::Object(args)) => (args, run(args)),
             Some(_) => (
                 &empty,
                 Err(invalid("", "arguments must be an object.".into())),
             ),
         };
-        self.audit(tool.name, args, &outcome, started);
+        self.audit(caller, tool.name, args, &outcome, started);
         let (mut content, is_error) = match outcome {
             Ok(content) => (content, false),
             Err(error) => (
@@ -337,8 +396,10 @@ impl Server {
     }
 
     /// One value-free JSON line on stderr per tool call: allowlisted keys and valid ids only.
+    /// A hosted call also names its client.
     fn audit(
         &self,
+        caller: &Caller,
         tool: &str,
         args: &Map<String, Value>,
         outcome: &Result<Value, ToolError>,
@@ -369,7 +430,7 @@ impl Server {
                 }
                 ids
             });
-        let line = json!({
+        let mut line = json!({
             "at": chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true),
             "tool": tool,
             "repository": repository,
@@ -380,6 +441,9 @@ impl Server {
             "sha256_after": digest("sha256_after"),
             "duration_ms": started.elapsed().as_millis() as u64,
         });
+        if let Some(client) = &caller.client_id {
+            line["client_id"] = json!(client);
+        }
         eprintln!("{line}");
     }
 
@@ -1471,6 +1535,15 @@ const TOOLS: [Tool; 7] = [
 ];
 
 impl Tool {
+    /// The scope a hosted client needs for this tool.
+    fn scope(&self) -> Scope {
+        if self.hints.read_only {
+            Scope::Read
+        } else {
+            Scope::Write
+        }
+    }
+
     fn describe(&self) -> Value {
         let properties: Map<String, Value> = self
             .fields

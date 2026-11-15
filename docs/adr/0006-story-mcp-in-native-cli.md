@@ -1,6 +1,6 @@
 # ADR 0006: Serve story-time MCP tools from the native `story` binary over stdio
 
-Status: Accepted for ST-007 refinement, 2026-11-14. Spike ST-006, [issue 26](https://github.com/Team-Teddy-Development/story-time/issues/26). This decision does not mean the server is implemented.
+Status: Accepted for ST-007 refinement, 2026-11-14. Hosted mode (`story mcp --http`) is governed by [ADR 0007](0007-hosted-story-mcp.md); the stdio decision is unchanged. Spike ST-006, [issue 26](https://github.com/Team-Teddy-Development/story-time/issues/26). This decision does not mean the server is implemented.
 
 ## Context
 
