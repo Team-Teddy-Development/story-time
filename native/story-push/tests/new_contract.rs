@@ -64,19 +64,20 @@ impl Sandbox {
             &format!("---\nid: {id}\ntitle: Existing {id}\nstatus: draft\ntype: story\n---\n\n## Story\nAs a user, I want x, so that y.\n"),
         )
     }
-    fn git(&self, args: &[&str]) {
-        let out = Command::new("git")
-            .arg("-C")
+    fn fixture_git(&self) -> Command {
+        let mut cmd = Command::new("git");
+        cmd.arg("-C")
             .arg(&self.template)
-            .args(args)
             .env("GIT_CONFIG_NOSYSTEM", "1")
             .env("GIT_CONFIG_GLOBAL", "/dev/null")
             .env("GIT_AUTHOR_NAME", "Fixture")
             .env("GIT_AUTHOR_EMAIL", "fixture@example.invalid")
             .env("GIT_COMMITTER_NAME", "Fixture")
-            .env("GIT_COMMITTER_EMAIL", "fixture@example.invalid")
-            .output()
-            .unwrap();
+            .env("GIT_COMMITTER_EMAIL", "fixture@example.invalid");
+        cmd
+    }
+    fn git(&self, args: &[&str]) {
+        let out = self.fixture_git().args(args).output().unwrap();
         assert!(
             out.status.success(),
             "git {args:?}: {}",
@@ -190,6 +191,30 @@ impl Drop for Sandbox {
     fn drop(&mut self) {
         let _ = fs::remove_dir_all(&self.root);
     }
+}
+
+/// `reset` copies the template right after its last commit. A detached auto-maintenance process
+/// holds `.git/objects/maintenance.lock` for a moment after the commit returns, so a copy can
+/// catch the lock and then fail when it vanishes.
+#[test]
+fn fixture_commits_start_no_background_maintenance() {
+    let s = Sandbox::new();
+    let trace = s.root.join("trace2");
+    s.git(&["init", "-q", "-b", "main"]);
+    let out = s
+        .fixture_git()
+        .env("GIT_TRACE2", &trace)
+        .args(["commit", "-q", "--allow-empty", "-m", "probe"])
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let log = fs::read_to_string(&trace).unwrap();
+    assert!(log.contains("cmd_name commit"), "no trace: {log}");
+    assert!(!log.contains("git maintenance"), "{log}");
 }
 
 fn copy_tree(from: &Path, to: &Path) {
