@@ -4,7 +4,9 @@
 //! and read through the same `config`, `list`, `lenient_story`, and `lint` code as the CLI. With
 //! `--write` it adds `story_update` and `story_note`, which change stories through the code of
 //! `story set` and `story note` under the repository lock and a SHA-256 precondition, and
-//! `story_create`, which files a story through the code of `story new` under the same lock.
+//! `story_create`, which files a story through the code of `story new` under the same lock. With
+//! `--registry`, an HTTP server reads the registered repositories from bare clones that it fetches
+//! (ADR 0007); such a server has no write tool.
 
 use crate::{
     adoption::sha,
@@ -19,9 +21,13 @@ use crate::{
 use regex_lite::Regex;
 use serde_json::{json, Map, Value};
 mod caller;
+mod forge_auth;
 mod graph;
 mod http;
+mod registry;
+mod workspace;
 use caller::{Caller, Scope};
+use workspace::{Refusal, Workspace};
 
 use std::{
     collections::HashMap,
@@ -29,6 +35,7 @@ use std::{
     fs::TryLockError,
     io::{self, BufRead, Read, Write},
     path::{Path, PathBuf},
+    sync::Arc,
     time::Instant,
 };
 
@@ -61,19 +68,28 @@ const STATUSES: &[&str] = &[
 const TYPES: &[&str] = &["story", "spike", "bug", "chore"];
 
 pub fn run(args: &[String]) -> Result<(String, u8), Failure> {
+    if args.first().is_some_and(|arg| arg == "probe") {
+        return probe(&args[1..]);
+    }
     let (args, graph) = graph::launch(args)?;
-    let (args, http) = http::launch(&args)?;
-    let (roots, write) = roots(&args)?;
     let mut redactor = Redactor::from_env();
     redactor
         .values
         .extend(graph.as_ref().map(|g| g.password.clone()));
+    let (args, workspace) = workspace::launch(&args, &redactor.live)?;
+    let workspace = workspace.map(Arc::new);
+    let (args, http) = http::launch(&args)?;
+    let (roots, write) = roots(&args, workspace.is_some())?;
+    if let Some(workspace) = workspace.clone() {
+        std::thread::spawn(move || workspace.warm());
+    }
     let server = Server {
         roots,
         write,
         hosted: http.is_some(),
         redactor,
         graph,
+        workspace,
     };
     match http {
         Some(http) => http.serve(server).map_err(|e| format!("story mcp: {e}"))?,
@@ -84,18 +100,53 @@ pub fn run(args: &[String]) -> Result<(String, u8), Failure> {
     Ok((String::new(), 0))
 }
 
+/// `story mcp probe --url URL`: exits 0 when a GET of the URL answers with a 2xx status in
+/// 3 seconds. A container probe runs it, because the image has no other HTTP client.
+fn probe(args: &[String]) -> Result<(String, u8), Failure> {
+    let usage = || Failure {
+        code: 2,
+        message: "Usage: story mcp probe --url URL".into(),
+    };
+    let [flag, url] = args else {
+        return Err(usage());
+    };
+    if flag != "--url" || !(url.starts_with("http://") || url.starts_with("https://")) {
+        return Err(usage());
+    }
+    let refuse = |message: &str| Failure {
+        code: 1,
+        message: format!("story mcp probe: {message}"),
+    };
+    let response = reqwest::blocking::Client::builder()
+        .timeout(std::time::Duration::from_secs(3))
+        .build()
+        .and_then(|client| client.get(url).send())
+        .map_err(|_| refuse("no answer"))?;
+    if response.status().is_success() {
+        Ok((String::new(), 0))
+    } else {
+        Err(refuse(&format!("status {}", response.status().as_u16())))
+    }
+}
+
+#[derive(Clone)]
 struct Root {
     key: String,
     path: PathBuf,
+    /// The commit that `path` holds, for a repository of the registry. It keeps the directory
+    /// of that commit until the read ends.
+    source: Option<workspace::Checkout>,
 }
 
-fn roots(args: &[String]) -> Result<(Vec<Root>, bool), Failure> {
+/// The local roots. A server with a registry has none: it serves the registered repositories.
+fn roots(args: &[String], registry: bool) -> Result<(Vec<Root>, bool), Failure> {
     let usage = || Failure {
         code: 2,
         message: format!(
-            "Usage: story mcp [--root DIR]... [--write] {} {}",
+            "Usage: story mcp [--root DIR]... [--write] {} {} {}",
             graph::USAGE,
-            http::USAGE
+            http::USAGE,
+            workspace::USAGE
         ),
     };
     let mut given = Vec::new();
@@ -108,7 +159,7 @@ fn roots(args: &[String]) -> Result<(Vec<Root>, bool), Failure> {
             _ => return Err(usage()),
         }
     }
-    if given.is_empty() {
+    if given.is_empty() && !registry {
         given.push(match std::env::var_os("CLAUDE_PROJECT_DIR") {
             Some(dir) if !dir.is_empty() => dir.into(),
             _ => std::env::current_dir().map_err(|e| format!("story mcp: {e}"))?,
@@ -130,7 +181,11 @@ fn roots(args: &[String]) -> Result<(Vec<Root>, bool), Failure> {
             }
             key = format!("{base}-{n}");
         }
-        roots.push(Root { key, path });
+        roots.push(Root {
+            key,
+            path,
+            source: None,
+        });
     }
     Ok((roots, write))
 }
@@ -168,6 +223,8 @@ struct Server {
     hosted: bool,
     redactor: Redactor,
     graph: Option<graph::Neo4j>,
+    /// The registered repositories of a hosted server. With it, `roots` is empty.
+    workspace: Option<Arc<Workspace>>,
 }
 
 struct RpcError {
@@ -303,7 +360,8 @@ impl Server {
                 if params.contains_key("cursor") {
                     return Err(rpc(-32602, "tools/list does not page"));
                 }
-                json!({"tools": self.tools(caller).map(Tool::describe).collect::<Vec<_>>()})
+                let registry = self.workspace.is_some();
+                json!({"tools": self.tools(caller).map(|t| t.describe(registry)).collect::<Vec<_>>()})
             }
             _ => self.call(caller, params)?,
         };
@@ -315,11 +373,14 @@ impl Server {
     }
 
     /// The tool set, fixed for the life of the process. A local server has write tools only
-    /// under `--write`; a hosted server registers every tool and lets scopes select.
+    /// under `--write`; a hosted server registers every tool and lets scopes select. A server
+    /// with a registry has no write tool: its repositories are clones, not working trees.
     fn registered(&self) -> impl Iterator<Item = &'static Tool> + '_ {
+        let local = self.workspace.is_none();
         TOOLS
             .iter()
-            .filter(|t| self.hosted || self.write || t.hints.read_only)
+            .filter(move |t| t.hints.read_only || (local && (self.hosted || self.write)))
+            .chain(REGISTRY_TOOLS.iter().filter(move |_| !local))
             .chain(graph::TOOLS.iter().filter(|_| self.graph.is_some()))
     }
 
@@ -382,7 +443,7 @@ impl Server {
                 json!({"error": {
                     "code": error.code,
                     "message": error.message,
-                    "retryable": matches!(error.code, "io_error" | "conflict" | "lock_held" | "id_taken" | "graph_unavailable"),
+                    "retryable": matches!(error.code, "io_error" | "conflict" | "lock_held" | "id_taken" | "graph_unavailable" | "repository_unavailable"),
                     "details": error.details,
                 }}),
                 true,
@@ -407,12 +468,12 @@ impl Server {
         outcome: &Result<Value, ToolError>,
         started: Instant,
     ) {
+        let keys = self.keys();
         let repository = match args.get("repository") {
-            Some(Value::String(key)) => self.roots.iter().find(|r| &r.key == key),
-            None if self.roots.len() == 1 => self.roots.first(),
+            Some(Value::String(key)) => keys.iter().find(|k| *k == key),
+            None if keys.len() == 1 => keys.first(),
             _ => None,
-        }
-        .map(|r| r.key.clone());
+        };
         let digest = |key| outcome.as_ref().ok().map(|v| v[key].clone());
         let ids: Vec<&str> = args
             .get("id")
@@ -446,26 +507,76 @@ impl Server {
         if let Some(client) = &caller.client_id {
             line["client_id"] = json!(client);
         }
+        if self.workspace.is_some() {
+            line["sha"] = digest("sha").unwrap_or_default();
+        }
         eprintln!("{line}");
     }
 
-    fn root(&self, args: &Map<String, Value>) -> Result<&Root, ToolError> {
-        match args.get("repository").and_then(Value::as_str) {
-            Some(key) => self.roots.iter().find(|r| r.key == key).ok_or_else(|| {
-                fail(
-                    "repository_not_allowed",
-                    "That repository is not allowlisted.",
-                )
-            }),
-            None if self.roots.len() == 1 => Ok(&self.roots[0]),
-            None => Err(fail(
-                "repository_not_allowed",
-                "Name a repository; this server serves several.",
-            )),
+    /// The key of each repository this server serves.
+    fn keys(&self) -> Vec<String> {
+        match &self.workspace {
+            Some(workspace) => workspace.repos().iter().map(|r| r.key.clone()).collect(),
+            None => self.roots.iter().map(|r| r.key.clone()).collect(),
         }
     }
 
-    fn open(&self, args: &Map<String, Value>) -> Result<Repo<'_>, ToolError> {
+    /// The repository that `args` names. For a repository of the registry, this fetches when
+    /// the TTL has passed and reads the commit of `ref`, or of the default branch.
+    fn root(&self, args: &Map<String, Value>) -> Result<Root, ToolError> {
+        let refuse = |message| Err(fail("repository_not_allowed", message));
+        let keys = self.keys();
+        let key = match args.get("repository").and_then(Value::as_str) {
+            Some(key) if keys.iter().any(|k| k == key) => key,
+            Some(_) => return refuse("That repository is not allowlisted."),
+            None if keys.len() == 1 => keys[0].as_str(),
+            None => return refuse("Name a repository; this server serves several."),
+        };
+        let Some(workspace) = &self.workspace else {
+            return Ok(self.roots.iter().find(|r| r.key == key).unwrap().clone());
+        };
+        let branch = args.get("ref").and_then(Value::as_str);
+        if branch.is_some_and(|branch| !registry::branch_ok(branch)) {
+            return Err(invalid("/ref", "/ref is not a branch name.".into()));
+        }
+        let checkout = workspace.checkout(key, branch).map_err(|refusal| {
+            let (code, message, details) = match refusal {
+                Refusal::UnknownRepository => {
+                    return fail(
+                        "repository_not_allowed",
+                        "That repository is not allowlisted.",
+                    )
+                }
+                Refusal::Unavailable(reason) => (
+                    "repository_unavailable",
+                    "The server has no copy of that repository yet. Try again later.",
+                    json!({"repository": key, "reason": reason}),
+                ),
+                Refusal::RefNotFound => (
+                    "ref_not_found",
+                    "The repository has no branch with that name.",
+                    json!({"repository": key, "ref": branch}),
+                ),
+                Refusal::Git(reason) => (
+                    "io_error",
+                    "Could not read the repository.",
+                    json!({"operation": "read repository", "reason": reason}),
+                ),
+            };
+            ToolError {
+                code,
+                message: message.into(),
+                details,
+            }
+        })?;
+        Ok(Root {
+            key: key.to_owned(),
+            path: checkout.tree.path.clone(),
+            source: Some(checkout),
+        })
+    }
+
+    fn open(&self, args: &Map<String, Value>) -> Result<Repo, ToolError> {
         let root = self.root(args)?;
         let settings = match settings(&root.path) {
             Settings::Ok(settings) => settings,
@@ -482,10 +593,15 @@ impl Server {
             }
         };
         let dir = backlog(&root.path, &settings)?;
+        let prefixes = match self.declared(&root.key) {
+            Some(declared) => declared.to_vec(),
+            None => vec![settings["prefix"].as_str().unwrap_or("ST").to_owned()],
+        };
         Ok(Repo {
             root,
             settings,
             dir,
+            prefixes,
         })
     }
 }
@@ -494,27 +610,38 @@ impl Server {
     /// The stories of every root, when the server has several: the org that links between
     /// repositories resolve in. Each root declares the prefix in its settings. A root with no
     /// story-time settings is not part of the org.
+    ///
+    /// A server with a registry builds the org from it: every registered repository at the
+    /// head of its default branch, with the prefixes that the registry declares. A repository
+    /// that the server cannot read fails the call, because a link into it cannot be checked.
     fn org(&self) -> Result<Option<OrgIndex>, ToolError> {
-        if self.roots.len() < 2 {
+        let keys = self.keys();
+        if keys.len() < 2 && self.workspace.is_none() {
             return Ok(None);
         }
         let mut repos = Vec::new();
-        for root in &self.roots {
-            let named = Map::from_iter([("repository".to_owned(), json!(root.key))]);
+        for key in keys {
+            let named = Map::from_iter([("repository".to_owned(), json!(key))]);
             let repo = match self.open(&named) {
                 Ok(repo) => repo,
                 Err(error) if error.code == "not_configured" => continue,
                 Err(error) => return Err(error),
             };
             let (stories, _) = repo.stories()?;
-            let prefix = repo.settings["prefix"].as_str().unwrap_or("ST");
             repos.push(OrgRepo {
-                key: root.key.clone(),
-                prefixes: vec![prefix.to_owned()],
+                key,
+                prefixes: repo.prefixes,
                 stories,
             });
         }
         Ok(Some(OrgIndex::new(repos)))
+    }
+
+    /// The prefixes that the registry declares for the repository `key`.
+    fn declared(&self, key: &str) -> Option<&[String]> {
+        let repos = self.workspace.as_ref()?.repos();
+        let repo = repos.iter().find(|repo| repo.key == key)?;
+        Some(&repo.prefixes)
     }
 }
 
@@ -624,21 +751,34 @@ fn io_error(operation: &str) -> ToolError {
     }
 }
 
-struct Repo<'a> {
-    root: &'a Root,
+struct Repo {
+    root: Root,
     settings: Value,
     dir: PathBuf,
+    /// The story prefixes of this repository: the ones the registry declares for it, or the
+    /// one prefix of its settings.
+    prefixes: Vec<String>,
 }
 
-impl Repo<'_> {
+impl Repo {
+    /// Adds the commit that a read used to its result: `sha` and `fetched_at`.
+    fn at(&self, mut result: Value) -> Value {
+        if let Some(source) = &self.root.source {
+            result["sha"] = json!(source.sha);
+            result["fetched_at"] = json!(source.fetched_at);
+        }
+        result
+    }
+
     fn check_id(&self, id: &str) -> Result<(), ToolError> {
-        let prefix = self.settings["prefix"].as_str().unwrap_or("ST");
-        if valid_id(id) && id.rsplit_once('-').is_some_and(|(p, _)| p == prefix) {
+        let owned = |(prefix, _): (&str, &str)| self.prefixes.iter().any(|p| p == prefix);
+        if valid_id(id) && id.rsplit_once('-').is_some_and(owned) {
             Ok(())
         } else {
+            let prefixes = self.prefixes.join("- or ");
             Err(fail(
                 "invalid_story_id",
-                &format!("A story id is {prefix}- followed by digits."),
+                &format!("A story id is {prefixes}- followed by digits."),
             ))
         }
     }
@@ -740,13 +880,27 @@ fn summary(story: &Js, digest: Option<&String>) -> Value {
 }
 
 fn story_config(server: &Server, args: &Map<String, Value>) -> Result<Value, ToolError> {
-    let roots: Vec<&Root> = match args.get("repository") {
-        Some(_) => vec![server.root(args)?],
-        None => server.roots.iter().collect(),
+    let roots: Vec<Result<Root, Value>> = match args.get("repository") {
+        Some(_) => vec![Ok(server.root(args)?)],
+        None => server
+            .keys()
+            .into_iter()
+            .map(|key| {
+                let named = Map::from_iter([("repository".to_owned(), json!(key))]);
+                server.root(&named).map_err(
+                    |error| json!({"key": key, "status": "unavailable", "reason": error.message}),
+                )
+            })
+            .collect(),
     };
     let repositories: Vec<Value> = roots
         .into_iter()
-        .map(|root| match settings(&root.path) {
+        .map(|root| {
+            let root = match root {
+                Ok(root) => root,
+                Err(unavailable) => return unavailable,
+            };
+            match settings(&root.path) {
             Settings::Missing => json!({"key": root.key, "status": "not_configured"}),
             Settings::Invalid(reason) => {
                 json!({"key": root.key, "status": "config_invalid", "reason": reason})
@@ -775,6 +929,7 @@ fn story_config(server: &Server, args: &Map<String, Value>) -> Result<Value, Too
                     "definition_of_done": s.get("definitionOfDone").cloned().unwrap_or(json!([])),
                     "tracker_target": if target.is_empty() { Value::Null } else { Value::Object(target) },
                 })
+            }
             }
         })
         .collect();
@@ -888,12 +1043,12 @@ fn story_list(server: &Server, args: &Map<String, Value>) -> Result<Value, ToolE
                 .as_bytes(),
         )
     });
-    Ok(json!({
+    Ok(repo.at(json!({
         "repository": repo.root.key,
         "stories": page.iter().map(|s| summary(s, digests.get(&s.get("id").string()))).collect::<Vec<_>>(),
         "next_cursor": next_cursor,
         "total": matching.len(),
-    }))
+    })))
 }
 
 fn story_show(server: &Server, args: &Map<String, Value>) -> Result<Value, ToolError> {
@@ -921,7 +1076,7 @@ fn story_show(server: &Server, args: &Map<String, Value>) -> Result<Value, ToolE
         .dir
         .strip_prefix(&repo.root.path)
         .unwrap_or(Path::new(""));
-    Ok(json!({
+    Ok(repo.at(json!({
         "repository": repo.root.key,
         "id": id,
         "path": dir.join(format!("{id}.md")).to_string_lossy(),
@@ -929,7 +1084,7 @@ fn story_show(server: &Server, args: &Map<String, Value>) -> Result<Value, ToolE
         "bytes": bytes.len(),
         "frontmatter": frontmatter,
         "sections": sections,
-    }))
+    })))
 }
 
 fn story_lint(server: &Server, args: &Map<String, Value>) -> Result<Value, ToolError> {
@@ -956,6 +1111,7 @@ fn story_lint(server: &Server, args: &Map<String, Value>) -> Result<Value, ToolE
         stories: Some(&all),
         root: Some(&repo.root.path),
         org: org.as_ref(),
+        declared: server.declared(&repo.root.key),
     };
     let (mut errors, mut warnings) = (0, 0);
     let mut results = Vec::new();
@@ -976,12 +1132,12 @@ fn story_lint(server: &Server, args: &Map<String, Value>) -> Result<Value, ToolE
             .collect();
         results.push(json!({"id": story.get("id").string(), "findings": findings}));
     }
-    Ok(json!({
+    Ok(repo.at(json!({
         "repository": repo.root.key,
         "results": results,
         "errors": errors,
         "warnings": warnings,
-    }))
+    })))
 }
 
 /// Fields `story set` refuses, plus the fields only `story push` writes.
@@ -1026,7 +1182,7 @@ fn set_pairs(args: &Map<String, Value>) -> Vec<(String, String)> {
 
 impl Server {
     /// The repository with its write lock held until the returned file drops.
-    fn lock(&self, args: &Map<String, Value>) -> Result<(Repo<'_>, fs::File), ToolError> {
+    fn lock(&self, args: &Map<String, Value>) -> Result<(Repo, fs::File), ToolError> {
         let repo = self.open(args)?;
         let lock = wait_for_lock(&repo.root.path).map_err(|e| match e {
             TryLockError::WouldBlock => fail(
@@ -1039,7 +1195,7 @@ impl Server {
     }
 }
 
-impl Repo<'_> {
+impl Repo {
     fn save(&self, story: &Js) -> Result<String, ToolError> {
         list::save(&self.dir, story).map_err(|_| io_error("write story file"))?;
         Ok(sha(lenient_story::serialize(story).as_bytes()))
@@ -1230,6 +1386,13 @@ fn story_note(server: &Server, args: &Map<String, Value>) -> Result<Value, ToolE
         Vec::new(),
         Some(line),
     ))
+}
+
+/// The state of each repository of the registry. It reads the last known state and does not
+/// fetch, so it answers while a repository is being cloned.
+fn story_repos(server: &Server, _: &Map<String, Value>) -> Result<Value, ToolError> {
+    let states = server.workspace.as_ref().map(|w| w.states());
+    Ok(json!({ "repositories": states.unwrap_or_default() }))
 }
 
 fn story_create(server: &Server, args: &Map<String, Value>) -> Result<Value, ToolError> {
@@ -1574,7 +1737,27 @@ const TOOLS: [Tool; 7] = [
     },
 ];
 
+/// The tool that only a server with a registry has.
+const REGISTRY_TOOLS: [Tool; 1] = [Tool {
+    name: "story_repos",
+    hints: READ,
+    description: "Each registered repository: its story prefixes, the commit the server holds, when the server last fetched it, and whether the server can read it.",
+    fields: &[],
+    required: &[],
+    output: repos_schema,
+    run: story_repos,
+}];
+
+/// The branch name that a read tool of a registry server takes in place of the default branch.
+const REF: Kind = Kind::Text(200);
+
 impl Tool {
+    /// Whether this tool reads the story files of one commit of a registered repository. Such
+    /// a tool takes `ref` and names the commit in its result.
+    fn at_commit(&self) -> bool {
+        matches!(self.name, "story_list" | "story_show" | "story_lint")
+    }
+
     /// The scope a hosted client needs for this tool.
     fn scope(&self) -> Scope {
         if self.hints.read_only {
@@ -1584,12 +1767,29 @@ impl Tool {
         }
     }
 
-    fn describe(&self) -> Value {
-        let properties: Map<String, Value> = self
+    /// The tool as `tools/list` shows it. A server with a registry adds the fields that only
+    /// it has, so the tools of a local server keep their schemas.
+    fn describe(&self, registry: bool) -> Value {
+        let mut properties: Map<String, Value> = self
             .fields
             .iter()
             .map(|f| (f.name.to_owned(), f.kind.schema()))
             .collect();
+        let mut output = (self.output)();
+        if registry && self.at_commit() {
+            properties.insert("ref".into(), REF.schema());
+            for key in ["sha", "fetched_at"] {
+                output["properties"][key] = json!({"type": "string"});
+                output["required"].as_array_mut().unwrap().push(json!(key));
+            }
+        }
+        if registry && self.name == "story_config" {
+            let entry = &mut output["properties"]["repositories"]["items"]["properties"];
+            entry["status"]["enum"]
+                .as_array_mut()
+                .unwrap()
+                .push(json!("unavailable"));
+        }
         json!({
             "name": self.name,
             "description": self.description,
@@ -1599,7 +1799,7 @@ impl Tool {
                 "properties": properties,
                 "required": self.required,
             },
-            "outputSchema": (self.output)(),
+            "outputSchema": output,
             "annotations": {
                 "readOnlyHint": self.hints.read_only,
                 "destructiveHint": self.hints.destructive,
@@ -1614,6 +1814,9 @@ impl Tool {
             let pointer = format!("/{}", key.replace('~', "~0").replace('/', "~1"));
             match self.fields.iter().find(|f| f.name == key) {
                 Some(field) => field.kind.check(value, &pointer)?,
+                None if key == "ref" && server.workspace.is_some() && self.at_commit() => {
+                    REF.check(value, &pointer)?
+                }
                 None => return Err(invalid(&pointer, format!("Unknown argument {pointer}."))),
             }
         }
@@ -1790,6 +1993,32 @@ fn show_schema() -> Value {
     ))
 }
 
+fn repos_schema() -> Value {
+    let nullable_text = json!({"type": ["string", "null"]});
+    let entry = object(
+        &[
+            "key",
+            "prefixes",
+            "sha",
+            "fetched_at",
+            "state",
+            "last_error",
+        ],
+        json!({
+            "key": {"type": "string"},
+            "prefixes": texts(),
+            "sha": nullable_text,
+            "fetched_at": nullable_text,
+            "state": {"enum": ["ready", "cloning", "unavailable"]},
+            "last_error": nullable_text,
+        }),
+    );
+    with_redactions(object(
+        &["repositories"],
+        json!({"repositories": {"type": "array", "items": entry}}),
+    ))
+}
+
 fn lint_schema() -> Value {
     let finding = object(
         &["rule", "severity", "message"],
@@ -1815,10 +2044,12 @@ fn lint_schema() -> Value {
 }
 
 /// Replaces token-shaped strings, and the value of each tracker or Jev token variable that is
-/// set and at least 8 bytes long, with `[redacted]` in every string of a tool result.
+/// set and at least 8 bytes long, with `[redacted]` in every string of a tool result. `live`
+/// holds the secrets that arrive while the server runs: the installation tokens.
 struct Redactor {
     pattern: Regex,
     values: Vec<String>,
+    live: workspace::Secrets,
 }
 impl Redactor {
     fn from_env() -> Self {
@@ -1832,14 +2063,20 @@ impl Redactor {
                 .filter_map(|name| std::env::var(name).ok())
                 .filter(|value| value.len() >= 8)
                 .collect(),
+            live: Default::default(),
         }
     }
 
     fn redact(&self, value: &mut Value) -> usize {
+        let live = self.live.read().unwrap_or_else(|e| e.into_inner()).clone();
+        self.redact_with(&live, value)
+    }
+
+    fn redact_with(&self, live: &[String], value: &mut Value) -> usize {
         match value {
             Value::String(text) => {
                 let mut count = 0;
-                for secret in &self.values {
+                for secret in self.values.iter().chain(live) {
                     let found = text.matches(secret.as_str()).count();
                     if found > 0 {
                         count += found;
@@ -1853,14 +2090,15 @@ impl Redactor {
                 }
                 count
             }
-            Value::Array(items) => items.iter_mut().map(|v| self.redact(v)).sum(),
+            Value::Array(items) => items.iter_mut().map(|v| self.redact_with(live, v)).sum(),
             Value::Object(map) => {
                 let mut count = 0;
                 *map = std::mem::take(map)
                     .into_iter()
                     .map(|(key, mut item)| {
                         let mut key = Value::String(key);
-                        count += self.redact(&mut key) + self.redact(&mut item);
+                        count +=
+                            self.redact_with(live, &mut key) + self.redact_with(live, &mut item);
                         (key.as_str().unwrap_or_default().to_owned(), item)
                     })
                     .collect();

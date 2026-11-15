@@ -48,6 +48,8 @@ pub(crate) struct Context<'a> {
     pub(crate) stories: Option<&'a [Js]>,
     pub(crate) root: Option<&'a Path>,
     pub(crate) org: Option<&'a OrgIndex>,
+    /// The story prefixes that the registry of a hosted server declares for this repository.
+    pub(crate) declared: Option<&'a [String]>,
 }
 
 type Found = Result<Vec<(Severity, String)>, String>;
@@ -58,7 +60,7 @@ struct Rule {
     check: fn(&Js, &Context) -> Found,
 }
 
-const RULES: [Rule; 19] = [
+const RULES: [Rule; 20] = [
     rule("title.present", "N", title_present),
     rule("statement.format", "V", statement_format),
     rule("statement.benefit", "V", statement_benefit),
@@ -78,6 +80,7 @@ const RULES: [Rule; 19] = [
     ),
     rule("links.ambiguous", "I", links_ambiguous),
     rule("links.prose_mention", "I", links_prose_mention),
+    rule("links.undeclared_prefix", "I", links_undeclared_prefix),
     rule("spike.timebox", "E", spike_timebox),
     rule("spike.question", "T", spike_question),
     rule("spike.unblocks", "V", spike_unblocks),
@@ -575,6 +578,25 @@ fn links_prose_mention(s: &Js, ctx: &Context) -> Found {
         .collect())
 }
 
+/// A hosted server resolves a link through the prefix that each repository declares in the
+/// registry. A story whose prefix its own repository does not declare cannot be the target of
+/// a link, so it is an error.
+fn links_undeclared_prefix(s: &Js, ctx: &Context) -> Found {
+    let (Some(declared), Js::Str(id)) = (ctx.declared, s.get("id")) else {
+        return Ok(Vec::new());
+    };
+    match prefix_of(id) {
+        Some(prefix) if !declared.iter().any(|d| d == prefix) => Ok(vec![(
+            Severity::Error,
+            format!(
+                "{id} has the prefix {prefix}, but the registry declares only {} for this repository. Add the prefix to the registry entry or give the story a declared prefix.",
+                declared.join(", ")
+            ),
+        )]),
+        _ => Ok(Vec::new()),
+    }
+}
+
 fn spike_timebox(s: &Js, _: &Context) -> Found {
     if is_spike(s) && !truthy(s.get("timebox")) {
         return err("Spike has no timebox (e.g. timebox: 2d).");
@@ -711,6 +733,7 @@ pub fn run(args: &[String]) -> Result<(String, u8), Failure> {
         stories: Some(&all),
         root: Some(&loaded.root),
         org: None,
+        declared: None,
     };
     let mut results = Vec::new();
     for story in &targets {

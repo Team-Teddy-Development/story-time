@@ -62,6 +62,9 @@ so it reports such a link as the warning `independent.foreign_unresolved`.
   the id. Each repository declares the `prefix` in its settings.
 - `links.prose_mention` is a warning when the text names a story of another
   repository that no link field lists.
+- `links.undeclared_prefix` is an error on a hosted server (`story mcp --http
+  --registry`) when the registry does not declare the prefix of the story for
+  its repository. The registry declares the prefixes there, not the settings.
 - A spike is unblocked when a story of any repository lists it.
 
 Spikes replace `## Story` / `## Acceptance Criteria` with `## Question` and

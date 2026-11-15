@@ -47,3 +47,10 @@ jobs:
       - run: cargo fmt --manifest-path native/story-push/Cargo.toml --check
       - run: cargo clippy --manifest-path native/story-push/Cargo.toml --locked --all-targets -- -D warnings
       - run: cargo test --manifest-path native/story-push/Cargo.toml --locked
+  image:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      # The image is built to check the Dockerfile. It is not pushed.
+      - run: docker build -f native/story-push/Dockerfile -t story-time:ci .
+      - run: docker run --rm --entrypoint story story-time:ci help

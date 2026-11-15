@@ -413,6 +413,45 @@ For Codex, keep the token in an environment variable and name that variable:
 codex mcp add story-time-hosted --url <url>/mcp --bearer-token-env-var STORY_TIME_TOKEN
 ```
 
+### Hosted repositories: the registry
+
+With `--registry`, the HTTP server needs no checkout. It keeps a bare clone of each registered repository under `--data` (default `/data`) and reads stories from it:
+
+```bash
+story mcp --http 0.0.0.0:8080 --registry <registry.toml> --data <dir> --clients <clients.toml> \
+  [--github-app-id-file <file> --github-app-key-file <file>]
+```
+
+```toml
+org = "varsity"
+fetch_ttl_seconds = 30          # optional; 30 is the default
+[[repo]]
+key = "varsity-core"
+clone = "https://github.com/Varsity-Engine/varsity-core.git"
+forge = "github"                # the only forge this server serves
+default_branch = "main"         # optional; the default is the HEAD of the remote
+prefixes = ["VC", "ST"]         # every story prefix of this repository
+[[repo]]
+key = "varsity-web"
+clone = "https://github.com/Varsity-Engine/varsity-web.git"
+forge = "github"
+prefixes = ["VE"]
+```
+
+The server refuses to start when an entry names `forge = "gitea"`, when two entries declare one prefix, or when it cannot write the data directory. What a client sees:
+
+- A read fetches the repository when its last fetch is older than `fetch_ttl_seconds`. `story_list`, `story_show`, and `story_lint` name the commit they read in `sha` and the time of the fetch in `fetched_at`.
+- The same three tools take `ref`, the name of a branch, and read the head of that branch.
+- `story_repos` lists each repository with its `state`: `ready`, `cloning`, or `unavailable` with `last_error`.
+- A repository that the server cannot reach returns the retryable error `repository_unavailable`. The other repositories keep working, and `/readyz` stays 200.
+- `story_lint` checks links across every registered repository, and reports `links.undeclared_prefix` for a story whose prefix the registry does not declare for its repository.
+
+A registry server has no write tool.
+
+For private repositories, make a GitHub App with the permissions Contents: read and Metadata: read, install it on each repository, and give the server the App ID and the private key as two files. The server signs a 10-minute JWT with the key and exchanges it for an installation token of one repository. It gives that token to `git` only in the environment of the `git` process: the token is not in a URL, an argument, a file, a log line, or a tool result. The server sends the token only to an `https` URL.
+
+`story mcp probe --url http://127.0.0.1:8080/readyz` exits 0 when the server answers. Use it for a container probe. The image and its build are in [docs/runbooks/story-time-image.md](docs/runbooks/story-time-image.md).
+
 ## The backlog
 
 Stories are markdown files in `./backlog/` of the project you're planning,
