@@ -51,6 +51,8 @@ pub(super) struct Workspace {
     proposals: Mutex<HashMap<(usize, String), Proposal>>,
     /// The forge token that each repository last used, which leaves `Secrets` when replaced.
     forge_tokens: Vec<Mutex<Option<String>>>,
+    /// The login and the numeric user id of the App's bot. They are read once.
+    bot: Mutex<Option<(String, u64)>>,
     /// What `story_repos` reports. It is apart from the slot, so that the report does not wait
     /// for a fetch that holds the slot.
     status: Vec<Mutex<Status>>,
@@ -252,6 +254,7 @@ impl Workspace {
             writes: registry.repos.iter().map(|_| Mutex::default()).collect(),
             forge_tokens: registry.repos.iter().map(|_| Mutex::default()).collect(),
             proposals: Mutex::default(),
+            bot: Mutex::default(),
             registry,
             data,
             app,
@@ -675,6 +678,36 @@ impl Workspace {
             *last = Some(token.clone());
         }
         Ok(forge::Access { owner, name, token })
+    }
+
+    /// Calls the forge for the repository `key`, with its token.
+    pub(super) fn forge<T>(
+        &self,
+        key: &str,
+        call: impl FnOnce(&GitHub, &forge::Access) -> Result<T, String>,
+    ) -> Result<T, String> {
+        let index = self.index(key).ok_or("the repository is not registered")?;
+        let forge = self.forge.as_ref().ok_or("the server has no GitHub App")?;
+        call(forge, &self.forge_access(index)?)
+    }
+
+    /// The owner and name of the repository `key` at the forge.
+    pub(super) fn forge_repository(&self, key: &str) -> Result<(String, String), String> {
+        let index = self.index(key).ok_or("the repository is not registered")?;
+        forge_auth::repository(&self.registry.repos[index].clone)
+    }
+
+    /// The login and the numeric user id of the App's bot, asked of the forge once.
+    pub(super) fn bot(&self, key: &str) -> Result<(String, u64), String> {
+        let mut bot = self.bot.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some(known) = bot.as_ref() {
+            return Ok(known.clone());
+        }
+        let app = self.app.as_ref().ok_or("the server has no GitHub App")?;
+        let login = app.bot();
+        let id = self.forge(key, |forge, access| forge.user_id(access, &login))?;
+        *bot = Some((login.clone(), id));
+        Ok((login, id))
     }
 
     /// The open pull request of `branch` in `key`: the head of the branch and the URL. `None`
