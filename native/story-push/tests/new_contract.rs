@@ -68,6 +68,7 @@ impl Sandbox {
         let mut cmd = Command::new("git");
         cmd.arg("-C")
             .arg(&self.template)
+            .args(["-c", "maintenance.auto=false"])
             .env("GIT_CONFIG_NOSYSTEM", "1")
             .env("GIT_CONFIG_GLOBAL", "/dev/null")
             .env("GIT_AUTHOR_NAME", "Fixture")
