@@ -580,6 +580,100 @@ fn a_fetch_is_tried_again_when_the_forge_name_does_not_resolve() {
     );
 }
 
+/// ST-155 (VM-034): a `git` that fails each fetch with the resolver text while the file
+/// `down` exists in its directory, which this returns with the PATH for the server.
+fn git_down_while_flagged(fixture: &Fixture) -> (std::ffi::OsString, PathBuf) {
+    use std::os::unix::fs::PermissionsExt;
+    let found = Command::new("sh")
+        .args(["-c", "command -v git"])
+        .output()
+        .unwrap();
+    let real = String::from_utf8(found.stdout).unwrap().trim().to_owned();
+    let bin = fixture.base.join("switch");
+    fs::create_dir_all(&bin).unwrap();
+    let down = bin.join("down");
+    let script = format!(
+        "#!/bin/sh\ncase \" $* \" in *\" fetch \"*)\n  if [ -e '{down}' ]; then\n    echo \"fatal: unable to access 'https://github.com/o/r.git/': Could not resolve host: github.com\" >&2\n    exit 128\n  fi;;\nesac\nexec '{real}' \"$@\"\n",
+        down = down.display()
+    );
+    fs::write(bin.join("git"), script).unwrap();
+    fs::set_permissions(bin.join("git"), fs::Permissions::from_mode(0o755)).unwrap();
+    let mut path = bin.into_os_string();
+    path.push(":");
+    path.push(std::env::var_os("PATH").unwrap_or_default());
+    (path, down)
+}
+
+#[test]
+fn a_failed_fetch_is_stale_until_the_background_fetch_works() {
+    let fixture = Fixture::new();
+    let (path, down) = git_down_while_flagged(&fixture);
+    let server = fixture.serve_on(&fixture.registry(""), &[], Some(&path));
+    let core = |server: &Http| {
+        server.ok("story_repos", json!({}))["repositories"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|repo| repo["key"] == "core")
+            .unwrap()
+            .clone()
+    };
+    // story_repos does not fetch, so each change below is the work of the background fetch.
+    let until = |server: &Http, state: &str| -> Value {
+        let deadline = std::time::Instant::now() + Duration::from_secs(4 * TTL + 60);
+        loop {
+            let entry = core(server);
+            if entry["state"] == state {
+                return entry;
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "core never became {state}: {entry}"
+            );
+            std::thread::sleep(Duration::from_millis(200));
+        }
+    };
+
+    let good = until(&server, "ready");
+    assert_eq!(good["sha"], fixture.head("core", "main").as_str());
+    assert!(good["last_error"].is_null(), "{good}");
+
+    fs::write(&down, "").unwrap();
+    let stale = until(&server, "stale");
+    assert_eq!(
+        stale["sha"], good["sha"],
+        "the last good fetch still serves reads"
+    );
+    assert!(
+        stale["last_error"]
+            .as_str()
+            .is_some_and(|e| e.contains("Could not resolve host")),
+        "{stale}"
+    );
+    let schema = server
+        .tools(READER)
+        .into_iter()
+        .find(|tool| tool["name"] == "story_repos")
+        .unwrap();
+    let states = &schema["outputSchema"]["properties"]["repositories"]["items"]["properties"]
+        ["state"]["enum"];
+    assert!(
+        states.as_array().unwrap().contains(&json!("stale")),
+        "{states}"
+    );
+
+    fixture.write(
+        "core",
+        "backlog/VC-110.md",
+        &story("VC-110", "Roster export", "depends_on: []\n"),
+    );
+    let moved = fixture.commit("core", "second");
+    fs::remove_file(&down).unwrap();
+    let back = until(&server, "ready");
+    assert!(back["last_error"].is_null(), "{back}");
+    assert_eq!(back["sha"], moved.as_str());
+}
+
 #[test]
 fn a_registry_with_an_unknown_forge_plain_http_or_a_repeated_prefix_is_refused_at_start() {
     let fixture = Fixture::new();

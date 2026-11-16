@@ -94,7 +94,7 @@ pub fn run(args: &[String]) -> Result<(String, u8), Failure> {
     }
     let (roots, write) = roots(&args, workspace.is_some())?;
     if let Some(workspace) = workspace.clone() {
-        std::thread::spawn(move || workspace.warm());
+        std::thread::spawn(move || workspace.keep_fetched());
     }
     let server = Server {
         roots,
@@ -2232,7 +2232,7 @@ fn repos_schema() -> Value {
             "forge": {"enum": ["github", "gitea"]},
             "sha": nullable_text,
             "fetched_at": nullable_text,
-            "state": {"enum": ["ready", "cloning", "unavailable"]},
+            "state": {"enum": ["ready", "stale", "cloning", "unavailable"]},
             "last_error": nullable_text,
         }),
     );

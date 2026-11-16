@@ -543,11 +543,16 @@ impl Workspace {
         }
     }
 
-    /// Fetches every repository once, so that the first read does not wait for a clone.
-    pub(super) fn warm(&self) {
-        for index in 0..self.slots.len() {
-            let mut slot = self.slots[index].lock().unwrap_or_else(|e| e.into_inner());
-            self.refresh(index, &mut slot);
+    /// Fetches every repository at start, so that the first read does not wait for a clone,
+    /// and again each TTL, so that a failed fetch does not wait for a read to be tried again.
+    pub(super) fn keep_fetched(&self) -> ! {
+        let ttl = Duration::from_secs(self.registry.fetch_ttl_seconds);
+        loop {
+            for index in 0..self.slots.len() {
+                let mut slot = self.slots[index].lock().unwrap_or_else(|e| e.into_inner());
+                self.refresh(index, &mut slot);
+            }
+            std::thread::sleep(ttl);
         }
     }
 
@@ -570,10 +575,12 @@ impl Workspace {
         let repo = &self.registry.repos[index];
         let branch = slot.default_branch.as_deref().filter(|_| slot.cloned);
         let status = Status {
-            state: match (slot.cloned, slot.tried) {
-                (true, _) => "ready",
-                (false, None) => "cloning",
-                (false, Some(_)) => "unavailable",
+            state: match (slot.cloned, slot.tried, &slot.last_error) {
+                // Reads still serve the commit of the last fetch that worked.
+                (true, _, Some(_)) => "stale",
+                (true, _, None) => "ready",
+                (false, None, _) => "cloning",
+                (false, Some(_), _) => "unavailable",
             },
             sha: branch.and_then(|branch| self.head(repo, branch)),
             fetched_at: slot.fetched_at.clone().filter(|_| slot.cloned),
