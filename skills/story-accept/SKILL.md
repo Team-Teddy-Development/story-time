@@ -1,6 +1,6 @@
 ---
 name: story-accept
-description: Verify a finished story against each acceptance criterion and the Definition of Done with concrete evidence (tests, demo, PR), then accept it as done or reject it back with specific gaps; new scope found along the way becomes new stories. Use when the user says "is ST-xxx done?", "accept this story", "close the story", "review against the ACs", or when a story's PR merges.
+description: Verify a finished story against each acceptance criterion and the Definition of Done with concrete evidence (tests, demo, PR), then accept it as done or reject it back with specific gaps; new scope found along the way becomes new stories. Use when the user says "is ST-xxx done?", "accept this story", "close the story", "review against the ACs", or before requesting merge of a story's PR, so the PR carries the done card.
 ---
 
 # Story Accept

@@ -24,7 +24,8 @@ enum Backend {
     Github {
         repo: String,
         cli: Cli,
-        labels: HashSet<String>,
+        /// Label names in the repository, listed once per process.
+        labels: Option<HashSet<String>>,
     },
     Ado {
         organization: String,
@@ -37,7 +38,70 @@ enum Backend {
 
 const TRACKER_CLI_TIMEOUT: Duration = Duration::from_secs(120);
 
-struct Cli {
+/// Whether a failed tracker call can succeed on a later run.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ErrorKind {
+    /// A timeout, rate limit, server error, network or authentication failure.
+    Retryable,
+    /// A missing or transferred issue, or a request that can never succeed.
+    Permanent,
+}
+
+/// A tracker failure with its kind. `message` never contains tracker CLI output.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TrackerError {
+    pub kind: ErrorKind,
+    pub message: String,
+}
+impl TrackerError {
+    pub(crate) fn permanent(message: impl Into<String>) -> Self {
+        Self {
+            kind: ErrorKind::Permanent,
+            message: message.into(),
+        }
+    }
+    fn retryable(message: impl Into<String>) -> Self {
+        Self {
+            kind: ErrorKind::Retryable,
+            message: message.into(),
+        }
+    }
+}
+impl From<TrackerError> for String {
+    fn from(error: TrackerError) -> Self {
+        error.message
+    }
+}
+/// Errors that do not come from a tracker call (for example a malformed answer) fail the run
+/// so that a later run covers the same range again.
+impl From<String> for TrackerError {
+    fn from(message: String) -> Self {
+        Self::retryable(message)
+    }
+}
+
+/// The kind of a failed tracker CLI call, read from its stderr. The stderr itself is never kept.
+fn classify(stderr: &str) -> ErrorKind {
+    let server_error = stderr.match_indices("HTTP 5").any(|(i, _)| {
+        let digits = &stderr.as_bytes()[i + 6..];
+        digits.len() >= 2 && digits[0].is_ascii_digit() && digits[1].is_ascii_digit()
+    });
+    if stderr.contains("HTTP 429")
+        || stderr.to_ascii_lowercase().contains("rate limit")
+        || server_error
+    {
+        ErrorKind::Retryable
+    } else if stderr.contains("HTTP 404")
+        || stderr.contains("HTTP 410")
+        || stderr.contains("Could not resolve to an issue")
+    {
+        ErrorKind::Permanent
+    } else {
+        ErrorKind::Retryable
+    }
+}
+
+pub(crate) struct Cli {
     program: PathBuf,
     root: PathBuf,
     token: Option<(String, String)>,
@@ -45,7 +109,23 @@ struct Cli {
 }
 
 impl Cli {
-    fn run(&self, args: &[String], input: Option<&str>) -> Result<String, String> {
+    /// A `gh` CLI for read-only checks. It inherits `GH_TOKEN` from the environment.
+    pub(crate) fn gh(root: &Path) -> Cli {
+        Cli {
+            program: PathBuf::from("gh"),
+            root: root.to_path_buf(),
+            token: None,
+            timeout: TRACKER_CLI_TIMEOUT,
+        }
+    }
+    pub(crate) fn run(&self, args: &[String], input: Option<&str>) -> Result<String, String> {
+        self.run_classified(args, input).map_err(|e| e.message)
+    }
+    pub(crate) fn run_classified(
+        &self,
+        args: &[String],
+        input: Option<&str>,
+    ) -> Result<String, TrackerError> {
         let mut command = Command::new(&self.program);
         command
             .args(args)
@@ -60,9 +140,9 @@ impl Cli {
         if let Some((name, value)) = &self.token {
             command.env(name, value);
         }
-        let mut child = command
-            .spawn()
-            .map_err(|_| "Tracker CLI could not start; check its installation.".to_string())?;
+        let mut child = command.spawn().map_err(|_| {
+            TrackerError::retryable("Tracker CLI could not start; check its installation.")
+        })?;
         let writer = match (input, child.stdin.take()) {
             (Some(text), Some(mut stdin)) => {
                 let text = text.to_owned();
@@ -109,13 +189,13 @@ impl Cli {
                     let command: Vec<&str> = std::iter::once(program.as_str())
                         .chain(args.iter().take(2).map(String::as_str))
                         .collect();
-                    return Err(format!(
+                    return Err(TrackerError::retryable(format!(
                         "Tracker CLI `{}` timed out after {}s and was stopped.",
                         command.join(" "),
                         self.timeout.as_secs()
-                    ));
+                    )));
                 }
-                Err(_) => return Err("Tracker CLI could not be read.".to_string()),
+                Err(_) => return Err(TrackerError::retryable("Tracker CLI could not be read.")),
             }
         };
         let out = std::process::Output {
@@ -125,16 +205,21 @@ impl Cli {
         };
         let write_result = writer.map_or(Ok(()), |w| w.join().unwrap_or(Ok(())));
         if !out.status.success() {
-            return Err(format!(
-                "Tracker CLI failed (exit {}). Check tracker authentication and repository access.",
-                out.status
-                    .code()
-                    .map(|n| n.to_string())
-                    .unwrap_or_else(|| "signal".into())
-            ));
+            return Err(TrackerError {
+                kind: classify(&String::from_utf8_lossy(&out.stderr)),
+                message: format!(
+                    "Tracker CLI failed (exit {}). Check tracker authentication and repository access.",
+                    out.status
+                        .code()
+                        .map(|n| n.to_string())
+                        .unwrap_or_else(|| "signal".into())
+                ),
+            });
         }
-        write_result.map_err(|_| "Tracker CLI did not accept its input.".to_string())?;
-        String::from_utf8(out.stdout).map_err(|_| "Tracker CLI returned invalid UTF-8.".to_string())
+        write_result
+            .map_err(|_| TrackerError::retryable("Tracker CLI did not accept its input."))?;
+        String::from_utf8(out.stdout)
+            .map_err(|_| TrackerError::retryable("Tracker CLI returned invalid UTF-8."))
     }
 }
 
@@ -177,7 +262,7 @@ impl Gateway {
                 Backend::Github {
                     repo: repo.into(),
                     cli: cli("gh"),
-                    labels: HashSet::new(),
+                    labels: None,
                 }
             }
             "ado" => {
@@ -469,50 +554,7 @@ impl Gateway {
         let card = crate::story::tracker_card(story, self.tracker(), &self.config)?;
         match &mut self.backend {
             Backend::Github { repo, cli, labels } => {
-                let current = parse_json(&cli.run(
-                    &strings(&[
-                        "issue",
-                        "view",
-                        &id,
-                        "--repo",
-                        repo,
-                        "--json",
-                        "labels,state",
-                    ]),
-                    None,
-                )?)?;
-                let current_labels = named_labels(&current)?;
-                let state = required(&current, "state")?;
-                if !["OPEN", "CLOSED"].contains(&state) {
-                    return Err("GitHub returned an invalid issue state.".into());
-                }
-                let names = card_labels(&card)?;
-                ensure_github_labels(cli, repo, labels, &names)?;
-                let mut args = strings(&[
-                    "issue",
-                    "edit",
-                    &id,
-                    "--repo",
-                    repo,
-                    "--title",
-                    required(&card, "title")?,
-                    "--body-file",
-                    "-",
-                ]);
-                for name in &names {
-                    args.extend(strings(&["--add-label", name]));
-                }
-                for name in current_labels {
-                    if managed(&name, false) && !names.contains(&name) {
-                        args.extend(strings(&["--remove-label", &name]));
-                    }
-                }
-                cli.run(&args, Some(required(&card, "body")?))?;
-                github_state(cli, repo, &id, closing(story), state)?;
-                Ok(Remote {
-                    url: format!("https://github.com/{repo}/issues/{id}"),
-                    remote_id: id,
-                })
+                Ok(github_update(cli, repo, labels, &id, &card, story)?)
             }
             Backend::Ado {
                 organization,
@@ -883,16 +925,54 @@ fn gitea_labels(card: &Value, story: &Value) -> Result<Vec<String>, String> {
     }
     Ok(names)
 }
+/// The fixed color for a label that story-time creates, by label family.
+fn github_label_color(name: &str) -> &'static str {
+    match name.split_once(':').map(|(family, _)| family) {
+        Some("size") => "c5def5",
+        Some("value") => "fbca04",
+        Some("epic") => "5319e7",
+        _ if ["story", "spike", "bug", "chore"].contains(&name) => "0e8a16",
+        _ => "ededed",
+    }
+}
+/// Creates only the labels the repository lacks. An existing label is never
+/// edited, so its color stays as the team set it.
 fn ensure_github_labels(
     cli: &Cli,
     repo: &str,
-    known: &mut HashSet<String>,
+    known: &mut Option<HashSet<String>>,
     names: &[String],
-) -> Result<(), String> {
+) -> Result<(), TrackerError> {
+    let known = match known {
+        Some(known) => known,
+        None => {
+            let out = cli.run_classified(
+                &strings(&[
+                    "label", "list", "--repo", repo, "--limit", "1000", "--json", "name",
+                ]),
+                None,
+            )?;
+            let listed: Value = serde_json::from_str(&out)
+                .map_err(|_| "Tracker returned invalid label list.".to_string())?;
+            known.insert(
+                named_labels(&json!({ "labels": listed }))?
+                    .into_iter()
+                    .collect(),
+            )
+        }
+    };
     for name in names {
         if !known.contains(name) {
-            cli.run(
-                &strings(&["label", "create", name, "--repo", repo, "--force"]),
+            cli.run_classified(
+                &strings(&[
+                    "label",
+                    "create",
+                    name,
+                    "--repo",
+                    repo,
+                    "--color",
+                    github_label_color(name),
+                ]),
                 None,
             )?;
             known.insert(name.clone());
@@ -900,6 +980,248 @@ fn ensure_github_labels(
     }
     Ok(())
 }
+/// Mirrors a card to its GitHub issue: title, body, managed labels, then open or closed state.
+fn github_update(
+    cli: &Cli,
+    repo: &str,
+    labels: &mut Option<HashSet<String>>,
+    id: &str,
+    card: &Value,
+    story: &Value,
+) -> Result<Remote, TrackerError> {
+    let current = parse_json(&cli.run_classified(
+        &strings(&[
+            "issue",
+            "view",
+            id,
+            "--repo",
+            repo,
+            "--json",
+            "labels,state,url",
+        ]),
+        None,
+    )?)?;
+    if let Some(url) = current["url"].as_str() {
+        let expected = format!("https://github.com/{repo}/issues/");
+        if !url
+            .to_ascii_lowercase()
+            .starts_with(&expected.to_ascii_lowercase())
+        {
+            return Err(TrackerError::permanent(format!(
+                "Issue {id} was transferred out of {repo}."
+            )));
+        }
+    }
+    let current_labels = named_labels(&current)?;
+    let state = required(&current, "state")?;
+    if !["OPEN", "CLOSED"].contains(&state) {
+        return Err(TrackerError::retryable(
+            "GitHub returned an invalid issue state.",
+        ));
+    }
+    let names = card_labels(card).map_err(TrackerError::permanent)?;
+    ensure_github_labels(cli, repo, labels, &names)?;
+    let title = required(card, "title").map_err(TrackerError::permanent)?;
+    let mut args = strings(&[
+        "issue",
+        "edit",
+        id,
+        "--repo",
+        repo,
+        "--title",
+        title,
+        "--body-file",
+        "-",
+    ]);
+    for name in &names {
+        args.extend(strings(&["--add-label", name]));
+    }
+    for name in current_labels {
+        if managed(&name, false) && !names.contains(&name) {
+            args.extend(strings(&["--remove-label", &name]));
+        }
+    }
+    let body = required(card, "body").map_err(TrackerError::permanent)?;
+    cli.run_classified(&args, Some(body))?;
+    github_state(cli, repo, id, closing(story), state)?;
+    Ok(Remote {
+        url: format!("https://github.com/{repo}/issues/{id}"),
+        remote_id: id.to_string(),
+    })
+}
+
+/// One pull request that GitHub lists for a commit.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct MergedPull {
+    pub(crate) number: u64,
+    pub(crate) body: String,
+    pub(crate) base: String,
+    pub(crate) merged: bool,
+    pub(crate) merge_commit_sha: Option<String>,
+}
+
+/// Whether `comment_once` posted a comment or found one with its marker.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CommentOutcome {
+    Posted,
+    Existing,
+}
+
+/// The numeric user ID of `github-actions[bot]`, the author of `GITHUB_TOKEN` comments.
+pub(crate) const ACTIONS_BOT_ID: u64 = 41898282;
+
+impl Gateway {
+    fn github_parts(&mut self) -> Result<(&str, &Cli, &mut Option<HashSet<String>>), TrackerError> {
+        match &mut self.backend {
+            Backend::Github { repo, cli, labels } => Ok((repo.as_str(), &*cli, labels)),
+            _ => Err(TrackerError::permanent("unsupported tracker")),
+        }
+    }
+
+    /// The configured GitHub repository, `owner/name`.
+    pub(crate) fn github_repo(&self) -> Option<&str> {
+        match &self.backend {
+            Backend::Github { repo, .. } => Some(repo),
+            _ => None,
+        }
+    }
+
+    /// `update` with a classified error, for `sync-merge`.
+    pub(crate) fn update_classified(&mut self, story: &Value) -> Result<Remote, TrackerError> {
+        let id = value_id(&story["remote"]).map_err(|_| {
+            TrackerError::permanent("Story has no valid positive numeric remote item to update.")
+        })?;
+        let card = crate::story::tracker_card(story, self.tracker(), &self.config)
+            .map_err(TrackerError::permanent)?;
+        let (repo, cli, labels) = self.github_parts()?;
+        let repo = repo.to_string();
+        github_update(cli, &repo, labels, &id, &card, story)
+    }
+
+    /// The head commit of the last successful push-triggered run of `workflow` on `branch`.
+    pub(crate) fn last_success(
+        &mut self,
+        workflow: &str,
+        branch: &str,
+    ) -> Result<Option<String>, TrackerError> {
+        let (repo, cli, _) = self.github_parts()?;
+        let out = cli.run_classified(
+            &strings(&[
+                "run",
+                "list",
+                "--repo",
+                repo,
+                "--workflow",
+                workflow,
+                "--branch",
+                branch,
+                "--event",
+                "push",
+                "--status",
+                "success",
+                "--limit",
+                "1",
+                "--json",
+                "headSha",
+            ]),
+            None,
+        )?;
+        let runs = parse_json(&out)?;
+        Ok(runs
+            .as_array()
+            .and_then(|runs| runs.first())
+            .and_then(|run| run["headSha"].as_str())
+            .map(str::to_string))
+    }
+
+    /// The pull requests GitHub associates with `sha`, unfiltered.
+    pub(crate) fn pulls_for_commit(&mut self, sha: &str) -> Result<Vec<MergedPull>, TrackerError> {
+        let (repo, cli, _) = self.github_parts()?;
+        let out = cli.run_classified(
+            &strings(&["api", &format!("repos/{repo}/commits/{sha}/pulls")]),
+            None,
+        )?;
+        let pulls = parse_json(&out)?;
+        Ok(pulls
+            .as_array()
+            .map(|pulls| {
+                pulls
+                    .iter()
+                    .filter_map(|p| {
+                        Some(MergedPull {
+                            number: p["number"].as_u64()?,
+                            body: p["body"].as_str().unwrap_or("").to_string(),
+                            base: p["base"]["ref"].as_str().unwrap_or("").to_string(),
+                            merged: p["merged_at"].is_string(),
+                            merge_commit_sha: p["merge_commit_sha"].as_str().map(str::to_string),
+                        })
+                    })
+                    .collect()
+            })
+            .unwrap_or_default())
+    }
+
+    /// The repository's default branch.
+    pub(crate) fn default_branch(&mut self) -> Result<String, TrackerError> {
+        let (repo, cli, _) = self.github_parts()?;
+        let out = cli.run_classified(
+            &strings(&[
+                "repo",
+                "view",
+                repo,
+                "--json",
+                "defaultBranchRef",
+                "--jq",
+                ".defaultBranchRef.name",
+            ]),
+            None,
+        )?;
+        Ok(out.trim().to_string())
+    }
+
+    /// Posts `body` and `marker` on issue `n` unless `github-actions[bot]` already posted a
+    /// comment with a line equal to `marker`. Comments by anyone else never count.
+    pub(crate) fn comment_once(
+        &mut self,
+        n: u64,
+        marker: &str,
+        body: &str,
+    ) -> Result<CommentOutcome, TrackerError> {
+        let (repo, cli, _) = self.github_parts()?;
+        let out = cli.run_classified(
+            &strings(&[
+                "api",
+                "--paginate",
+                &format!("repos/{repo}/issues/{n}/comments"),
+                "--jq",
+                ".[] | [.user.id, .body] | @json",
+            ]),
+            None,
+        )?;
+        for line in out.lines().filter(|l| !l.trim().is_empty()) {
+            let comment = parse_json(line)?;
+            let author = comment[0].as_u64();
+            let text = comment[1].as_str().unwrap_or("");
+            if author == Some(ACTIONS_BOT_ID) && text.lines().any(|l| l.trim() == marker) {
+                return Ok(CommentOutcome::Existing);
+            }
+        }
+        cli.run_classified(
+            &strings(&[
+                "issue",
+                "comment",
+                &n.to_string(),
+                "--repo",
+                repo,
+                "--body-file",
+                "-",
+            ]),
+            Some(&format!("{body}\n{marker}")),
+        )?;
+        Ok(CommentOutcome::Posted)
+    }
+}
+
 fn github_created_id(out: &str, repo: &str) -> Result<String, String> {
     let prefix = format!("https://github.com/{repo}/issues/");
     for word in out.split_whitespace() {
@@ -915,16 +1237,16 @@ fn github_state(
     id: &str,
     reason: Option<&str>,
     current: &str,
-) -> Result<(), String> {
+) -> Result<(), TrackerError> {
     if let Some(reason) = reason {
         if current == "OPEN" {
-            cli.run(
+            cli.run_classified(
                 &strings(&["issue", "close", id, "--repo", repo, "--reason", reason]),
                 None,
             )?;
         }
     } else if current == "CLOSED" {
-        cli.run(&strings(&["issue", "reopen", id, "--repo", repo]), None)?;
+        cli.run_classified(&strings(&["issue", "reopen", id, "--repo", repo]), None)?;
     }
     Ok(())
 }
@@ -1696,10 +2018,12 @@ mod tests {
                 let mut log=OpenOptions::new().create(true).append(true).open("calls").unwrap();
                 writeln!(log,"{:?} stdin={}",args,input).unwrap();
                 if args.iter().any(|s|s=="fail") { eprintln!("private-cli-token");std::process::exit(7); }
-                if args.first().map(String::as_str)==Some("issue") {
+                if args.first().map(String::as_str)==Some("label") && args.get(1).map(String::as_str)==Some("list") {
+                    print!("{}", std::fs::read_to_string("labels.json").unwrap_or_else(|_| "[]".into()));
+                } else if args.first().map(String::as_str)==Some("issue") {
                     match args[1].as_str() {
                         "create"=>println!("https://github.com/acme/shop/issues/11"),
-                        "view"=>println!("{{\"labels\":[{{\"name\":\"team\"}},{{\"name\":\"size:5\"}}],\"state\":\"CLOSED\"}}"),
+                        "view"=>println!("{{\"labels\":[{{\"name\":\"team\"}},{{\"name\":\"size:5\"}}],\"state\":\"CLOSED\",\"url\":\"https://github.com/acme/shop/issues/11\"}}"),
                         "list"=>println!("[{{\"number\":11,\"title\":\"ST-001: Native tracker\"}},{{\"number\":13,\"title\":\"ST-0011: Other\"}},{{\"number\":14,\"title\":\"Re: ST-001: x\"}}]"),
                         _=>{}
                     }
@@ -1745,6 +2069,121 @@ mod tests {
     }
 
     #[test]
+    fn tracker_failures_are_classified_without_keeping_their_output() {
+        for (stderr, kind) in [
+            ("HTTP 503: Service Unavailable", ErrorKind::Retryable),
+            ("HTTP 502", ErrorKind::Retryable),
+            ("HTTP 429: Too Many Requests", ErrorKind::Retryable),
+            (
+                "API rate limit exceeded for installation",
+                ErrorKind::Retryable,
+            ),
+            ("HTTP 404: Not Found", ErrorKind::Permanent),
+            ("HTTP 410: Gone", ErrorKind::Permanent),
+            (
+                "GraphQL: Could not resolve to an issue or pull request",
+                ErrorKind::Permanent,
+            ),
+            ("HTTP 401: Bad credentials", ErrorKind::Retryable),
+            ("HTTP 403: Resource not accessible", ErrorKind::Retryable),
+            ("HTTP 5", ErrorKind::Retryable),
+            ("", ErrorKind::Retryable),
+        ] {
+            assert_eq!(classify(stderr), kind, "{stderr}");
+        }
+        let tmp = Temp::new();
+        let cli = stub_cli(&tmp.0, "gh");
+        let error = cli.run_classified(&strings(&["fail"]), None).unwrap_err();
+        assert!(!error.message.contains("private-cli-token"), "{error:?}");
+    }
+
+    #[test]
+    fn a_transferred_issue_is_a_permanent_failure_before_any_edit() {
+        let tmp = Temp::new();
+        let mut gateway = github_gateway(&tmp);
+        if let Backend::Github { repo, .. } = &mut gateway.backend {
+            *repo = "acme/other".into();
+        }
+        let mut s = story("ready");
+        s["remote"] = json!(11);
+        let error = gateway.update_classified(&s).unwrap_err();
+        assert_eq!(error.kind, ErrorKind::Permanent, "{error:?}");
+        let calls = fs::read_to_string(tmp.0.join("calls")).unwrap();
+        assert!(!calls.contains("\"edit\""), "{calls}");
+    }
+
+    fn github_gateway(tmp: &Temp) -> Gateway {
+        Gateway {
+            config: json!({}),
+            backend: Backend::Github {
+                repo: "acme/shop".into(),
+                cli: stub_cli(&tmp.0, "gh"),
+                labels: None,
+            },
+        }
+    }
+
+    #[test]
+    fn existing_github_labels_keep_their_color() {
+        let tmp = Temp::new();
+        fs::write(
+            tmp.0.join("labels.json"),
+            r#"[{"name":"size:5"},{"name":"story"}]"#,
+        )
+        .unwrap();
+        let mut s = story("ready");
+        s["remote"] = json!(11);
+        s["size"] = json!(5);
+        github_gateway(&tmp).update(&s).unwrap();
+        github_gateway(&tmp).update(&s).unwrap();
+        let calls = fs::read_to_string(tmp.0.join("calls")).unwrap();
+        assert!(
+            !calls.contains("\"label\", \"create\", \"size:5\""),
+            "{calls}"
+        );
+        assert!(!calls.contains("\"--force\""), "{calls}");
+        assert_eq!(
+            calls
+                .lines()
+                .filter(|l| l.contains("\"label\", \"list\""))
+                .count(),
+            2,
+            "one list per fresh process: {calls}"
+        );
+    }
+
+    #[test]
+    fn missing_github_labels_are_created_once_with_a_family_color() {
+        let tmp = Temp::new();
+        let mut s = story("ready");
+        s["remote"] = json!(11);
+        s["size"] = json!(5);
+        let mut gateway = github_gateway(&tmp);
+        gateway.update(&s).unwrap();
+        gateway.update(&s).unwrap();
+        let calls = fs::read_to_string(tmp.0.join("calls")).unwrap();
+        let creates = |name: &str, color: &str| {
+            calls
+                .lines()
+                .filter(|l| {
+                    l.contains(&format!("\"label\", \"create\", \"{name}\""))
+                        && l.contains(&format!("\"--color\", \"{color}\""))
+                })
+                .count()
+        };
+        assert_eq!(creates("size:5", "c5def5"), 1, "{calls}");
+        assert_eq!(creates("story", "0e8a16"), 1, "{calls}");
+        assert_eq!(
+            calls
+                .lines()
+                .filter(|l| l.contains("\"label\", \"list\""))
+                .count(),
+            1,
+            "{calls}"
+        );
+    }
+
+    #[test]
     fn github_commands_use_stdin_preserve_team_labels_and_sync_state() {
         let tmp = Temp::new();
         let cli = stub_cli(&tmp.0, "gh");
@@ -1757,7 +2196,7 @@ mod tests {
             backend: Backend::Github {
                 repo: "acme/shop".into(),
                 cli,
-                labels: HashSet::new(),
+                labels: None,
             },
         };
         assert_eq!(
@@ -1802,14 +2241,14 @@ mod tests {
             backend: Backend::Github {
                 repo: "acme/shop".into(),
                 cli,
-                labels: HashSet::new(),
+                labels: None,
             },
         };
         let started = std::time::Instant::now();
         let error = gateway.create(&story("ready")).unwrap_err();
         assert!(started.elapsed() < Duration::from_secs(10), "{error}");
         assert!(error.contains("timed out after 1s"), "{error}");
-        assert!(error.contains("gh label create"), "{error}");
+        assert!(error.contains("gh label list"), "{error}");
         assert!(!error.contains("private-cli-token"), "{error}");
     }
 
