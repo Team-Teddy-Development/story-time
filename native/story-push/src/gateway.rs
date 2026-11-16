@@ -24,7 +24,8 @@ enum Backend {
     Github {
         repo: String,
         cli: Cli,
-        labels: HashSet<String>,
+        /// Label names in the repository, listed once per process.
+        labels: Option<HashSet<String>>,
     },
     Ado {
         organization: String,
@@ -186,7 +187,7 @@ impl Gateway {
                 Backend::Github {
                     repo: repo.into(),
                     cli: cli("gh"),
-                    labels: HashSet::new(),
+                    labels: None,
                 }
             }
             "ado" => {
@@ -892,16 +893,54 @@ fn gitea_labels(card: &Value, story: &Value) -> Result<Vec<String>, String> {
     }
     Ok(names)
 }
+/// The fixed color for a label that story-time creates, by label family.
+fn github_label_color(name: &str) -> &'static str {
+    match name.split_once(':').map(|(family, _)| family) {
+        Some("size") => "c5def5",
+        Some("value") => "fbca04",
+        Some("epic") => "5319e7",
+        _ if ["story", "spike", "bug", "chore"].contains(&name) => "0e8a16",
+        _ => "ededed",
+    }
+}
+/// Creates only the labels the repository lacks. An existing label is never
+/// edited, so its color stays as the team set it.
 fn ensure_github_labels(
     cli: &Cli,
     repo: &str,
-    known: &mut HashSet<String>,
+    known: &mut Option<HashSet<String>>,
     names: &[String],
 ) -> Result<(), String> {
+    let known = match known {
+        Some(known) => known,
+        None => {
+            let out = cli.run(
+                &strings(&[
+                    "label", "list", "--repo", repo, "--limit", "1000", "--json", "name",
+                ]),
+                None,
+            )?;
+            let listed: Value = serde_json::from_str(&out)
+                .map_err(|_| "Tracker returned invalid label list.".to_string())?;
+            known.insert(
+                named_labels(&json!({ "labels": listed }))?
+                    .into_iter()
+                    .collect(),
+            )
+        }
+    };
     for name in names {
         if !known.contains(name) {
             cli.run(
-                &strings(&["label", "create", name, "--repo", repo, "--force"]),
+                &strings(&[
+                    "label",
+                    "create",
+                    name,
+                    "--repo",
+                    repo,
+                    "--color",
+                    github_label_color(name),
+                ]),
                 None,
             )?;
             known.insert(name.clone());
@@ -1705,7 +1744,9 @@ mod tests {
                 let mut log=OpenOptions::new().create(true).append(true).open("calls").unwrap();
                 writeln!(log,"{:?} stdin={}",args,input).unwrap();
                 if args.iter().any(|s|s=="fail") { eprintln!("private-cli-token");std::process::exit(7); }
-                if args.first().map(String::as_str)==Some("issue") {
+                if args.first().map(String::as_str)==Some("label") && args.get(1).map(String::as_str)==Some("list") {
+                    print!("{}", std::fs::read_to_string("labels.json").unwrap_or_else(|_| "[]".into()));
+                } else if args.first().map(String::as_str)==Some("issue") {
                     match args[1].as_str() {
                         "create"=>println!("https://github.com/acme/shop/issues/11"),
                         "view"=>println!("{{\"labels\":[{{\"name\":\"team\"}},{{\"name\":\"size:5\"}}],\"state\":\"CLOSED\"}}"),
@@ -1753,6 +1794,77 @@ mod tests {
         }
     }
 
+    fn github_gateway(tmp: &Temp) -> Gateway {
+        Gateway {
+            config: json!({}),
+            backend: Backend::Github {
+                repo: "acme/shop".into(),
+                cli: stub_cli(&tmp.0, "gh"),
+                labels: None,
+            },
+        }
+    }
+
+    #[test]
+    fn existing_github_labels_keep_their_color() {
+        let tmp = Temp::new();
+        fs::write(
+            tmp.0.join("labels.json"),
+            r#"[{"name":"size:5"},{"name":"story"}]"#,
+        )
+        .unwrap();
+        let mut s = story("ready");
+        s["remote"] = json!(11);
+        s["size"] = json!(5);
+        github_gateway(&tmp).update(&s).unwrap();
+        github_gateway(&tmp).update(&s).unwrap();
+        let calls = fs::read_to_string(tmp.0.join("calls")).unwrap();
+        assert!(
+            !calls.contains("\"label\", \"create\", \"size:5\""),
+            "{calls}"
+        );
+        assert!(!calls.contains("\"--force\""), "{calls}");
+        assert_eq!(
+            calls
+                .lines()
+                .filter(|l| l.contains("\"label\", \"list\""))
+                .count(),
+            2,
+            "one list per fresh process: {calls}"
+        );
+    }
+
+    #[test]
+    fn missing_github_labels_are_created_once_with_a_family_color() {
+        let tmp = Temp::new();
+        let mut s = story("ready");
+        s["remote"] = json!(11);
+        s["size"] = json!(5);
+        let mut gateway = github_gateway(&tmp);
+        gateway.update(&s).unwrap();
+        gateway.update(&s).unwrap();
+        let calls = fs::read_to_string(tmp.0.join("calls")).unwrap();
+        let creates = |name: &str, color: &str| {
+            calls
+                .lines()
+                .filter(|l| {
+                    l.contains(&format!("\"label\", \"create\", \"{name}\""))
+                        && l.contains(&format!("\"--color\", \"{color}\""))
+                })
+                .count()
+        };
+        assert_eq!(creates("size:5", "c5def5"), 1, "{calls}");
+        assert_eq!(creates("story", "0e8a16"), 1, "{calls}");
+        assert_eq!(
+            calls
+                .lines()
+                .filter(|l| l.contains("\"label\", \"list\""))
+                .count(),
+            1,
+            "{calls}"
+        );
+    }
+
     #[test]
     fn github_commands_use_stdin_preserve_team_labels_and_sync_state() {
         let tmp = Temp::new();
@@ -1766,7 +1878,7 @@ mod tests {
             backend: Backend::Github {
                 repo: "acme/shop".into(),
                 cli,
-                labels: HashSet::new(),
+                labels: None,
             },
         };
         assert_eq!(
@@ -1811,14 +1923,14 @@ mod tests {
             backend: Backend::Github {
                 repo: "acme/shop".into(),
                 cli,
-                labels: HashSet::new(),
+                labels: None,
             },
         };
         let started = std::time::Instant::now();
         let error = gateway.create(&story("ready")).unwrap_err();
         assert!(started.elapsed() < Duration::from_secs(10), "{error}");
         assert!(error.contains("timed out after 1s"), "{error}");
-        assert!(error.contains("gh label create"), "{error}");
+        assert!(error.contains("gh label list"), "{error}");
         assert!(!error.contains("private-cli-token"), "{error}");
     }
 
