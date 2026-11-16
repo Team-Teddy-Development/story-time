@@ -3,7 +3,7 @@
 //! Every request names its own protocol era, so the process holds no protocol state.
 
 use super::{
-    caller::{Caller, Clients},
+    caller::{Caller, Carrier, Clients},
     response, RpcError, Server, LEGACY_VERSIONS, LINE_LIMIT, MODERN, SUPPORTED, VERSION_KEY,
 };
 use crate::Failure;
@@ -140,13 +140,26 @@ fn answer(shared: &Arc<Shared>, mut request: Request) {
         "/healthz" | "/readyz" => {
             text(405, "method not allowed").with_header(header("Allow", "GET"))
         }
-        "/mcp" => mcp(shared, &mut request),
-        _ => text(404, "not found"),
+        "/mcp" => mcp(shared, &mut request, None),
+        // `/mcp/<token>`, for a client that cannot send a header. One segment only.
+        _ => match path
+            .strip_prefix("/mcp/")
+            .filter(|token| !token.contains('/'))
+        {
+            Some(token) => {
+                let token = token.to_owned();
+                mcp(shared, &mut request, Some(&token))
+            }
+            None => text(404, "not found"),
+        },
     };
     reply(request, response);
 }
 
-fn mcp(shared: &Arc<Shared>, request: &mut Request) -> Reply {
+/// `path_token` is the token of a request to `/mcp/<token>`. Such a request is judged by that
+/// token only, and only a client that is marked for it is found. The token goes to no log and
+/// to no answer.
+fn mcp(shared: &Arc<Shared>, request: &mut Request, path_token: Option<&str>) -> Reply {
     if *request.method() != Method::Post {
         return text(405, "method not allowed").with_header(header("Allow", "POST"));
     }
@@ -161,11 +174,16 @@ fn mcp(shared: &Arc<Shared>, request: &mut Request) -> Reply {
         return text(403, "origin not allowed");
     }
     let authorization = named("Authorization").unwrap_or_default();
-    let token = authorization
-        .split_once(' ')
-        .filter(|(scheme, _)| scheme.eq_ignore_ascii_case("Bearer"))
-        .map(|(_, token)| token.trim());
-    let Some(caller) = token.and_then(|token| shared.http.clients.find(token)) else {
+    let presented = match path_token {
+        Some(token) => Some((token, Carrier::Path)),
+        None => authorization
+            .split_once(' ')
+            .filter(|(scheme, _)| scheme.eq_ignore_ascii_case("Bearer"))
+            .map(|(_, token)| (token.trim(), Carrier::Header)),
+    };
+    let Some(caller) =
+        presented.and_then(|(token, carrier)| shared.http.clients.find(token, carrier))
+    else {
         return text(401, "unauthorized").with_header(header("WWW-Authenticate", "Bearer"));
     };
     let headers = Headers {

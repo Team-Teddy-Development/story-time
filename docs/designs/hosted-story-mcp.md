@@ -380,6 +380,8 @@ GIT_TERMINAL_PROMPT=0
 
 **Client tokens.** Clients are listed in a TOML file from Vault, one entry per client: `[[client]] id, token_sha256, scopes, prefixes`. Each token is 32 random bytes in base64url form. The server hashes a presented token with `adoption::sha` and compares it with `ring::constant_time::verify_slices_are_equal`.
 
+**Token in the path (amendment of 2026-11-16, ST-146).** A ChatGPT cloud connector takes OAuth or no authentication, and cannot send a header. A client entry with `url_token = true` can give its token as `/mcp/<token>`. An entry without the mark is not found by a path token, so a token that was made for a header never works in a URL. A request to `/mcp/<token>` is judged by the path token only. The refusal is the 401 of an unknown token. The server writes the token to no log and no answer. The cost is known: proxies and client settings keep URLs, so each path client gets its own entry and small scopes, and the ingress does not log `/mcp/` paths. An OAuth server stays a non-goal (Alternative K).
+
 **Revocation.** To revoke a token, remove its hash in Vault and restart the pod. A restart is safe because the pod holds only caches.
 
 **Tool visibility.** In hosted mode, the server registers every tool. `tools/list` returns only the tools that the caller's scopes allow. A call outside the caller's scopes returns `scope_refused`.

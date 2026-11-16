@@ -21,6 +21,7 @@ const MODERN: &str = "2026-07-28";
 const LEGACY: &str = "2025-11-25";
 const READER: &str = "reader-token-0123456789abcdef";
 const WRITER: &str = "writer-token-0123456789abcdef";
+const LINKER: &str = "linker-token-0123456789abcdef";
 const ORIGIN: &str = "https://allowed.example";
 
 const SETTINGS: &str = r#"{
@@ -72,9 +73,10 @@ impl Fixture {
         fs::write(
             &clients,
             format!(
-                "[[client]]\nid = \"reader\"\ntoken_sha256 = \"{}\"\nscopes = [\"read\"]\n\n[[client]]\nid = \"writer\"\ntoken_sha256 = \"{}\"\nscopes = [\"read\", \"write\"]\n",
+                "[[client]]\nid = \"reader\"\ntoken_sha256 = \"{}\"\nscopes = [\"read\"]\n\n[[client]]\nid = \"writer\"\ntoken_sha256 = \"{}\"\nscopes = [\"read\", \"write\"]\n\n[[client]]\nid = \"linker\"\ntoken_sha256 = \"{}\"\nscopes = [\"read\"]\nurl_token = true\n",
                 sha256(READER.as_bytes()),
-                sha256(WRITER.as_bytes())
+                sha256(WRITER.as_bytes()),
+                sha256(LINKER.as_bytes())
             ),
         )
         .unwrap();
@@ -290,6 +292,92 @@ fn a_request_without_a_known_token_gets_401_on_every_method() {
     );
     assert_eq!(basic.status(), 401);
     assert!(server.audit_lines().is_empty(), "no tool ran");
+}
+
+/// ST-146: a client that cannot send a header gives its token in the path.
+#[test]
+fn a_marked_client_gives_its_token_in_the_path_and_no_other_client_can() {
+    let fixture = Fixture::new();
+    let server = fixture.http();
+    let post = |path: &str| {
+        server
+            .client
+            .post(format!("{}{path}", server.url))
+            .header("Content-Type", "application/json")
+    };
+    let list = request("tools/list", modern(json!({})));
+
+    // The marked client: no header, the token in the path. Its scope is read.
+    let listed = json_of(post(&format!("/mcp/{LINKER}")).body(list.to_string()));
+    let names: Vec<&str> = listed["result"]["tools"]
+        .as_array()
+        .unwrap_or_else(|| panic!("{listed}"))
+        .iter()
+        .map(|t| t["name"].as_str().unwrap())
+        .collect();
+    assert!(names.contains(&"story_show"), "{names:?}");
+    assert!(!names.contains(&"story_update"), "{names:?}");
+    let show = request(
+        "tools/call",
+        modern(json!({"name": "story_show", "arguments": {"id": "ST-001"}})),
+    );
+    let shown = json_of(post(&format!("/mcp/{LINKER}")).body(show.to_string()));
+    assert!(shown.get("error").is_none(), "{shown}");
+    // The path token decides. A header of another client does not change the caller.
+    let both = json_of(
+        post(&format!("/mcp/{LINKER}"))
+            .bearer_auth(WRITER)
+            .body(list.to_string()),
+    );
+    assert!(!both.to_string().contains("story_update"), "{both}");
+    // The marked client can also use the header.
+    assert!(server.tools(LINKER).contains(&"story_show".to_owned()));
+    let ran = server.audit_lines().len();
+    assert_eq!(ran, 1, "one tool call ran: story_show");
+
+    // An unknown token gives the answer that every refusal below must equal.
+    let unknown = send(post("/mcp/unknown-token-0123456789abcdef").body(show.to_string()));
+    let (status, challenge) = (
+        unknown.status(),
+        unknown.headers()["www-authenticate"].clone(),
+    );
+    let body = unknown.text().unwrap();
+    assert_eq!(status, 401);
+    // A client that is not marked: its token is good in a header and refused in a path.
+    for token in [READER, WRITER] {
+        let refused = send(post(&format!("/mcp/{token}")).body(show.to_string()));
+        assert_eq!(refused.status(), status, "{token}");
+        assert_eq!(refused.headers()["www-authenticate"], challenge);
+        assert_eq!(refused.text().unwrap(), body);
+    }
+    // A hash is not a token, and an empty token is no token.
+    let hash = sha256(LINKER.as_bytes());
+    for path in [format!("/mcp/{hash}"), "/mcp/".to_owned()] {
+        let refused = send(post(&path).body(show.to_string()));
+        assert_eq!(refused.status(), 401, "{path}");
+    }
+    // One more segment is not the MCP endpoint, also with a good token.
+    for path in [format!("/mcp/{LINKER}/x"), format!("/mcp/{LINKER}/")] {
+        let missing = send(post(&path).body(show.to_string()));
+        assert_eq!(missing.status(), 404, "{path}");
+    }
+    // The path endpoint keeps the rules of `/mcp`.
+    let get = send(server.client.get(format!("{}/mcp/{LINKER}", server.url)));
+    assert_eq!(get.status(), 405);
+
+    assert_eq!(
+        server.audit_lines().len(),
+        ran,
+        "no refused request ran a tool"
+    );
+    let log = server.log.lock().unwrap().join("\n");
+    for token in [LINKER, READER, WRITER, "unknown-token-0123456789abcdef"] {
+        assert!(!log.contains(token), "the server wrote a token");
+    }
+    assert!(
+        log.contains("\"linker\""),
+        "the audit line names the client: {log}"
+    );
 }
 
 #[test]
