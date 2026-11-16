@@ -29,6 +29,7 @@ mod graph;
 mod http;
 mod propose;
 mod registry;
+mod retry;
 mod workspace;
 use caller::{Caller, Scope};
 use workspace::{Refusal, Workspace};
