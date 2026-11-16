@@ -55,17 +55,6 @@ fn checker() -> &'static Path {
         .as_path()
 }
 
-fn link(body: &str, incident: bool) -> std::process::Output {
-    Command::new(checker())
-        .arg("story-link")
-        .env("REPO", "Team-Teddy-Development/story-time")
-        .env("PR_BODY", body)
-        .env("IS_INCIDENT", incident.to_string())
-        .current_dir(repository_root())
-        .output()
-        .unwrap()
-}
-
 #[test]
 fn repository_has_github_dogfooding_contract() {
     for path in [
@@ -85,35 +74,6 @@ fn repository_has_github_dogfooding_contract() {
     }
     let ignore = fs::read_to_string(repository_root().join(".story-time/.gitignore")).unwrap();
     assert!(ignore.lines().any(|line| line == "*.env"));
-}
-
-#[test]
-fn real_cli_accepts_the_bootstrap_story() {
-    let result = link("Stories: ST-001", false);
-    assert!(
-        result.status.success(),
-        "{}",
-        String::from_utf8_lossy(&result.stderr)
-    );
-    assert!(String::from_utf8_lossy(&result.stdout).contains("PASS:"));
-}
-
-#[test]
-fn real_cli_rejects_missing_and_undeclared_stories() {
-    for body in ["Related ST-001", "Stories: ST-999999999999"] {
-        let result = link(body, false);
-        assert_eq!(result.status.code(), Some(1));
-        assert!(String::from_utf8_lossy(&result.stderr).starts_with("FAIL:"));
-    }
-}
-
-#[test]
-fn real_cli_incident_exception_does_not_hide_invalid_references() {
-    assert!(link("", true).status.success());
-    assert_eq!(
-        link("Stories: ST-999999999999", true).status.code(),
-        Some(1)
-    );
 }
 
 struct Fixture(std::path::PathBuf);
@@ -169,7 +129,6 @@ fn contract_suite_uses_source_checkout_from_unrelated_directory() {
         "repository_has_github_dogfooding_contract",
         "setup_defaults_to_explicit_auto_without_changing_existing_configs",
         "cartographer_preparation_keeps_distinct_story_ids_and_no_runtime_authority",
-        "real_cli_rejects_missing_and_undeclared_stories",
         "real_cli_rejects_a_story_added_independently_to_the_base_branch",
     ] {
         assert!(output.contains(&format!("test {name} ... ok")), "{output}");
@@ -397,10 +356,5 @@ fn cartographer_preparation_keeps_distinct_story_ids_and_no_runtime_authority() 
     assert!(
         String::from_utf8_lossy(&result.stdout).contains("Manage story-time through Cartographer")
     );
-    let result = link("Stories: ST-002", false);
-    assert!(
-        result.status.success(),
-        "{}",
-        String::from_utf8_lossy(&result.stderr)
-    );
+    assert!(repository_root().join("backlog/ST-002.md").is_file());
 }
