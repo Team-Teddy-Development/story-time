@@ -628,3 +628,31 @@ fn http_mode_refuses_to_start_without_a_clients_file() {
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(stderr.contains("token_sha256"), "{stderr}");
 }
+
+/// ST-142: an org is a part of a registry. A server of local roots has no org to limit to.
+#[test]
+fn a_client_with_orgs_needs_a_registry() {
+    let fixture = Fixture::new();
+    fs::write(
+        &fixture.clients,
+        format!(
+            "[[client]]\nid = \"scoped\"\ntoken_sha256 = \"{}\"\nscopes = [\"read\"]\norgs = [\"varsity\"]\n",
+            sha256(READER.as_bytes())
+        ),
+    )
+    .unwrap();
+    let output = fixture
+        .command()
+        .args(["--http", "127.0.0.1:0", "--root"])
+        .arg(&fixture.root)
+        .arg("--clients")
+        .arg(&fixture.clients)
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code(), Some(2));
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("client scoped") && stderr.contains("org varsity"),
+        "{stderr}"
+    );
+}

@@ -98,6 +98,19 @@ pub(super) fn launch(args: &[String]) -> Result<(Vec<String>, Option<Http>), Fai
 }
 
 impl Http {
+    /// Refuses a clients file that names an org outside `held`, the orgs of the registry.
+    pub(super) fn check_orgs(&self, held: &[&str]) -> Result<(), Failure> {
+        match self.clients.unknown_org(held) {
+            None => Ok(()),
+            Some((client, org)) => Err(Failure {
+                code: 2,
+                message: format!(
+                    "story mcp: --clients: client {client} names the org {org}, which the registry does not hold."
+                ),
+            }),
+        }
+    }
+
     /// Serves until the process ends. A fixed set of workers takes requests from a bounded
     /// queue; a request that finds the queue full gets a retryable 503.
     pub(super) fn serve(self, server: Server) -> Result<(), String> {

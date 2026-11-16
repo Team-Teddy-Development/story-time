@@ -166,6 +166,30 @@ impl Fixture {
         .unwrap();
         path
     }
+    /// The registry with a third repository `teddy` in its own org. It declares the prefix VC,
+    /// which `core` of the org `fixture` also declares.
+    fn registry_of_two_orgs(&self) -> PathBuf {
+        let up = self.upstream("teddy");
+        fs::create_dir_all(&up).unwrap();
+        self.git(&up, &["init", "-q", "-b", "main"]);
+        self.write("teddy", ".story-time/settings.json", &settings("VC"));
+        self.write(
+            "teddy",
+            "backlog/VC-109.md",
+            &story("VC-109", "Teddy roster", "depends_on: []\n"),
+        );
+        // VE-046 is in `web` of the other org only.
+        self.write(
+            "teddy",
+            "backlog/VC-300.md",
+            &story("VC-300", "Teddy page", "depends_on: [VE-046]\n"),
+        );
+        self.commit("teddy", "first");
+        self.registry(&format!(
+            "\n[[repo]]\nkey = \"teddy\"\norg = \"teddy\"\nclone = \"{}\"\nforge = \"github\"\nprefixes = [\"VC\"]\n",
+            self.file_url("teddy")
+        ))
+    }
     fn command(&self) -> Command {
         let mut command = Command::new(env!("CARGO_BIN_EXE_story"));
         command
@@ -280,8 +304,11 @@ impl Http {
     }
     /// The structured content of one tool call, whether it succeeded or not.
     fn call(&self, name: &str, arguments: Value) -> Value {
+        self.call_as(READER, name, arguments)
+    }
+    fn call_as(&self, token: &str, name: &str, arguments: Value) -> Value {
         self.rpc(
-            READER,
+            token,
             "tools/call",
             json!({"name": name, "arguments": arguments}),
         )["structuredContent"]
@@ -708,26 +735,7 @@ fn findings_of(lint: &Value, id: &str) -> Vec<(String, String)> {
 #[test]
 fn two_orgs_keep_their_stories_and_links_apart() {
     let fixture = Fixture::new();
-    let up = fixture.upstream("teddy");
-    fs::create_dir_all(&up).unwrap();
-    fixture.git(&up, &["init", "-q", "-b", "main"]);
-    fixture.write("teddy", ".story-time/settings.json", &settings("VC"));
-    fixture.write(
-        "teddy",
-        "backlog/VC-109.md",
-        &story("VC-109", "Teddy roster", "depends_on: []\n"),
-    );
-    // VE-046 is in `web` of the other org only.
-    fixture.write(
-        "teddy",
-        "backlog/VC-300.md",
-        &story("VC-300", "Teddy page", "depends_on: [VE-046]\n"),
-    );
-    fixture.commit("teddy", "first");
-    let registry = fixture.registry(&format!(
-        "\n[[repo]]\nkey = \"teddy\"\norg = \"teddy\"\nclone = \"{}\"\nforge = \"github\"\nprefixes = [\"VC\"]\n",
-        fixture.file_url("teddy")
-    ));
+    let registry = fixture.registry_of_two_orgs();
     let server = fixture.serve(&registry, &[]);
 
     // Each repository has the story of its own org under the shared id.
@@ -769,6 +777,102 @@ fn two_orgs_keep_their_stories_and_links_apart() {
     assert!(
         unlinked.contains(&("independent.deps".into(), "error".into())),
         "{unlinked:?}"
+    );
+}
+
+const SCOPED: &str = "scoped-token-0123456789abcdef";
+
+impl Fixture {
+    /// Adds the client `scoped`, which the clients file limits to `orgs`.
+    fn limit_a_client(&self, orgs: &str) {
+        let path = self.base.join("clients.toml");
+        let mut clients = fs::read_to_string(&path).unwrap();
+        clients.push_str(&format!(
+            "\n[[client]]\nid = \"scoped\"\ntoken_sha256 = \"{}\"\nscopes = [\"read\"]\norgs = {orgs}\n",
+            sha256(SCOPED.as_bytes())
+        ));
+        fs::write(path, clients).unwrap();
+    }
+}
+
+fn keys(listed: &Value) -> Vec<&str> {
+    listed["repositories"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|repo| repo["key"].as_str().unwrap())
+        .collect()
+}
+
+/// ST-142: `core` and `web` are in the org `fixture`, and `teddy` is in the org `teddy`.
+#[test]
+fn a_client_limited_to_an_org_uses_no_repository_of_another_org() {
+    let fixture = Fixture::new();
+    let registry = fixture.registry_of_two_orgs();
+    fixture.limit_a_client("[\"fixture\"]");
+    let server = fixture.serve(&registry, &[]);
+
+    // A repository of another org gets the answer of a repository that the server does not have.
+    let unknown = server.call_as(
+        SCOPED,
+        "story_show",
+        json!({"repository": "nope", "id": "VC-109"}),
+    );
+    assert_eq!(unknown["error"]["code"], "repository_not_allowed");
+    for (tool, arguments) in [
+        ("story_show", json!({"repository": "teddy", "id": "VC-109"})),
+        ("story_list", json!({"repository": "teddy"})),
+        ("story_lint", json!({"repository": "teddy"})),
+        ("story_config", json!({"repository": "teddy"})),
+    ] {
+        let refused = server.call_as(SCOPED, tool, arguments);
+        assert_eq!(refused["error"], unknown["error"], "{tool}: {refused}");
+    }
+    let audit = server.stderr();
+    let line = audit
+        .lines()
+        .filter_map(|line| serde_json::from_str::<Value>(line).ok())
+        .find(|line| line["tool"] == "story_list")
+        .unwrap_or_else(|| panic!("no audit line of story_list: {audit}"));
+    assert_eq!(line["client_id"], "scoped");
+    assert_eq!(line["outcome"], "error");
+    assert_eq!(line["error_code"], "repository_not_allowed");
+
+    // Its own org is open to it, and the lists hold that org only.
+    let shown = server.call_as(
+        SCOPED,
+        "story_show",
+        json!({"repository": "core", "id": "VC-109"}),
+    );
+    assert_eq!(title(&shown), "Roster API");
+    let repos = server.call_as(SCOPED, "story_repos", json!({}));
+    assert_eq!(keys(&repos), ["core", "web"]);
+    let config = server.call_as(SCOPED, "story_config", json!({}));
+    assert_eq!(keys(&config), ["core", "web"]);
+
+    // A client with no `orgs` key uses each repository.
+    let theirs = server.ok("story_show", json!({"repository": "teddy", "id": "VC-109"}));
+    assert_eq!(title(&theirs), "Teddy roster");
+    assert_eq!(
+        keys(&server.ok("story_repos", json!({}))),
+        ["core", "web", "teddy"]
+    );
+    assert_eq!(
+        keys(&server.ok("story_config", json!({}))),
+        ["core", "web", "teddy"]
+    );
+}
+
+#[test]
+fn a_client_org_that_the_registry_does_not_hold_stops_the_start() {
+    let fixture = Fixture::new();
+    let registry = fixture.registry_of_two_orgs();
+    fixture.limit_a_client("[\"fixture\", \"nope\"]");
+    let (code, stderr) = fixture.refused(&fixture.hosted_args(&registry));
+    assert_eq!(code, Some(2), "{stderr}");
+    assert!(
+        stderr.contains("client scoped") && stderr.contains("org nope"),
+        "{stderr}"
     );
 }
 
