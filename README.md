@@ -463,7 +463,7 @@ org = "team-teddy"
 clone = "http://192.168.1.56:30003/team-teddy/xanthos.git"
 forge = "gitea"
 allow_http = true               # needed for plain http to a host that is not loopback
-prefixes = ["XA"]
+prefixes = ["XAN"]
 ```
 
 One server can hold several orgs. A repository names its `org`, or takes the top-level one; with neither, its org is `default`. An org is a boundary for links:
