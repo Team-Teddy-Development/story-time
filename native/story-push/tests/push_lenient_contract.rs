@@ -4,9 +4,8 @@ use serde_json::{json, Value};
 use std::{
     collections::BTreeMap,
     fs,
-    io::Write,
     path::PathBuf,
-    process::{Command, Output, Stdio},
+    process::{Command, Output},
     sync::atomic::{AtomicUsize, Ordering},
 };
 
