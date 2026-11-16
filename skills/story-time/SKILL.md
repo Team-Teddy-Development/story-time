@@ -9,6 +9,38 @@ A small, opinionated agile planning loop. Each skill does one job. All of them
 read and write the same backlog through the same tool, so the output of one is
 the input of the next. Start a new project with the **story-setup** skill.
 
+## Hosted MCP first
+
+When the `story-time` MCP server is connected, call `story_repos` before any
+backlog work. For a repository that it lists, use the MCP tools and not the
+local `story` CLI:
+
+| Work | Tool |
+|---|---|
+| Read | `story_show`, `story_list`, `story_lint`, `story_config` |
+| Links between stories and repositories | `story_graph` |
+| Edit | `story_update`, `story_note`, `story_create` |
+| Tracker comments | `story_comments`, `story_resolve_comment` |
+
+- Name the `repository` in each call. The server serves several repositories.
+- An edit does not change your checkout. The server commits it to the branch
+  `story-time/<ID>` of that repository and opens a pull request. The result
+  gives `pr_url`. After that, `story_show` gives the edit under `proposed`.
+- Give `story_update` and `story_note` the `sha256` that `story_show` returned.
+  On `conflict`, read the story again and repeat the edit.
+
+Use the local `story` CLI in these cases:
+
+- `story_repos` does not list the repository, or the server is not connected.
+- The command has no tool: `story push`, `split`, `rank`, `plan`, `metrics`,
+  `machine`, `table`, `judge`, and `init`.
+- You publish to the tracker. Run `story push` from a checkout after the pull
+  request of the edit merges.
+
+The other skills stay the same. Where a skill names `story show`, `story list`,
+`story lint`, `story set`, `story note`, or `story new`, use the tool of the
+same job for a registered repository.
+
 ## Lifecycle
 
 ```
