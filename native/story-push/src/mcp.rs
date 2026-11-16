@@ -94,7 +94,7 @@ pub fn run(args: &[String]) -> Result<(String, u8), Failure> {
     }
     let (roots, write) = roots(&args, workspace.is_some())?;
     if let Some(workspace) = workspace.clone() {
-        std::thread::spawn(move || workspace.warm());
+        std::thread::spawn(move || workspace.keep_fetched());
     }
     let server = Server {
         roots,
