@@ -2030,10 +2030,11 @@ impl Tool {
             let on_gitea = server
                 .key(args)
                 .is_ok_and(|key| workspace.forge_of(&key) == Some(registry::Forge::Gitea));
-            if self.uses_forge() && on_gitea {
+            // ST-149 proposes changes on Gitea. Its comments wait for ST-150.
+            if on_gitea && self.uses_forge() && !propose::handles(self.name) {
                 return Err(fail(
                     "forge_not_supported",
-                    "Writes and comments on a Gitea repository are not supported yet.",
+                    "Comments on a Gitea repository are not supported yet.",
                 ));
             }
         }
