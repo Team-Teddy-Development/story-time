@@ -2,7 +2,7 @@
 
 *   **Author:** Eric Jernigan
 *   **Status:** In Review
-*   **Revision:** 3.2 (after EGM review Stage 8)
+*   **Revision:** 3.3 (after EGM review Stage 9)
 *   **Date:** 2026-11-16
 *   **Stories:** ST-151 (#344), ST-152 (#346). Prerequisites: ST-153 (#348),
     ST-154 (#350).
@@ -592,217 +592,538 @@ as a resolution.
 
 ## Detailed Implementation Plan
 
+### Phases
+
+Each phase ends with every listed command green. Commit tests red, then green,
+as recent history does. ST-154 (#350) merges before phase 4.
+
+| Phase | Items | Exit check |
+| --- | --- | --- |
+| 1. Parser | 1 | `cargo test` (native suite) |
+| 2. `check-pr` verb | 2, 5 (check-pr), 6, 7, 14 (check-pr) | Native suite, `npm test` |
+| 3. Switch `story-link` | 9, 10, 12 (§3 `story-link` template) | Native suite, both `rustc --test` policy suites, `story-link` green on its own PR |
+| 4. `sync-merge` verb | 3, 4, 5 (sync-merge), 6, 8, 14 (sync-merge) | Native suite, `npm test` |
+| 5. `story-sync` workflow | 11, 12 (rest) | Phases 1–4 checks, then the E2E steps in the Verification Plan |
+
+"Native suite" means the three `cargo` commands under Verification Plan.
+
 ### Target Files to Create/Modify
 
 #### 1. `native/story-push/src/stories_line.rs` (Create)
 
-*   **Type / Scope**: Rust domain module, shared by both verbs.
+*   **Type / Scope**: Rust domain module, shared by both verbs. Declared as
+    `mod stories_line;` (private), like the other verb helpers in `lib.rs`.
 *   **Proposed Changes**:
-    *   `Reference { id: Option<String>, issue: Option<u64>, partial: bool }`.
-    *   `parse(body: &str, prefix: &str) -> Vec<Reference>`. It finds the lines
-        whose label before `:` is `story` or `stories` (case-insensitive). It
-        splits each line into reference units: an ID or a `#N` starts a unit,
-        a `(#N)` directly after an ID joins that unit, and `(partial)` marks
-        the current unit.
-    *   `closing_targets(body: &str) -> Vec<u64>`, used by `check-pr` only.
-    *   Unit tests:
-        *   `ST-904 (#905) (partial)` gives one partial unit with both fields.
-        *   `#344` alone gives an issue-only unit.
-        *   A lowercase label, a malformed ID, a path-traversal ID, and a
-            missing line.
-        *   The `XY-` prefix.
-        *   Each keyword tense.
+    *   `pub(crate) struct Reference { id: Option<String>, issue: Option<u64>, partial: bool }`.
+    *   `pub(crate) fn parse(body: &str, prefix: &str) -> Vec<Reference>`.
+        *   It reads only lines whose label before `:` is `story` or `stories`,
+            in any case.
+        *   An ID is `<prefix>-` followed by 3 or more digits, the same grammar
+            as `scripts/story-policy.rs:5-9`. `#0` is not a reference.
+        *   An ID or a `#N` starts a unit. A `(#N)` after an ID, separated
+            from it only by spaces, joins that unit. `(partial)` marks the
+            current unit. Commas and spaces separate units.
+    *   `pub(crate) fn closing_targets(body: &str, repo: &str) -> Vec<u64>`.
+        It returns the issue numbers that a closing keyword targets in `repo`
+        only. The forms are `#N`, `owner/repo#N`, and
+        `https://github.com/owner/repo/issues/N`, after an optional colon. It
+        is used by `check-pr` only.
+    *   Unit tests, each with its expected result:
+        *   `Stories: ST-904 (#905) (partial)` gives one unit with both
+            fields and `partial: true`.
+        *   `Stories: #344` gives one unit with `issue: Some(344)` and no ID.
+        *   `Stories: ST-001 (#12), ST-002 (#13)` gives two units.
+        *   `stories: ST-001` (lowercase label) gives one unit.
+        *   `ST-01`, `ST-001x`, `ST-../001`, and `#0` give no unit.
+        *   A body with no `Stories:` line gives an empty list.
+        *   With prefix `XY`, `XY-001` is a unit and `ST-001` is not.
+        *   `close`, `closes`, `closed`, `fix`, `fixes`, `fixed`, `resolve`,
+            `resolves`, and `resolved`, each with and without a colon, give a
+            target. `owner/other#5` in repo `owner/repo` gives none.
 
 #### 2. `native/story-push/src/check_pr.rs` (Create)
 
-*   **Type / Scope**: Rust CLI verb (ST-152).
-*   **Proposed Changes**:
-    *   `story check-pr [--body-file PATH] [--json]`. It reads `PR_BODY`,
-        `IS_INCIDENT`, `STORY_ACCEPTANCE`, `REPO`, and `GH_TOKEN` from the
-        environment.
-    *   It runs rules 1–4. It gets labels through a `LabelSource` trait,
-        backed by `gh api repos/{repo}/issues/{n}`. An API failure is an
-        error, never "not a story".
-    *   Exit codes: 0 for a pass or a warning; 1 for a link failure, or a
-        finding in `fail` mode; 2 for a usage error.
+*   **Type / Scope**: Rust CLI verb (ST-152). `mod check_pr;` (private).
+*   **Inputs**:
+    *   Flags: `--body-file PATH`, `--json`. Any other flag is a usage error
+        (exit 2), as `push` does (`lib.rs:493-506`).
+    *   The body comes from `--body-file` when given, else from `PR_BODY`,
+        else it is empty. An empty body fails rule 1 unless it is an incident.
+    *   `IS_INCIDENT`: the PR is an incident only when the value is exactly
+        `true`.
+    *   `STORY_ACCEPTANCE`: unset, empty, or `warn` selects warn mode; `fail`
+        selects fail mode. Any other value is a usage error (exit 2):
+        `STORY_ACCEPTANCE must be warn or fail.`
+    *   `REPO` (owner/name) and `GH_TOKEN` are needed only when the body has a
+        `#N` reference or a closing keyword.
+    *   Settings: `prefix`, `backlogDir`, and `sync`, through the existing
+        `context()` (`lib.rs:116`).
+*   **Card checks**: Cards are read with
+    `lenient_story::parse_noting_drops(text)?.0.to_value()`, as `push` does
+    (`lib.rs:211-212`). Rule 2 uses `story::acceptance_criteria`
+    (`story.rs:236`). These cases are decided:
+    *   A card with zero criteria is a finding: `no acceptance criteria`.
+    *   A plain bullet with no checkbox counts as not done (the parser's
+        existing rule).
+    *   A spike with both sections is judged on `## Acceptance Criteria`,
+        because the parser reads that section first. This is accepted.
+*   **Issue kinds**: a trait in this module,
+    `pub(crate) trait IssueSource { fn kind(&mut self, repo: &str, n: u64) -> Result<IssueKind, String>; }`,
+    with `enum IssueKind { Story, Other, PullRequest }`. `Gateway` implements
+    it with `gh api repos/{repo}/issues/{n}`. A `pull_request` key means
+    `PullRequest`. A `story`, `spike`, `bug`, or `chore` label means `Story`.
+    An API failure is a rule 1 failure, never `Other`.
+*   **Output**:
+    *   Each finding is one line, `<reference>: <message>`. The messages are:
+
+        | Rule | Message |
+        | --- | --- |
+        | 1 | `no Stories: line`, `card not found`, `not a story issue`, `is a pull request`, `issue lookup failed` |
+        | 2 | `no card has remote N`, `status is <status>, not done`, `<k> of <n> criteria not ticked`, `no acceptance criteria` |
+        | 3 | `card has no remote`, `(#N) does not match remote M` |
+        | 4 | `closing keyword targets #N, which no accepted reference covers` |
+    *   Rule 1 failures print `FAIL: <line>` to stderr, as today, plus
+        `::error::<line>`.
+    *   In fail mode, rule 2–4 findings print the same way. In warn mode they
+        print `::warning::<line>`.
+    *   A pass prints `PASS: every declared story reference exists.`, the
+        existing text (`scripts/story-policy.rs:151`), plus
+        ` <n> warnings.` when warn mode found any.
+    *   An incident with no reference prints the existing text:
+        `PASS: incident exception; file the bug story within one business day.`
+    *   `--json` prints one object:
+        `{"mode":"warn|fail","incident":bool,"references":[{"id":str|null,"issue":int|null,"partial":bool}],"findings":[{"rule":1-4,"reference":str,"message":str}],"result":"pass|warn|fail"}`.
+*   **Exit codes**: 0 for a pass or warn result; 1 for any rule 1 failure, or
+    any finding in fail mode; 2 for a usage error.
 
 #### 3. `native/story-push/src/sync_merge.rs` (Create)
 
-*   **Type / Scope**: Rust CLI verb (ST-151).
-*   **Proposed Changes**:
-    *   `story sync-merge [--json]` runs steps 1–6.
-    *   `story sync-merge --all [--json]` runs the backstop.
-    *   A `MergeTracker` trait (`last_success`, `pulls_for_commit`, `update`,
-        `comment_once`) allows a fake in tests. Each error carries a
-        `retryable` or `permanent` kind.
-    *   `git rev-list --first-parent`, `git merge-base --is-ancestor`,
-        `git diff --name-only`, `git log -1 --format=%H <range> -- <path>`, and
-        `git show <rev>:<path>` run through `std::process::Command`.
-    *   It writes the job summary to `$GITHUB_STEP_SUMMARY` when set.
+*   **Type / Scope**: Rust CLI verb (ST-151). `mod sync_merge;` (private).
+*   **Inputs**:
+    *   Flags: `--all`, `--json`, `--workflow FILE` (default
+        `story-sync.yml`). Any other flag is a usage error (exit 2).
+    *   `GITHUB_REPOSITORY`: the workflow repository. Step 1 compares it with
+        `github.repo`.
+    *   `GITHUB_REF_NAME`: the default branch (the push trigger runs only on
+        it).
+    *   HEAD comes from `git rev-parse HEAD`.
+    *   Without `--all`, an unset `GITHUB_REPOSITORY` or `GITHUB_REF_NAME` is
+        a usage error. `--all` needs neither: it uses `github.repo`.
+    *   `sync` comes from settings. A missing `sync` is `off`
+        (`config.rs:216`), and `tracker: files` always has `sync: off`
+        (`config.rs:227-229`), so both skip at step 1.
+*   **Card selection**:
+    *   Changed cards: `git diff --name-only --no-renames <start> HEAD --
+        <backlogDir>`, kept when the file stem is a valid ID with the
+        configured prefix and the extension is `.md`.
+    *   Each card is read at HEAD with `git show HEAD:<path>` and parsed with
+        `lenient_story::parse_noting_drops(text)?.0.to_value()`.
+    *   Skip reasons:
+        *   `deleted`: the file is absent at HEAD.
+        *   `unparseable`: the parse fails. This is also a permanent failure.
+        *   `id_mismatch`: the frontmatter `id` differs from the file stem.
+        *   `pending_create`: `PENDING_CREATE` is set (`lib.rs:221`).
+        *   `unlinked`: the card has no `remote` (`lib.rs:217-219`).
+    *   The status at the range start comes from
+        `git show <start>:<path>`. A card absent there counts as a change.
+*   **References in PR bodies**:
+    *   An ID maps to its card.
+    *   A bare `#N` maps to the card whose `remote` is `N` (D14). If no card
+        matches, no comment is posted, and the report lists `#N` under
+        `skipped` with reason `unmapped`.
+    *   `sync-merge` does not check issue labels. `check-pr` rule 1 is that
+        gate.
+*   **Output**:
+    *   Plain text prints one line per action:
+        *   `updated ST-1 (#2)`
+        *   `skipped ST-3: <reason>`
+        *   `commented #2 (PR #5)`
+        *   `state #2 (<commit>)`
+        *   `existing #2 (PR #5)`
+        *   `failed ST-4: <retryable|permanent>: <message>`
+    *   A summary line follows:
+        `range <from>..<to> (<range|all>): <p> PRs, <u> updated, <s> skipped, <c> commented, <f> failed`.
+    *   A push with no PR adds `no pull request for <sha>`. The `--all` path
+        adds its reason, for example `all: no earlier successful push run`.
+    *   `--json` prints one object:
+        `{"range":{"from":str|null,"to":str,"mode":"range|all","reason":str|null},"prs":[int],"updated":[str],"skipped":[{"id":str,"reason":str}],"commented":[{"issue":int,"pr":int|null,"kind":"merge|state"}],"existing":[{"issue":int,"pr":int|null}],"failed":[{"target":str,"kind":"retryable|permanent","message":str}]}`.
+    *   When `GITHUB_STEP_SUMMARY` is set, the plain text is appended to it
+        in a fenced block.
+*   **Exit codes**: 0, unless a retryable failure occurred (1) or a usage
+    error (2).
+*   **Git calls** run through `std::process::Command`:
+    *   `git rev-list --first-parent <start>..HEAD`
+    *   `git merge-base --is-ancestor <start> HEAD`
+    *   `git diff` (as above)
+    *   `git log -1 --format=%H <start>..HEAD -- <path>`
+    *   `git show <rev>:<path>`
 
 #### 4. `native/story-push/src/gateway.rs` (Modify)
 
 *   **Type / Scope**: Rust tracker adapter (ST-151).
-*   **Proposed Changes**:
-    *   Add `last_success(workflow, branch)`, through
-        `gh run list --event push --status success --json headSha`.
-    *   Add `pulls_for_commit(sha)`, through
-        `gh api repos/{repo}/commits/{sha}/pulls`, filtered as in step 3.
-    *   Add `comment_once(issue, marker, body)`. It runs a paginated list,
-        then `gh issue comment --body-file -` when the marker is absent.
-    *   Implement `MergeTracker` for `Gateway`.
-    *   Unit tests use the fake-`gh` harness at `gateway.rs:1690`.
-    *   The label fix itself is ST-154, not this item.
+*   **Error kinds.**
+    *   Add `pub enum ErrorKind { Retryable, Permanent }` and
+        `pub struct TrackerError { pub kind: ErrorKind, pub message: String }`.
+    *   Add `Cli::run_classified`, which has the same body as `Cli::run`
+        (`gateway.rs:72-135`). It reads stderr to classify the failure, but it
+        never copies stderr into `message`. The test at `gateway.rs:1748-1754`
+        stays green, and a new test asserts the same for `run_classified`.
+    *   `Cli::run` becomes `run_classified(..).map_err(|e| e.message)`, so
+        existing callers and messages do not change.
+    *   The classification rules, applied in order:
+
+        | Condition | Kind |
+        | --- | --- |
+        | Timeout, spawn failure, unreadable output | Retryable |
+        | stderr has `HTTP 429`, `rate limit`, or `HTTP 5` followed by two digits | Retryable |
+        | stderr has `HTTP 404`, `HTTP 410`, or `Could not resolve to an issue` | Permanent |
+        | `remote` is not a positive integer (`gateway.rs:466-468`) | Permanent |
+        | Any other non-zero exit, including `HTTP 401` and `HTTP 403` | Retryable |
+
+        Authentication failures are retryable on purpose: the job goes red,
+        and the range is kept.
+    *   A transferred issue is permanent. It is detected when the `url`
+        returned by `issue view` names a repository other than `github.repo`.
+*   **New methods**, GitHub backend only. Every call passes `--repo {repo}`.
+    *   `last_success(workflow, branch) -> Result<Option<String>, TrackerError>`
+        runs `gh run list --repo {repo} --workflow {workflow} --branch {branch} --event push --status success --limit 1 --json headSha`.
+    *   `pulls_for_commit(sha) -> Result<Vec<MergedPull>, TrackerError>` runs
+        `gh api repos/{repo}/commits/{sha}/pulls`. It returns
+        `MergedPull { number: u64, body: String, base: String, merged_at: Option<String>, merge_commit_sha: Option<String> }`
+        with no filter. `sync_merge.rs` applies the step 3 filter, because
+        that filter needs the range.
+    *   `comment_once(issue, marker, body) -> Result<CommentOutcome, TrackerError>`
+        returns `enum CommentOutcome { Posted, Existing }`.
+        *   It lists the comments with
+            `gh api --paginate repos/{repo}/issues/{n}/comments --jq '.[] | [.user.login, .body] | @json'`.
+        *   A comment counts as existing only when its author is
+            `github-actions[bot]` and one of its lines equals the marker
+            exactly. This follows the bot-only rule in
+            `mcp/comments.rs:1-5`. Any other user who posts the marker
+            therefore cannot suppress a comment.
+        *   Otherwise it posts with
+            `gh issue comment {n} --repo {repo} --body-file -`.
+    *   `update_classified(story) -> Result<Remote, TrackerError>`. It is the
+        same as `update`, but it goes through `run_classified`.
+*   **Trait.** Add `pub trait MergeTracker: Tracker` (`lib.rs:123`) with the
+    four methods above, implemented for `Gateway`. For `Backend::Ado` and
+    `Backend::Gitea`, each method returns
+    `Permanent("unsupported tracker")`. Step 1 skips those trackers before
+    any call is made.
+*   **Unit tests** extend `stub_cli` (`gateway.rs:1686`) with match arms for
+    `run list`, `api .../pulls`, `api ... comments`, and `issue comment`.
+    They also add the classification table cases.
+*   The label fix is ST-154, not this item.
 
 #### 5. `native/story-push/src/lib.rs` (Modify)
 
 *   **Type / Scope**: Rust CLI core.
-*   **Proposed Changes**: Register `check-pr` and `sync-merge` in the command
-    table, and add the three `mod` lines. `push`, `plans`, and `execute` are
-    unchanged.
+*   **Proposed Changes**:
+    *   Phase 2: add `mod stories_line;`, `mod check_pr;`, and
+        `("check-pr", check_pr::run)` to the command table.
+    *   Phase 4: add `mod sync_merge;` and `("sync-merge", sync_merge::run)`.
+    *   `push`, `plans`, and `execute` are unchanged.
 
-#### 6. `native/story-push/src/help.rs` (Modify)
+#### 6. Native command lists (Modify)
 
-*   **Type / Scope**: CLI help text.
-*   **Proposed Changes**: Document both verbs. Update
-    `tests/help_contract.rs` and `tests/help_lists_native.rs`.
+*   **Type / Scope**: Help and documentation that tests check against the
+    command table. Each phase that registers a verb adds it to every file
+    below, in the same commit.
+*   **Files and text**:
+    *   `skills/story-time/scripts/usage.txt` (`help.rs:5` embeds it). Add:
+        *   `check-pr [--body-file F] [--json]          Check a PR's Stories: line and acceptance (CI)`
+        *   `sync-merge [--all] [--json]               Mirror merged cards and comment on story issues (CI)`
+    *   `skills/story-time/scripts/story.mjs:34`: add `'check-pr'` and
+        `'sync-merge'` to `NATIVE_ONLY` (`tests/node_unknown_command.rs`).
+    *   `AGENTS.md:5`, `README.md` (the list starting "Native `story init`"),
+        and both lists in `skills/story-time/SKILL.md` (starting at lines 99
+        and 108): add `check-pr` and `sync-merge`
+        (`tests/doc_native_lists.rs`).
+    *   `skills/story-time/SKILL.md` command table: add one row for each verb,
+        marked "Native Rust".
+    *   `native/story-push/tests/help_lists_native.rs`: assert that the help
+        output contains `check-pr` and `sync-merge`.
+    *   `docs/native-story-push.md`: one paragraph for each verb.
+*   `native/story-push/src/help.rs` and `tests/help_contract.rs` do not
+    change.
 
 #### 7. `native/story-push/tests/check_pr_contract.rs` (Create)
 
 *   **Type / Scope**: Rust contract tests (ST-152).
-*   **Proposed Changes**: The tests run the built binary against a temporary
-    backlog and a fake `gh`. One test covers each amended criterion:
-    *   AC1: a `done`, fully ticked card passes.
-    *   AC2: a card that is not done, or has an unticked box, fails in `fail`
-        mode.
+*   **Harness**: `tests/common/mod.rs` (Create). It moves `install_stub_gh`
+    from `tests/push_lenient_contract.rs:121` there, and that file then uses
+    it.
+    *   The stub reads `responses.tsv` from its working directory. Each line
+        is `<argument prefix>\t<exit code>\t<stdout file>\t<stderr text>`.
+    *   The first line whose prefix matches answers the call. No match exits
+        0 with no output.
+    *   Every call is appended to `gh-calls`, so tests can count calls.
+    *   `PATH` is the sandbox `bin` plus the directory of the real `git`, as
+        in `tests/new_contract.rs:33`.
+*   **Tests**, one or more for each criterion of ST-152, as amended:
+    *   AC1: a `done` card with every box ticked passes.
+    *   AC2: in fail mode, a card that is not done fails. So does a done card
+        with one unticked box.
     *   AC3: `(partial)` passes, including the CUJ 2 string.
-    *   AC4: an `incident` PR passes.
-    *   AC5: a keyword on an uncovered story issue fails. On a covered issue
-        it passes.
-    *   AC6: `warn` mode exits 0 with `::warning::`.
-    *   A spike with unticked Exit Criteria fails rule 2.
-    *   Extra tests:
-        *   An unlinked card is a finding, except with `sync: off`.
-        *   A bare `#N` maps to its card.
-        *   An ID and `(#N)` that disagree is a finding in `fail` mode and a
-            warning in `warn` mode.
-        *   `Closes: owner/repo#N` and an issue URL are recognized.
-        *   The `XY-` prefix and a custom `backlogDir` work.
+    *   AC4: an incident PR with no reference passes and prints the incident
+        text.
+    *   AC5: in fail mode, a keyword on an uncovered story issue fails. A
+        keyword on a covered issue passes.
+    *   AC6: warn mode exits 0 and prints `::warning::`.
+*   **Extra tests**, each with its expected result:
+    *   A spike with unticked Exit Criteria (and no Acceptance Criteria) fails
+        rule 2 in fail mode.
+    *   A done card with zero criteria fails rule 2 in fail mode.
+    *   An unlinked card is a finding. With `sync: off`, it is not.
+    *   A bare `#N` uses the card whose `remote` is `N`.
+    *   An ID and `(#N)` that disagree fail in fail mode and warn in warn mode.
+    *   `Closes: owner/repo#N` and an issue URL each count as a keyword.
+    *   The `XY-` prefix and a custom `backlogDir` work.
+    *   `STORY_ACCEPTANCE=strict` exits 2.
+    *   A label API failure (stub exit 1) exits 1.
+    *   These are moved from `test/story-policy-contract.rs` (item 9):
+        `ST-001` passes, `Related ST-001` and `ST-999999999999` fail with
+        `FAIL:`, and an incident PR with an invalid reference still fails.
 
 #### 8. `native/story-push/tests/sync_merge_contract.rs` (Create)
 
 *   **Type / Scope**: Rust contract tests (ST-151).
-*   **Proposed Changes**: The tests run against a fake `gh` and a temporary
-    git repository with a bare `origin`.
-    *   AC1: one comment per PR per issue, and a rerun posts none.
-    *   AC2: close and reopen follow the card.
-    *   AC3: drift is fixed.
-    *   AC4: card bytes are unchanged.
-    *   AC5: `sync: off` and `tracker: files` make zero `gh` calls.
-    *   AC6 (amended): with no PR, changed cards are mirrored, no comment is
-        posted, and the report names the SHA.
-    *   AC7: `git status --porcelain` is empty.
-    *   Extra tests:
-        *   The range starts at the last successful push run, so a skipped
-            run's PR is covered. A successful `--all` run does not advance it.
-        *   A last-success commit that is not an ancestor, or a missing run
-            history, takes the `--all` path.
-        *   One push that carries two PRs gets both comments, and a true merge
-            of a 50-commit branch makes one PR lookup.
-        *   A retryable failure exits 1. A permanent failure (404) exits 0,
-            and the next run's range starts after it.
-        *   A rerun after a run that closed an issue but failed before
-            commenting posts the AC2 state comment once.
-        *   An unnamed card whose status changed gets one state comment with
-            the `merge-sync-state` marker. A named card gets only the merge
-            comment.
-        *   Deleted and `pending_create` cards are skipped with their reasons.
+*   **Harness**: the item 7 stub, a temporary git repository with a bare
+    `origin`, and `GITHUB_REPOSITORY` and `GITHUB_REF_NAME` set.
+*   **Tests**, one or more for each criterion of ST-151, as amended:
+    *   AC1: each PR gets one comment on each issue, and a rerun posts none.
+    *   AC2: the issue closes and reopens with the card's status.
+    *   AC3: an issue whose title, labels, or state differs from its card is
+        updated to match the card.
+    *   AC4: the card bytes are unchanged. The issue of a named story that is
+        not done is not closed.
+    *   AC5: `sync: off` and `tracker: files` each make zero `gh` calls.
+    *   AC6, as amended: with no PR, changed cards are mirrored. A status
+        change gets one state comment, and no merge comment is posted. The
+        report names the SHA.
+    *   AC7: `git status --porcelain` is empty after the run.
+*   **Extra tests**, each with its expected result:
+    *   The range starts at the last successful push run, so the PR of a
+        skipped run gets its comment. A successful `--all` run does not move
+        the start.
+    *   A start commit that is not an ancestor of HEAD, or an empty run
+        history, takes the `--all` path and reports why.
+    *   One push that carries two PRs gets both comments.
+    *   A merge commit (not a squash) of a 50-commit branch makes one PR
+        lookup.
+    *   A 503 response exits 1. A 404 exits 0, and the next run's range
+        starts after it.
+    *   A rerun posts the comment that a failed run missed, once. This holds
+        for the merge comment of a named card and for the state comment of
+        an unnamed card.
+    *   A marker posted by another user does not suppress the comment.
+    *   The report lists deleted, `pending_create`, `id_mismatch`, and
+        `unmapped` items, each with its reason.
 
-#### 9. `scripts/story-policy.rs` (Modify)
+#### 9. `scripts/story-policy.rs` and `test/story-policy-contract.rs` (Modify)
 
-*   **Type / Scope**: This repository's CI checker.
-*   **Proposed Changes**: Remove the `story-link` subcommand and
-    `references()`. Keep `story-ids`, the check that rejects a new story ID
-    already used on the default branch or in an older open PR.
+*   **Type / Scope**: This repository's CI checker and its contract suite.
+*   **`scripts/story-policy.rs`**:
+    *   Remove `references` (:16), `validate_links` (:42), `link` (:126),
+        and the `story-link` arm (:221).
+    *   Remove the link unit tests (:239-310), and keep the ID tests
+        (:312-320).
+    *   Change the usage string to `Usage: story-policy story-ids`.
+    *   `story_id` and `story_file` stay, because `ids` uses them.
+*   **`test/story-policy-contract.rs`**:
+    *   Remove `link()` (:58) and the three `real_cli_*` link tests (:91-117).
+        Item 7 now covers them.
+    *   In `cartographer_preparation_keeps_distinct_story_ids_and_no_runtime_authority`
+        (:400), replace the `link("Stories: ST-002")` assertion with an
+        assertion that `backlog/ST-002.md` exists.
+    *   In the meta-test list (:168-174), drop
+        `real_cli_rejects_missing_and_undeclared_stories`.
+*   `.story-time/settings.json` `testCommand` does not change, because both
+    suites still exist.
 
 #### 10. `.github/workflows/story-link.yml` (Modify)
 
-*   **Type / Scope**: CI configuration (ST-152).
-*   **Proposed Changes**: Install the cached binary as in item 11. Run
-    `story check-pr` with this `env`:
-    *   `PR_BODY`: `github.event.pull_request.body`
-    *   `IS_INCIDENT`: `contains(github.event.pull_request.labels.*.name, 'incident')`
-    *   `REPO`: `github.repository`
-    *   `GH_TOKEN`: `github.token`
-    *   `STORY_ACCEPTANCE`: `vars.STORY_ACCEPTANCE`
+*   **Type / Scope**: CI configuration (ST-152). The job ID stays
+    `story-link`, which the ruleset requires
+    (`.github/story-mandate-ruleset.json:19`). It is one job: the token can
+    only read, and it is set on the check step only. The rustc step is
+    removed. The `story-policy-tests` job still runs those tests.
+*   **Full file**:
+
+    ```yaml
+    name: story-link
+    on:
+      pull_request:
+        types: [opened, edited, synchronize, reopened, labeled, unlabeled]
+    permissions:
+      contents: read
+      issues: read
+      pull-requests: read
+    jobs:
+      story-link:
+        runs-on: ubuntu-latest
+        steps:
+          - uses: actions/checkout@v4
+            with:
+              persist-credentials: false
+          - uses: dtolnay/rust-toolchain@stable
+          - id: cache
+            uses: actions/cache@v4
+            with:
+              path: ~/.story-root/bin/story
+              key: story-${{ hashFiles('native/story-push/**', 'skills/story-time/scripts/usage.txt') }}
+          - if: steps.cache.outputs.cache-hit != 'true'
+            run: cargo install --locked --path native/story-push --bin story --root ~/.story-root
+          - name: Check declared stories
+            env:
+              PR_BODY: ${{ github.event.pull_request.body }}
+              IS_INCIDENT: ${{ contains(github.event.pull_request.labels.*.name, 'incident') }}
+              STORY_ACCEPTANCE: ${{ vars.STORY_ACCEPTANCE }}
+              REPO: ${{ github.repository }}
+              GH_TOKEN: ${{ github.token }}
+            run: ~/.story-root/bin/story check-pr
+    ```
+
+    In this repository, a PR can change the checker that checks it. This is
+    true today too, because `rustc` builds `scripts/story-policy.rs` from the
+    PR checkout.
 
 #### 11. `.github/workflows/story-sync.yml` (Create)
 
 *   **Type / Scope**: CI configuration (ST-151).
-*   **Proposed Changes**:
-    *   **Triggers**: `push` to `main` (consumers change it to their default
-        branch, because GitHub does not expand expressions in branch filters).
-        Also `workflow_dispatch`, with an `all` boolean input, and a weekly
-        `schedule` that runs `--all`.
-    *   **Concurrency**: `concurrency: { group: story-sync, cancel-in-progress: false }`,
-        shared by all three triggers.
-    *   **Job `build`**, with `permissions: {}`:
-        1.  `dtolnay/rust-toolchain@stable`.
-        2.  `actions/cache` on `~/.cargo/bin/story`. This repository keys on
-            a hash of `native/story-push/**` and `Cargo.lock`. The template
-            keys on the pinned `--rev`.
-        3.  On a miss, `cargo install --locked`. This repository installs
-            from a checkout of its own source with `--path native/story-push`
-            (checkout with `persist-credentials: false`). The template
-            installs with
-            `--git https://github.com/Team-Teddy-Development/story-time --rev <sha>`.
-        4.  `actions/upload-artifact` of the binary.
-    *   **Job `sync`**, which needs `build`, with `contents: read`,
-        `issues: write`, `pull-requests: read`, and `actions: read`:
-        1.  `actions/checkout` with `fetch-depth: 0` and
-            `persist-credentials: false`.
-        2.  `actions/download-artifact` of the binary.
-        3.  `story sync-merge --json`, or `--all` for a dispatch or schedule
-            run. Set `GH_TOKEN: ${{ github.token }}` on this step only.
-        4.  `test -z "$(git status --porcelain)"`.
+*   **Full file**:
+
+    ```yaml
+    name: story-sync
+    on:
+      push:
+        branches: [main]
+      schedule:
+        - cron: '17 6 * * 1'
+      workflow_dispatch:
+        inputs:
+          all:
+            type: boolean
+            default: true
+    concurrency:
+      group: story-sync
+      cancel-in-progress: false
+    permissions: {}
+    jobs:
+      build:
+        runs-on: ubuntu-latest
+        permissions: {}
+        steps:
+          - uses: actions/checkout@v4
+            with:
+              persist-credentials: false
+          - uses: dtolnay/rust-toolchain@stable
+          - id: cache
+            uses: actions/cache@v4
+            with:
+              path: ~/.story-root/bin/story
+              key: story-${{ hashFiles('native/story-push/**', 'skills/story-time/scripts/usage.txt') }}
+          - if: steps.cache.outputs.cache-hit != 'true'
+            run: cargo install --locked --path native/story-push --bin story --root ~/.story-root
+          - uses: actions/upload-artifact@v4
+            with:
+              name: story-bin
+              path: ~/.story-root/bin/story
+      sync:
+        needs: build
+        runs-on: ubuntu-latest
+        permissions:
+          contents: read
+          issues: write
+          pull-requests: read
+          actions: read
+        steps:
+          - uses: actions/checkout@v4
+            with:
+              fetch-depth: 0
+              persist-credentials: false
+          - uses: actions/download-artifact@v4
+            with:
+              name: story-bin
+              path: ${{ runner.temp }}/story-bin
+          - run: chmod +x "$RUNNER_TEMP/story-bin/story"
+          - name: Sync merged stories
+            env:
+              GH_TOKEN: ${{ github.token }}
+              ALL: ${{ github.event_name == 'schedule' || inputs.all == true }}
+            run: |
+              if [ "$ALL" = true ]; then
+                "$RUNNER_TEMP/story-bin/story" sync-merge --all --json
+              else
+                "$RUNNER_TEMP/story-bin/story" sync-merge --json
+              fi
+          - run: test -z "$(git status --porcelain)"
+    ```
+
+    A dispatch with `all: false` runs the range path and posts comments. It
+    is not a push run, so it never moves the range start.
 
 #### 12. `docs/playbook.md` (Modify)
 
 *   **Type / Scope**: Documentation.
-*   **Proposed Changes**:
-    *   §3: Replace the bash `story-link` template with the `check-pr`
-        template. Add `story-sync.yml`, the `vars.STORY_ACCEPTANCE` roll-out,
-        `(partial)`, the closing-keyword rule, and the default-branch note.
-    *   §2 rule 5: The PR carries the `done` card, and `story-sync` closes
+*   **Consumer templates.** §3 replaces the bash `story-link` template with
+    the item 10 file, and adds the item 11 file. Each is copied with three
+    substitutions:
+    *   The install step becomes
+        `cargo install --locked --git https://github.com/Team-Teddy-Development/story-time --rev <sha> story-time-native --bin story --root ~/.story-root`.
+        It does not check out story-time's source.
+    *   The cache key becomes `story-<sha>`.
+    *   `branches: [main]` becomes the consumer's default branch.
+*   **Text changes**:
+    *   §3 also adds:
+        *   the `vars.STORY_ACCEPTANCE` roll-out and its trigger (D18);
+        *   `(partial)`;
+        *   the closing-keyword rule;
+        *   the default-branch note.
+    *   §3 mechanism table (`playbook.md:139-145`): add a `story-sync` row.
+    *   §2 rule 5: the PR carries the `done` card, and `story-sync` closes
         the issue after the merge.
+    *   §5 step 2 (`playbook.md:290`): add `story-sync.yml` to the workflows
+        to copy.
 
-#### 13. `backlog/ST-151.md`, `backlog/ST-152.md` (Modify; done with this revision)
+#### 13. `backlog/ST-151.md`, `backlog/ST-152.md` (Modify)
 
 *   **Type / Scope**: Story cards.
-*   **Proposed Changes**: Amend ST-151 AC6 (D16) and its Out of Scope
-    (D7). Replace the ST-151 Notes on `--no-write-back` (D3). Amend ST-152
-    AC1 and AC2 (merge ref) and AC5 (D7, D15). Name `check-pr` in ST-152.
-    Set ST-152 `depends_on: [ST-153]`. Publish both with `story push`.
+*   **Status**: Revisions 3 to 3.2 applied these amendments, and
+    `story push` published them on 2026-11-16 (#344, #346):
+    *   ST-151: AC1 (D13), AC6 (D16 and the state comment), and Out of
+        Scope.
+    *   ST-152: AC1, AC2, and AC5, plus `depends_on: [ST-153]`.
+    *   The re-estimates: ST-151 to 8, ST-152 to 5.
+
+    No step remains.
+
+#### 14. Shared test harness (Create, Modify)
+
+*   `native/story-push/tests/common/mod.rs` (Create), as described in item 7.
+*   `native/story-push/tests/push_lenient_contract.rs` (Modify). It uses
+    `common::install_stub_gh` in place of its own copy.
 
 ### Verification Plan
 
 *   **Compilation/Build**:
     `cargo build --manifest-path native/story-push/Cargo.toml --release --locked`
-*   **Unit and contract tests**:
-    `cargo test --manifest-path native/story-push/Cargo.toml --locked`
-*   **Static Analysis & Linting**:
+*   **Native suite**:
+    *   `cargo test --manifest-path native/story-push/Cargo.toml --locked`
     *   `cargo fmt --manifest-path native/story-push/Cargo.toml --check`
     *   `cargo clippy --manifest-path native/story-push/Cargo.toml --locked --all-targets -- -D warnings`
-    *   `story lint ST-151 ST-152 ST-153 ST-154`
-*   **Test Coverage Requirement**: Each acceptance criterion of ST-151 (7) and
-    ST-152 (6) has at least one named contract test.
-*   **E2E/Integration**, in story-time itself:
-    1.  Open a PR that names an `in-progress` story. `story-link` warns.
+*   **Policy suites**: the `testCommand` in `.story-time/settings.json`. It
+    runs `npm test`, then both `rustc --test` suites.
+*   **Backlog**: `story lint ST-151 ST-152 ST-153 ST-154`.
+*   **Test coverage requirement**: each acceptance criterion of ST-151 (7)
+    and ST-152 (6) has at least one named contract test.
+*   **E2E/Integration**, in story-time itself. Preconditions:
+    `.story-time/settings.json` has `sync: ask`, and `vars.STORY_ACCEPTANCE`
+    is unset.
+    1.  Open a PR that names an `in-progress` story. `story-link` passes with
+        one `::warning::`.
     2.  Merge a PR that names a `done` story. Its issue closes, with one
-        comment.
-    3.  Rerun `story-sync`. No second comment appears.
-    4.  Merge two PRs within one minute. Both get their comments.
-
---------------------------------------------------------------------------------
-
-*Drafted with EGM*
+        merge comment.
+    3.  Rerun `story-sync` for that push. No second comment appears.
+    4.  Merge a second PR before the first PR's `story-sync` run finishes.
+        Both PRs get their comments, and the runs happen one after the other.
