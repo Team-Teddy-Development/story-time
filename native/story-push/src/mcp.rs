@@ -2232,7 +2232,7 @@ fn repos_schema() -> Value {
             "forge": {"enum": ["github", "gitea"]},
             "sha": nullable_text,
             "fetched_at": nullable_text,
-            "state": {"enum": ["ready", "stale", "cloning", "unavailable"]},
+            "state": {"enum": ["ready", "cloning", "unavailable"]},
             "last_error": nullable_text,
         }),
     );

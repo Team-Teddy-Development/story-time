@@ -477,7 +477,7 @@ The server refuses to start when an entry names a `forge` other than `github` an
 
 - A read fetches the repository when its last fetch is older than `fetch_ttl_seconds`. `story_list`, `story_show`, and `story_lint` name the commit they read in `sha` and the time of the fetch in `fetched_at`.
 - The same three tools take `ref`, the name of a branch, and read the head of that branch.
-- `story_repos` lists each repository with its `org`, its `forge`, and its `state`: `ready`, `stale`, `cloning`, or `unavailable` with `last_error`. `stale` means the last fetch failed: reads serve the commit of the last fetch that worked, and `sha` names it. The server fetches each repository again once per `fetch_ttl_seconds`, with or without reads, and the state returns to `ready` when a fetch works.
+- `story_repos` lists each repository with its `org`, its `forge`, and its `state`: `ready`, `cloning`, or `unavailable` with `last_error`. A `ready` entry with a `last_error` means the last fetch failed: reads serve the commit of the last fetch that worked, and `sha` names it. The server fetches each repository again once per `fetch_ttl_seconds`, with or without reads, and `last_error` returns to null when a fetch works.
 - A repository that the server cannot reach returns the retryable error `repository_unavailable`. The other repositories keep working, and `/readyz` stays 200.
 - `story_lint` checks links across every registered repository, and reports `links.undeclared_prefix` for a story whose prefix the registry does not declare for its repository.
 

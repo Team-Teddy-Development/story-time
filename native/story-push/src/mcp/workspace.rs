@@ -575,12 +575,10 @@ impl Workspace {
         let repo = &self.registry.repos[index];
         let branch = slot.default_branch.as_deref().filter(|_| slot.cloned);
         let status = Status {
-            state: match (slot.cloned, slot.tried, &slot.last_error) {
-                // Reads still serve the commit of the last fetch that worked.
-                (true, _, Some(_)) => "stale",
-                (true, _, None) => "ready",
-                (false, None, _) => "cloning",
-                (false, Some(_), _) => "unavailable",
+            state: match (slot.cloned, slot.tried) {
+                (true, _) => "ready",
+                (false, None) => "cloning",
+                (false, Some(_)) => "unavailable",
             },
             sha: branch.and_then(|branch| self.head(repo, branch)),
             fetched_at: slot.fetched_at.clone().filter(|_| slot.cloned),

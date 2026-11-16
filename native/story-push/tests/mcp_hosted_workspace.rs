@@ -580,7 +580,7 @@ fn a_fetch_is_tried_again_when_the_forge_name_does_not_resolve() {
     );
 }
 
-/// ST-155 (VM-034): a `git` that fails each fetch with the resolver text while the file
+/// ST-156 (VM-034): a `git` that fails each fetch with the resolver text while the file
 /// `down` exists in its directory, which this returns with the PATH for the server.
 fn git_down_while_flagged(fixture: &Fixture) -> (std::ffi::OsString, PathBuf) {
     use std::os::unix::fs::PermissionsExt;
@@ -605,7 +605,7 @@ fn git_down_while_flagged(fixture: &Fixture) -> (std::ffi::OsString, PathBuf) {
 }
 
 #[test]
-fn a_failed_fetch_is_stale_until_the_background_fetch_works() {
+fn a_failed_fetch_shows_its_error_beside_ready_until_the_background_fetch_works() {
     let fixture = Fixture::new();
     let (path, down) = git_down_while_flagged(&fixture);
     let server = fixture.serve_on(&fixture.registry(""), &[], Some(&path));
@@ -619,47 +619,39 @@ fn a_failed_fetch_is_stale_until_the_background_fetch_works() {
             .clone()
     };
     // story_repos does not fetch, so each change below is the work of the background fetch.
-    let until = |server: &Http, state: &str| -> Value {
+    let until = |server: &Http, what: &str, done: &dyn Fn(&Value) -> bool| -> Value {
         let deadline = std::time::Instant::now() + Duration::from_secs(4 * TTL + 60);
         loop {
             let entry = core(server);
-            if entry["state"] == state {
+            if done(&entry) {
                 return entry;
             }
             assert!(
                 std::time::Instant::now() < deadline,
-                "core never became {state}: {entry}"
+                "core never {what}: {entry}"
             );
             std::thread::sleep(Duration::from_millis(200));
         }
     };
 
-    let good = until(&server, "ready");
+    let good = until(&server, "became ready", &|e| e["state"] == "ready");
     assert_eq!(good["sha"], fixture.head("core", "main").as_str());
     assert!(good["last_error"].is_null(), "{good}");
 
     fs::write(&down, "").unwrap();
-    let stale = until(&server, "stale");
+    let failed = until(&server, "showed a failed fetch", &|e| {
+        !e["last_error"].is_null()
+    });
+    assert_eq!(failed["state"], "ready", "the state enum does not change");
     assert_eq!(
-        stale["sha"], good["sha"],
+        failed["sha"], good["sha"],
         "the last good fetch still serves reads"
     );
     assert!(
-        stale["last_error"]
+        failed["last_error"]
             .as_str()
             .is_some_and(|e| e.contains("Could not resolve host")),
-        "{stale}"
-    );
-    let schema = server
-        .tools(READER)
-        .into_iter()
-        .find(|tool| tool["name"] == "story_repos")
-        .unwrap();
-    let states = &schema["outputSchema"]["properties"]["repositories"]["items"]["properties"]
-        ["state"]["enum"];
-    assert!(
-        states.as_array().unwrap().contains(&json!("stale")),
-        "{states}"
+        "{failed}"
     );
 
     fixture.write(
@@ -669,9 +661,11 @@ fn a_failed_fetch_is_stale_until_the_background_fetch_works() {
     );
     let moved = fixture.commit("core", "second");
     fs::remove_file(&down).unwrap();
-    let back = until(&server, "ready");
+    let back = until(&server, "fetched the new commit", &|e| {
+        e["sha"] == moved.as_str()
+    });
+    assert_eq!(back["state"], "ready");
     assert!(back["last_error"].is_null(), "{back}");
-    assert_eq!(back["sha"], moved.as_str());
 }
 
 #[test]
