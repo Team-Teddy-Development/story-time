@@ -1696,7 +1696,9 @@ mod tests {
                 let mut log=OpenOptions::new().create(true).append(true).open("calls").unwrap();
                 writeln!(log,"{:?} stdin={}",args,input).unwrap();
                 if args.iter().any(|s|s=="fail") { eprintln!("private-cli-token");std::process::exit(7); }
-                if args.first().map(String::as_str)==Some("issue") {
+                if args.first().map(String::as_str)==Some("label") && args.get(1).map(String::as_str)==Some("list") {
+                    print!("{}", std::fs::read_to_string("labels.json").unwrap_or_else(|_| "[]".into()));
+                } else if args.first().map(String::as_str)==Some("issue") {
                     match args[1].as_str() {
                         "create"=>println!("https://github.com/acme/shop/issues/11"),
                         "view"=>println!("{{\"labels\":[{{\"name\":\"team\"}},{{\"name\":\"size:5\"}}],\"state\":\"CLOSED\"}}"),
@@ -1742,6 +1744,68 @@ mod tests {
             )),
             timeout: TRACKER_CLI_TIMEOUT,
         }
+    }
+
+    fn github_gateway(tmp: &Temp) -> Gateway {
+        Gateway {
+            config: json!({}),
+            backend: Backend::Github {
+                repo: "acme/shop".into(),
+                cli: stub_cli(&tmp.0, "gh"),
+                labels: None,
+            },
+        }
+    }
+
+    #[test]
+    fn existing_github_labels_keep_their_color() {
+        let tmp = Temp::new();
+        fs::write(
+            tmp.0.join("labels.json"),
+            r#"[{"name":"size:5"},{"name":"story"}]"#,
+        )
+        .unwrap();
+        let mut s = story("ready");
+        s["remote"] = json!(11);
+        s["size"] = json!(5);
+        github_gateway(&tmp).update(&s).unwrap();
+        github_gateway(&tmp).update(&s).unwrap();
+        let calls = fs::read_to_string(tmp.0.join("calls")).unwrap();
+        assert!(!calls.contains("\"label\", \"create\", \"size:5\""), "{calls}");
+        assert!(!calls.contains("\"--force\""), "{calls}");
+        assert_eq!(
+            calls.lines().filter(|l| l.contains("\"label\", \"list\"")).count(),
+            2,
+            "one list per fresh process: {calls}"
+        );
+    }
+
+    #[test]
+    fn missing_github_labels_are_created_once_with_a_family_color() {
+        let tmp = Temp::new();
+        let mut s = story("ready");
+        s["remote"] = json!(11);
+        s["size"] = json!(5);
+        let mut gateway = github_gateway(&tmp);
+        gateway.update(&s).unwrap();
+        gateway.update(&s).unwrap();
+        let calls = fs::read_to_string(tmp.0.join("calls")).unwrap();
+        let creates = |name: &str, color: &str| {
+            calls
+                .lines()
+                .filter(|l| {
+                    l.contains(&format!("\"label\", \"create\", \"{name}\""))
+                        && l.contains(&format!("\"--color\", \"{color}\""))
+                })
+                .count()
+        };
+        assert_eq!(creates("size:5", "c5def5"), 1, "{calls}");
+        assert_eq!(creates("story", "0e8a16"), 1, "{calls}");
+        assert_eq!(
+            calls.lines().filter(|l| l.contains("\"label\", \"list\"")).count(),
+            1,
+            "{calls}"
+        );
     }
 
     #[test]
