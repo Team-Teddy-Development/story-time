@@ -701,68 +701,123 @@ fn two_orgs_keep_their_stories_and_links_apart() {
 struct Stub {
     url: String,
     seen: Arc<Mutex<Vec<(String, String, String)>>>,
-    server: Arc<tiny_http::Server>,
+    address: std::net::SocketAddr,
+    stopped: Arc<std::sync::atomic::AtomicBool>,
 }
 const INSTALLATION_TOKEN: &str = "ghs_StubInstallationToken0123456789";
 
 impl Stub {
+    /// One thread serves each connection. `git` opens several connections at almost the same
+    /// time, and the thread pool of `tiny_http` 0.12 can leave one of them in its queue until
+    /// another connection closes (ST-143). No pool, no queue.
     fn start(files: PathBuf) -> Self {
-        let server = Arc::new(tiny_http::Server::http("127.0.0.1:0").unwrap());
-        let url = format!("http://{}", server.server_addr().to_ip().unwrap());
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        let url = format!("http://{address}");
         let seen = Arc::new(Mutex::new(Vec::new()));
-        let (listener, log) = (server.clone(), seen.clone());
+        let stopped = Arc::new(std::sync::atomic::AtomicBool::new(false));
         let basic = format!(
             "basic {}",
             base64(format!("x-access-token:{INSTALLATION_TOKEN}").as_bytes())
         );
+        let (log, stop) = (seen.clone(), stopped.clone());
         std::thread::spawn(move || {
-            for request in listener.incoming_requests() {
-                let path = request.url().split('?').next().unwrap().to_owned();
-                let authorization = request
-                    .headers()
-                    .iter()
-                    .find(|h| h.field.equiv("Authorization"))
-                    .map(|h| h.value.as_str().to_owned())
-                    .unwrap_or_default();
-                log.lock().unwrap().push((
-                    request.method().to_string(),
-                    path.clone(),
-                    authorization.clone(),
-                ));
-                let respond = |status: u16, body: Vec<u8>| {
-                    tiny_http::Response::from_data(body).with_status_code(status)
-                };
-                let response = if path == "/api/repos/o/core/installation" {
-                    respond(200, br#"{"id": 7}"#.to_vec())
-                } else if path == "/api/app/installations/7/access_tokens" {
-                    let expires = (chrono::Utc::now() + chrono::Duration::hours(1)).to_rfc3339();
-                    respond(
-                        201,
-                        json!({"token": INSTALLATION_TOKEN, "expires_at": expires})
-                            .to_string()
-                            .into_bytes(),
-                    )
-                } else if let Some(relative) = path.strip_prefix("/git/") {
-                    if !authorization.eq_ignore_ascii_case(&basic) {
-                        respond(401, Vec::new())
-                    } else {
-                        match fs::read(files.join(relative)) {
-                            Ok(bytes) if !relative.contains("..") => respond(200, bytes),
-                            _ => respond(404, Vec::new()),
-                        }
-                    }
-                } else {
-                    respond(404, Vec::new())
-                };
-                let _ = request.respond(response);
+            for stream in listener.incoming() {
+                if stop.load(Ordering::Relaxed) {
+                    break;
+                }
+                let Ok(stream) = stream else { continue };
+                let (log, files, basic) = (log.clone(), files.clone(), basic.clone());
+                std::thread::spawn(move || {
+                    // An I/O error here is the client closing its connection.
+                    let _ = Self::serve(stream, &log, &files, &basic);
+                });
             }
         });
-        Self { url, seen, server }
+        Self {
+            url,
+            seen,
+            address,
+            stopped,
+        }
+    }
+
+    /// Answers each request of one connection, until the client closes it.
+    fn serve(
+        stream: std::net::TcpStream,
+        log: &Mutex<Vec<(String, String, String)>>,
+        files: &Path,
+        basic: &str,
+    ) -> std::io::Result<()> {
+        use std::io::{Read, Write};
+        let mut reader = BufReader::new(stream.try_clone()?);
+        let mut stream = stream;
+        loop {
+            let mut line = String::new();
+            if reader.read_line(&mut line)? == 0 {
+                return Ok(());
+            }
+            let mut parts = line.split_whitespace();
+            let method = parts.next().unwrap_or_default().to_owned();
+            let target = parts.next().unwrap_or_default();
+            let path = target.split('?').next().unwrap().to_owned();
+            let (mut authorization, mut length) = (String::new(), 0usize);
+            loop {
+                let mut header = String::new();
+                reader.read_line(&mut header)?;
+                let header = header.trim_end();
+                if header.is_empty() {
+                    break;
+                }
+                let (name, value) = header.split_once(':').unwrap_or((header, ""));
+                if name.eq_ignore_ascii_case("authorization") {
+                    authorization = value.trim().to_owned();
+                } else if name.eq_ignore_ascii_case("content-length") {
+                    length = value.trim().parse().unwrap_or(0);
+                }
+            }
+            let mut body = vec![0; length];
+            reader.read_exact(&mut body)?;
+            log.lock()
+                .unwrap()
+                .push((method, path.clone(), authorization.clone()));
+            let (status, body): (u16, Vec<u8>) = if path == "/api/repos/o/core/installation" {
+                (200, br#"{"id": 7}"#.to_vec())
+            } else if path == "/api/app/installations/7/access_tokens" {
+                let expires = (chrono::Utc::now() + chrono::Duration::hours(1)).to_rfc3339();
+                (
+                    201,
+                    json!({"token": INSTALLATION_TOKEN, "expires_at": expires})
+                        .to_string()
+                        .into_bytes(),
+                )
+            } else if let Some(relative) = path.strip_prefix("/git/") {
+                if !authorization.eq_ignore_ascii_case(basic) {
+                    (401, Vec::new())
+                } else {
+                    match fs::read(files.join(relative)) {
+                        Ok(bytes) if !relative.contains("..") => (200, bytes),
+                        _ => (404, Vec::new()),
+                    }
+                }
+            } else {
+                (404, Vec::new())
+            };
+            write!(
+                stream,
+                "HTTP/1.1 {status} Stub\r\nContent-Length: {}\r\n\r\n",
+                body.len()
+            )?;
+            stream.write_all(&body)?;
+            stream.flush()?;
+        }
     }
 }
 impl Drop for Stub {
     fn drop(&mut self) {
-        self.server.unblock();
+        // The accept loop reads the flag when one more connection arrives.
+        self.stopped.store(true, Ordering::Relaxed);
+        let _ = std::net::TcpStream::connect(self.address);
     }
 }
 
