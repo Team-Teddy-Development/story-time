@@ -11,11 +11,29 @@ pub(super) struct Registry {
     pub(super) repos: Vec<RegistryRepo>,
 }
 
+#[derive(Clone, Copy, PartialEq, Debug)]
+pub(super) enum Forge {
+    GitHub,
+    Gitea,
+}
+
+impl Forge {
+    pub(super) fn name(self) -> &'static str {
+        match self {
+            Self::GitHub => "github",
+            Self::Gitea => "gitea",
+        }
+    }
+}
+
 pub(super) struct RegistryRepo {
     pub(super) key: String,
     /// The org whose stories this repository's links resolve in.
     pub(super) org: String,
     pub(super) clone: String,
+    pub(super) forge: Forge,
+    /// A token may go over plain http to a host that is not loopback. Only a Gitea entry sets it.
+    pub(super) allow_http: bool,
     pub(super) default_branch: Option<String>,
     pub(super) prefixes: Vec<String>,
 }
@@ -85,15 +103,15 @@ impl Registry {
                     .filter(|value| !value.is_empty())
                     .ok_or_else(|| format!("{at}: {name} must be a non-empty string"))
             };
-            match text("forge")? {
-                "github" => {}
-                "gitea" => {
+            let forge = match text("forge")? {
+                "github" => Forge::GitHub,
+                "gitea" => Forge::Gitea,
+                other => {
                     return Err(format!(
-                        "{at}: forge gitea is not supported; this server serves github only"
+                        "{at}: unknown forge {other}; the permitted values are github and gitea"
                     ))
                 }
-                other => return Err(format!("{at}: unknown forge {other}")),
-            }
+            };
             let clone = text("clone")?;
             if !["https://", "http://", "file://"]
                 .iter()
@@ -103,6 +121,20 @@ impl Registry {
             {
                 return Err(format!(
                     "{at}: clone must be an https, http, or file URL without credentials"
+                ));
+            }
+            let allow_http = match entry.get("allow_http") {
+                None => false,
+                Some(_) if forge == Forge::GitHub => {
+                    return Err(format!("{at}: allow_http applies to a gitea entry only"))
+                }
+                Some(value) => value
+                    .as_bool()
+                    .ok_or_else(|| format!("{at}: allow_http must be true or false"))?,
+            };
+            if forge == Forge::Gitea && !allow_http && plain_http_to_a_remote_host(clone) {
+                return Err(format!(
+                    "{at}: clone is plain http to a host that is not loopback; use https or set allow_http = true"
                 ));
             }
             let default_branch = match entry.get("default_branch") {
@@ -143,6 +175,8 @@ impl Registry {
                 key: key.to_owned(),
                 org,
                 clone: clone.to_owned(),
+                forge,
+                allow_http,
                 default_branch,
                 prefixes,
             });
@@ -152,6 +186,24 @@ impl Registry {
             repos,
         })
     }
+}
+
+/// Whether `clone` is an `http` URL whose host is not loopback.
+fn plain_http_to_a_remote_host(clone: &str) -> bool {
+    let Some(rest) = clone.strip_prefix("http://") else {
+        return false;
+    };
+    let authority = rest.split('/').next().unwrap_or_default();
+    let host = authority
+        .rsplit_once(':')
+        .filter(|(_, port)| port.bytes().all(|b| b.is_ascii_digit()))
+        .map_or(authority, |(host, _)| host);
+    !is_loopback(host)
+}
+
+/// Whether `host` names this machine, in the forms that a clone URL can take.
+pub(super) fn is_loopback(host: &str) -> bool {
+    matches!(host, "127.0.0.1" | "localhost" | "[::1]")
 }
 
 /// Whether `name` is a branch name this server passes to git: no option, no path step out, and
@@ -236,11 +288,6 @@ mod tests {
 
     #[test]
     fn an_entry_the_server_cannot_serve_is_refused_by_name() {
-        let gitea = TWO.replace(
-            "key = \"web\"\nclone = \"https://github.com/o/web.git\"\nforge = \"github\"",
-            "key = \"web\"\nclone = \"https://gitea.example/o/web.git\"\nforge = \"gitea\"",
-        );
-        assert!(refused(&gitea).contains("repo web: forge gitea"));
         let repeated = TWO.replace("[\"VE\"]", "[\"VE\", \"ST\"]");
         let message = refused(&repeated);
         assert!(
@@ -262,6 +309,82 @@ mod tests {
         assert!(refused(&TWO.replace("\"main\"", "\"-x\"")).contains("default_branch"));
         assert!(refused(&TWO.replace("= 30", "= 0")).contains("fetch_ttl_seconds"));
         assert!(refused("org = \"none\"\n").contains("[[repo]]"));
+    }
+
+    fn gitea(clone: &str, extra: &str) -> String {
+        TWO.replace(
+            "clone = \"https://github.com/o/web.git\"\nforge = \"github\"",
+            &format!("clone = \"{clone}\"\nforge = \"gitea\"\n{extra}"),
+        )
+    }
+
+    #[test]
+    fn a_repository_names_its_forge_as_github_or_gitea() {
+        let registry = Registry::parse(&gitea("https://gitea.example/o/web.git", "")).unwrap();
+        assert_eq!(registry.repos[0].forge, Forge::GitHub);
+        assert_eq!(registry.repos[1].forge, Forge::Gitea);
+        assert!(!registry.repos[1].allow_http);
+        let message = refused(&TWO.replace(
+            "forge = \"github\"\nprefixes = [\"VE\"]",
+            "forge = \"forgejo\"\nprefixes = [\"VE\"]",
+        ));
+        assert!(
+            message.contains("repo web")
+                && message.contains("forgejo")
+                && message.contains("github")
+                && message.contains("gitea"),
+            "{message}"
+        );
+    }
+
+    #[test]
+    fn plain_http_to_a_gitea_host_needs_allow_http_unless_the_host_is_loopback() {
+        let lan = "http://192.168.1.56:30003/team-teddy/xanthos.git";
+        let message = refused(&gitea(lan, ""));
+        assert!(
+            message.contains("repo web") && message.contains("allow_http"),
+            "{message}"
+        );
+        let allowed = Registry::parse(&gitea(lan, "allow_http = true\n")).unwrap();
+        assert!(allowed.repos[1].allow_http);
+        for clone in [
+            "http://127.0.0.1:3000/o/web.git",
+            "http://localhost/o/web.git",
+            "http://[::1]:3000/o/web.git",
+            "https://gitea.example/o/web.git",
+            "file:///srv/git/web.git",
+        ] {
+            Registry::parse(&gitea(clone, "")).unwrap();
+        }
+        assert!(
+            refused(&gitea("http://127.0.0.1.example.com/o/web.git", "")).contains("allow_http")
+        );
+    }
+
+    #[test]
+    fn allow_http_is_a_boolean_and_belongs_to_a_gitea_entry() {
+        let message = refused(&gitea(
+            "https://gitea.example/o/web.git",
+            "allow_http = \"yes\"\n",
+        ));
+        assert!(
+            message.contains("repo web") && message.contains("allow_http"),
+            "{message}"
+        );
+        let off = Registry::parse(&gitea(
+            "https://gitea.example/o/web.git",
+            "allow_http = false\n",
+        ))
+        .unwrap();
+        assert!(!off.repos[1].allow_http);
+        let on_github = refused(&TWO.replace(
+            "forge = \"github\"\nprefixes = [\"VE\"]",
+            "forge = \"github\"\nallow_http = true\nprefixes = [\"VE\"]",
+        ));
+        assert!(
+            on_github.contains("repo web") && on_github.contains("allow_http"),
+            "{on_github}"
+        );
     }
 
     #[test]

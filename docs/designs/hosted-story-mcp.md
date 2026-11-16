@@ -58,7 +58,7 @@ No tool can answer "which web stories wait on this core story?" To answer that t
 *   Neo4j or the tracker as the source of truth.
 *   Direct commits to a default branch.
 *   Resolving PR review threads. v1 covers issue comments only.
-*   **Gitea in v1.** The registry refuses `forge = "gitea"`. Gitea support is a Future Improvement.
+*   **Gitea writes and comments.** The server reads the stories of a Gitea repository (ST-140). Proposals and comments on Gitea wait for ST-149 and ST-150.
 *   Links across registry orgs.
 *   Publishing tracker issues from the server. A story created on the server stays unpublished until someone runs `story push` after the merge.
 *   An OAuth authorization server, a web UI, or human logins.
@@ -219,7 +219,7 @@ prefixes = ["VE"]
 
 The registry file has three load-time checks:
 
-*   It refuses `forge = "gitea"`.
+*   It refuses a `forge` other than `github` and `gitea`, and a Gitea clone over plain http to a host that is not loopback, unless the entry sets `allow_http = true`.
 *   It refuses a prefix that two repositories of one org declare.
 *   Lint fails for a backlog file whose prefix is not declared, under the rule `links.undeclared_prefix`.
 
@@ -382,6 +382,8 @@ GIT_TERMINAL_PROMPT=0
 
 **Orgs of a client (amendment of 2026-11-16, ST-142).** A client entry can hold `orgs`, a list of orgs of the registry. The client then uses only the repositories of those orgs, for each scope. A call that names a repository of another org returns `repository_not_allowed` with the message of an unknown repository, so the answer does not show that the server has it. `story_repos`, and `story_config` with no repository, omit those repositories. The server refuses to start when an entry names an org that the registry does not hold. The limit is not smaller than an org, because links resolve inside one org and the read tools return linked stories of each of its repositories (Jev 0.98).
 
+**Gitea reads (amendment of 2026-11-16, ST-140).** A `[[repo]]` table can set `forge = "gitea"`. The server then reads the repository as it reads a GitHub repository, with one bot token from `--gitea-token-file` in place of the GitHub App. The token goes to `git` only in `GIT_CONFIG_VALUE_0`, as the basic password of the user `x-access-token`, and only to the origin of the clone. The token and its basic form join the redactor. A Gitea repository with no token file is read with no credential, so a public repository works and a private one is `unavailable`. A clone over plain http to a host that is not loopback needs `allow_http = true` in its entry, because the Gitea of the team has no TLS on the LAN. `story_repos` gives the `forge` of each repository. The server does not ask the GitHub App about a Gitea repository, so `story_show` leaves `proposed` null for it. A call of `story_update`, `story_note`, `story_create`, `story_comments`, or `story_resolve_comment` on a Gitea repository returns the error `forge_not_supported` before any forge request. ST-149 and ST-150 lift that refusal.
+
 **Token in the path (amendment of 2026-11-16, ST-146).** A ChatGPT cloud connector takes OAuth or no authentication, and cannot send a header. A client entry with `url_token = true` can give its token as `/mcp/<token>`. An entry without the mark is not found by a path token, so a token that was made for a header never works in a URL. A request to `/mcp/<token>` is judged by the path token only. The refusal is the 401 of an unknown token. The server writes the token to no log and no answer. The cost is known: proxies and client settings keep URLs, so each path client gets its own entry and small scopes, and the ingress does not log `/mcp/` paths. An OAuth server stays a non-goal (Alternative K).
 
 **Revocation.** To revoke a token, remove its hash in Vault and restart the pod. A restart is safe because the pod holds only caches.
@@ -406,7 +408,7 @@ Hosted-only fields live in separate hosted schemas that `Backend::Hosted` select
 | `story_config`, `story_list`, `story_show`, `story_lint` | yes | Optional `ref`. Adds `{repository, sha, fetched_at}`, `proposed`, and org-aware lint. |
 | `story_update`, `story_note`, `story_create` | yes | Branch-and-PR write (Component 4). Adds `state`, `pr_url`, `branch`, and `head_sha`. |
 | `story_graph`, `story_graph_sync` | yes | Org-wide sync. Adds `direction` and the synced SHAs. |
-| `story_repos` | new | Returns `[{key, prefixes, sha, fetched_at, state: ready\|cloning\|unavailable, last_error}]`. |
+| `story_repos` | new | Returns `[{key, org, prefixes, forge: github\|gitea, sha, fetched_at, state: ready\|cloning\|unavailable, last_error}]`. |
 | `story_comments`, `story_resolve_comment` | new | Component 7. |
 
 ### Deployment
@@ -567,7 +569,7 @@ Each reason states the main trade-off. A Jev score, where one is given, supports
 
 ## Future Improvements
 
-*   Gitea support through the existing `gateway::Gitea::request` client, with a Gitea bot user.
+*   Gitea writes (ST-149) and comments (ST-150), through the existing `gateway::Gitea::request` client and a Gitea bot user.
 *   Push webhooks with a stale-while-revalidate cache.
 *   Cloudflare Access in front of the hostname, rate limiting, and client tokens that expire.
 *   Egress pinning through an FQDN-capable policy or an egress proxy.
@@ -655,7 +657,7 @@ Each slice below is its own story with Given/When/Then criteria and its own PR. 
 *   **Type / Scope**: Registry.
 *   **Proposed Changes**:
     *   Parses the registry TOML from Component 2.
-    *   Refuses `forge = "gitea"` and duplicate prefixes.
+    *   Refuses an unknown `forge` and duplicate prefixes.
     *   Builds a map from each prefix to its repository.
 
 ##### 9. `native/story-push/src/mcp/workspace.rs` (Create, S1 and S4)
