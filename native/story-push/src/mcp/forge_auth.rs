@@ -68,7 +68,8 @@ struct Target {
     name: String,
 }
 
-fn target(clone: &str) -> Result<Option<Target>, String> {
+/// `allow_http` lets a token go over plain http to a host that is not loopback.
+fn target(clone: &str, allow_http: bool) -> Result<Option<Target>, String> {
     let Some((scheme, rest)) = clone.split_once("://") else {
         return Err("the clone URL has no scheme".into());
     };
@@ -80,8 +81,8 @@ fn target(clone: &str) -> Result<Option<Target>, String> {
         .rsplit_once(':')
         .filter(|(_, port)| port.bytes().all(|b| b.is_ascii_digit()))
         .map_or(authority, |(host, _)| host);
-    let loopback = matches!(host, "127.0.0.1" | "localhost" | "[::1]");
-    if authority.is_empty() || !(scheme == "https" || (scheme == "http" && loopback)) {
+    let plain_ok = allow_http || super::registry::is_loopback(host);
+    if authority.is_empty() || !(scheme == "https" || (scheme == "http" && plain_ok)) {
         return Err("a token goes only to an https URL".into());
     }
     let (owner, name) = named(path)?;
@@ -279,7 +280,7 @@ impl App {
     /// What a `git` child needs to reach `clone`: the environment that carries the token, and
     /// the secret strings to keep out of every output. A `file` URL needs neither.
     pub(super) fn git_environment(&self, clone: &str) -> Result<Access, String> {
-        let Some(target) = target(clone)? else {
+        let Some(target) = target(clone, false)? else {
             return Ok(Access::default());
         };
         let token = self.token(&target.owner, &target.name)?;
@@ -297,6 +298,37 @@ impl App {
             tokens.insert(full.clone(), token);
         }
         Ok(tokens[&full].value.clone())
+    }
+}
+
+/// The bot token of a Gitea server. Gitea takes a token as the basic password.
+pub(super) struct Gitea {
+    token: String,
+}
+
+impl Gitea {
+    /// The token in `text`, which is one word with optional white space around it.
+    pub(super) fn new(text: &str) -> Result<Self, String> {
+        let token = text.trim();
+        if token.is_empty() || token.contains(char::is_whitespace) {
+            return Err("the token must be one word and not empty".into());
+        }
+        Ok(Self {
+            token: token.to_owned(),
+        })
+    }
+
+    /// The token and its basic form, which no output may show.
+    pub(super) fn secrets(&self) -> Vec<String> {
+        access("", &self.token).secrets
+    }
+
+    /// What a `git` child needs to reach `clone`. A `file` URL needs nothing.
+    pub(super) fn git_environment(&self, clone: &str, allow_http: bool) -> Result<Access, String> {
+        Ok(match target(clone, allow_http)? {
+            Some(target) => access(&target.origin, &self.token),
+            None => Access::default(),
+        })
     }
 }
 

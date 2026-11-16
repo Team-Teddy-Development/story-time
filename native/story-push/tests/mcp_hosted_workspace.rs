@@ -1199,6 +1199,7 @@ fn a_gitea_repository_is_read_like_a_github_repository() {
     let server = fixture.serve(&registry, &[]);
     let head = fixture.head("core", "main");
 
+    let listed = server.ok("story_list", json!({"repository": "core"}));
     let repos = server.ok("story_repos", json!({}));
     let entry = &repos["repositories"][0];
     assert_eq!(entry["key"], "core", "{repos}");
@@ -1207,7 +1208,6 @@ fn a_gitea_repository_is_read_like_a_github_repository() {
     assert_eq!(entry["sha"], head.as_str(), "{repos}");
     assert!(entry["fetched_at"].is_string(), "{repos}");
 
-    let listed = server.ok("story_list", json!({"repository": "core"}));
     let ids: Vec<&str> = listed["stories"]
         .as_array()
         .unwrap()
@@ -1227,6 +1227,7 @@ fn a_gitea_repository_is_read_like_a_github_repository() {
     // A GitHub entry keeps its forge in the same report.
     let mixed = fixture.registry("");
     let server = fixture.serve(&mixed, &[]);
+    server.ok("story_list", json!({"repository": "core"}));
     let repos = server.ok("story_repos", json!({}));
     for entry in repos["repositories"].as_array().unwrap() {
         assert_eq!(entry["forge"], "github", "{repos}");
@@ -1325,10 +1326,10 @@ fn a_private_gitea_repository_is_unavailable_to_a_server_without_the_token() {
     let fixture = Fixture::new();
     let (stub, registry) = private_gitea(&fixture);
     let server = fixture.serve(&registry, &[]);
+    let refused = server.call("story_show", json!({"repository": "core", "id": "VC-109"}));
     let repos = server.ok("story_repos", json!({}));
     assert_eq!(repos["repositories"][0]["state"], "unavailable", "{repos}");
     assert_eq!(repos["repositories"][0]["forge"], "gitea", "{repos}");
-    let refused = server.call("story_show", json!({"repository": "core", "id": "VC-109"}));
     assert_eq!(
         refused["error"]["code"], "repository_unavailable",
         "{refused}"
@@ -1357,6 +1358,14 @@ fn writes_and_comments_on_a_gitea_repository_are_refused_before_any_forge_call()
         1,
     );
     fs::write(&registry, text).unwrap();
+    fs::write(
+        fixture.base.join("clients.toml"),
+        format!(
+            "[[client]]\nid = \"writer\"\ntoken_sha256 = \"{}\"\nscopes = [\"read\", \"write\", \"comment\"]\n",
+            sha256(WRITER.as_bytes())
+        ),
+    )
+    .unwrap();
     let stub = Stub::start(fixture.base.join("stub-git"));
     let key = fixture.base.join("app-key.pem");
     let generated = Command::new("openssl")
@@ -1386,7 +1395,11 @@ fn writes_and_comments_on_a_gitea_repository_are_refused_before_any_forge_call()
     assert!(names.contains(&"story_update".to_owned()), "{names:?}");
     let branches = fixture.git(&fixture.upstream("core"), &["branch", "--list"]);
 
-    let shown = server.ok("story_show", json!({"repository": "core", "id": "VC-109"}));
+    let shown = server.call_as(
+        WRITER,
+        "story_show",
+        json!({"repository": "core", "id": "VC-109"}),
+    );
     assert!(shown["proposed"].is_null(), "{shown}");
     let calls = [
         (
