@@ -76,3 +76,46 @@ Jev chose to resolve the findings and run one re-audit (confidence 0.93). Revisi
 *   **Wording.** The style fixes (R9-M13). Item 13 states that nothing remains (R9-M14). The ST-152 note on D17 is fixed.
 
 The DetailedRange is now lines 593–1129.
+
+## Re-audit (revision 3.3) and final resolution (revision 3.4)
+
+*   **Re-audit results:** All 5 round 1 Blockers are resolved. Each reviewer still found Majors, but none found a Blocker:
+    *   implementation readiness: 6 Majors and 10 Nits;
+    *   codebase details: 11 Majors and 9 Nits;
+    *   style: 2 Majors and 9 Nits.
+*   **Gate:** The re-audit cap is reached. Jev chose to apply the fixes and conclude, with no further audit (confidence 0.85).
+
+Fixes applied in revision 3.4:
+
+*   **`check-pr` issue lookups.** `GhIssues` uses `REPO`, so it works for every tracker. A `Cli::gh()` constructor is added. Rule 4 passes targets that are not story issues. "Accepted reference" is defined. New tests cover `tracker: files` and AC5 for issues that are not stories.
+*   **Output.** The `run` signature is pinned, along with the streams: findings go to stderr through `eprintln!`, and stdout carries only the PASS line or the JSON. Every finding is reported. The message table now matches the CUJ 1, CUJ 5, and D9 text, with at most one rule 2 finding per card. The warning count wording is fixed.
+*   **Gateway.**
+    *   `update_classified` requests the issue `url` and detects a transfer.
+    *   `ensure_github_labels` and `github_state` return `TrackerError`.
+    *   `update` keeps its behavior through an adapter.
+    *   A marker counts only when the numeric user ID is 41898282.
+*   **`sync-merge`.**
+    *   `--all` lists cards with `git ls-tree`.
+    *   Card stems are checked with `valid_id`.
+    *   A run is refused when `GITHUB_REF_NAME` is not the default branch, and the `sync` job has a default-branch condition.
+    *   The comment and marker use the full SHA.
+    *   `git log` uses `--first-parent`.
+    *   The step 1 skip line and the no-PR line are defined.
+    *   A failed `git` call is retryable.
+*   **Workflows.** The build job has `contents: read`, so it can check out a private repository. It still holds no write token. The spec text is updated to match.
+*   **Test harness.** The stub's signature, prefix rule, stdin drain, and `dead_code` allowance are pinned. `push_lenient_contract.rs` writes a `responses.tsv` with its three current answers.
+*   **Policy files.**
+    *   `story-policy.rs` line 1 drops `Path`.
+    *   The ID test range is :311-327.
+    *   The nested-path assertion is kept as its own test.
+    *   The `usage.txt` column and insert point are given, and so are the exact rows for the `SKILL.md` command table.
+*   **Wording and cards.**
+    *   The E2E preconditions now say `sync: auto`.
+    *   The AC3 test checks title, labels, and body.
+    *   Item 13 is marked "No change; already published".
+    *   The checker-change caveat names the required review as its control.
+    *   The style wording nits are fixed.
+    *   The ST-152 size note now matches size 5.
+*   **Not applied (style nit 8):** the bold-label punctuation is not unified.
+
+Result: the review is concluded, with no open Blocker. Revision 3.4 has not been audited again.
