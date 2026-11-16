@@ -60,6 +60,7 @@ fn main() {
         ("issue", "create") => println!("https://github.com/acme/shop/issues/11"),
         ("issue", "list") => println!("[]"),
         ("issue", "view") => println!("{{\"labels\":[],\"state\":\"OPEN\"}}"),
+        ("label", "list") => println!("[]"),
         _ => {}
     }
 }
