@@ -481,15 +481,25 @@ The server refuses to start when an entry names a `forge` other than `github` an
 - A repository that the server cannot reach returns the retryable error `repository_unavailable`. The other repositories keep working, and `/readyz` stays 200.
 - `story_lint` checks links across every registered repository, and reports `links.undeclared_prefix` for a story whose prefix the registry does not declare for its repository.
 
-#### Gitea repositories (read only)
+#### Gitea repositories (read and write)
 
 A `gitea` entry is read like a `github` entry. `--gitea-token-file` names a file that holds the token of a Gitea bot user, on one line. The server needs `--registry` to take it, and it refuses to start when the file is missing, empty, or holds white space inside the token. Git sends the token only to the origin of the clone, as the basic password. No tool result and no log line shows it. Without the flag, the server reads a Gitea repository with no credential, so a private repository is `unavailable`. The GitHub App flags are separate and serve only `github` entries.
 
-Writes and comments on a Gitea repository are not supported yet. On a server that has write tools, `story_update`, `story_note`, `story_create`, `story_comments`, and `story_resolve_comment` return the error `forge_not_supported` for a Gitea repository. They push nothing and send no forge request. ST-149 adds writes and ST-150 adds comments.
+With the token file, a client with the `write` scope can use `story_update`, `story_note`, and `story_create` on a Gitea repository. They work as on GitHub (see Writes below), with these differences:
+
+- The server pushes with the same token and opens the pull request through the Gitea REST API, which is at `/api/v1` of the origin of the clone. The REST calls send `Authorization: token <token>`.
+- Gitea 1.21 cannot filter its pull request list by head. The server reads the open pull requests page by page (50 for each page, at most 40 pages) and takes the one whose head is `story-time/<ID>` in the same repository. A pull request from a fork with that head name does not count.
+- The commit author is `story-time <story-time@noreply.<host of the Gitea>>`, which is the form that Gitea gives its own users.
+- The bot user needs write access to each served repository.
+- A server that has the token file and no GitHub App has the write tools. A write to a repository whose forge has no credential on the server returns the error `forge_not_supported` before any fetch or push.
+- When Gitea refuses the token (401 or 403) on the push or on a REST call, the call returns the retryable error `forge_unavailable` with the failed step in `details.operation`.
+- `story_show` does not report `proposed` for a Gitea repository yet.
+
+Comments on a Gitea repository are not supported yet. `story_comments` and `story_resolve_comment` return the error `forge_not_supported` for a Gitea repository. They send no forge request. ST-150 adds comments.
 
 #### Writes: one branch and one pull request for each story
 
-A registry server has no working tree, so it does not change a story file in place. With the GitHub App flags, a client with the `write` scope has `story_update`, `story_note`, and `story_create`. Without those flags, a registry server has no write tool.
+A registry server has no working tree, so it does not change a story file in place. With the GitHub App flags (for `github` entries) or `--gitea-token-file` (for `gitea` entries), a client with the `write` scope has `story_update`, `story_note`, and `story_create`. Without either, a registry server has no write tool.
 
 - Each write is one commit on the branch `story-time/<ID>`. The author is the App's bot, and the trailer `Requested-by:` names the client.
 - The server pushes with `--force-with-lease`. When the branch moved at the remote, the call returns `conflict` and pushes nothing.
