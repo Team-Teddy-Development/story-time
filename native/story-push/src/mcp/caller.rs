@@ -20,6 +20,16 @@ pub(super) struct Caller {
     scopes: Vec<Scope>,
     /// Story prefixes that the write and comment scopes cover; empty covers every prefix.
     prefixes: Vec<String>,
+    /// The client may give its token in the URL path. A URL is written to more places than a
+    /// header is, so only a client that the file marks can do this.
+    url_token: bool,
+}
+
+/// Where a request carried its token.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(super) enum Carrier {
+    Header,
+    Path,
 }
 
 impl Caller {
@@ -28,6 +38,7 @@ impl Caller {
             client_id: None,
             scopes: vec![Scope::Read, Scope::Write, Scope::Comment],
             prefixes: Vec::new(),
+            url_token: false,
         }
     }
 
@@ -113,21 +124,28 @@ impl Clients {
                 return Err(format!("{at}: its id or its token_sha256 is already used"));
             }
             let prefixes = list("prefixes")?.into_iter().map(str::to_owned).collect();
+            let url_token = match entry.get("url_token") {
+                None => false,
+                Some(Value::Bool(marked)) => *marked,
+                Some(_) => return Err(format!("{at}: url_token must be true or false")),
+            };
             clients.push((
                 hash.to_owned(),
                 Caller {
                     client_id: Some(id.to_owned()),
                     scopes,
                     prefixes,
+                    url_token,
                 },
             ));
         }
         Ok(Self(clients))
     }
 
-    /// The client whose token hash equals the hash of `token`. Each comparison reads every
-    /// byte, and every client is compared, so the time does not depend on where a hash differs.
-    pub(super) fn find(&self, token: &str) -> Option<&Caller> {
+    /// The client whose token hash equals the hash of `token`, when that client may give its
+    /// token through `carrier`. Each comparison reads every byte, and every client is compared,
+    /// so the time does not depend on where a hash differs.
+    pub(super) fn find(&self, token: &str, carrier: Carrier) -> Option<&Caller> {
         let presented = sha(token.as_bytes());
         let mut found = None;
         for (hash, caller) in &self.0 {
@@ -139,7 +157,7 @@ impl Clients {
                 found = Some(caller);
             }
         }
-        found
+        found.filter(|caller| carrier == Carrier::Header || caller.url_token)
     }
 }
 
@@ -157,12 +175,12 @@ mod tests {
     #[test]
     fn a_client_is_found_by_its_token_and_by_no_other_text() {
         let clients = Clients::parse(&file("scopes = [\"read\"]\n")).unwrap();
-        let caller = clients.find("token-a").unwrap();
+        let caller = clients.find("token-a", Carrier::Header).unwrap();
         assert_eq!(caller.client_id.as_deref(), Some("a"));
-        assert!(clients.find("token-b").is_none());
-        assert!(clients.find("").is_none());
+        assert!(clients.find("token-b", Carrier::Header).is_none());
+        assert!(clients.find("", Carrier::Header).is_none());
         assert!(
-            clients.find(&sha(b"token-a")).is_none(),
+            clients.find(&sha(b"token-a"), Carrier::Header).is_none(),
             "the hash is not a token"
         );
     }
@@ -173,7 +191,7 @@ mod tests {
             "scopes = [\"read\", \"write\"]\nprefixes = [\"VC\"]\n",
         ))
         .unwrap();
-        let caller = clients.find("token-a").unwrap();
+        let caller = clients.find("token-a", Carrier::Header).unwrap();
         assert!(caller.permits(Scope::Read, None));
         assert!(caller.permits(Scope::Read, Some("VE")));
         assert!(caller.permits(Scope::Write, Some("VC")));
@@ -182,13 +200,38 @@ mod tests {
         assert!(!caller.permits(Scope::Comment, Some("VC")));
 
         let open = Clients::parse(&file("scopes = [\"write\"]\n")).unwrap();
-        let caller = open.find("token-a").unwrap();
+        let caller = open.find("token-a", Carrier::Header).unwrap();
         assert!(caller.permits(Scope::Write, Some("VE")));
         assert!(caller.permits(Scope::Write, None));
         assert!(!caller.permits(Scope::Read, None));
 
         let local = Caller::local();
         assert!(local.permits(Scope::Write, None) && local.permits(Scope::Comment, Some("X")));
+    }
+
+    #[test]
+    fn only_a_marked_client_is_found_by_a_token_in_the_path() {
+        let plain = Clients::parse(&file("scopes = [\"read\"]\n")).unwrap();
+        assert!(plain.find("token-a", Carrier::Header).is_some());
+        assert!(plain.find("token-a", Carrier::Path).is_none());
+        let unmarked = Clients::parse(&file("scopes = [\"read\"]\nurl_token = false\n")).unwrap();
+        assert!(unmarked.find("token-a", Carrier::Path).is_none());
+        let marked = Clients::parse(&file("scopes = [\"read\"]\nurl_token = true\n")).unwrap();
+        assert!(marked.find("token-a", Carrier::Path).is_some());
+        assert!(marked.find("token-a", Carrier::Header).is_some());
+        assert!(marked.find("token-b", Carrier::Path).is_none());
+    }
+
+    #[test]
+    fn url_token_must_be_a_boolean() {
+        for value in ["\"true\"", "1", "[true]"] {
+            let error = Clients::parse(&file(&format!(
+                "scopes = [\"read\"]\nurl_token = {value}\n"
+            )))
+            .err()
+            .unwrap_or_else(|| panic!("{value} was accepted"));
+            assert_eq!(error, "client 1: url_token must be true or false");
+        }
     }
 
     #[test]

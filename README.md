@@ -390,6 +390,7 @@ id = "agent-a"
 token_sha256 = "<64 lowercase hexadecimal digits>"
 scopes = ["read", "write"]   # read, write, comment
 prefixes = ["ST"]            # optional; limits write and comment to these story prefixes
+url_token = true             # optional; this client can give its token in the URL path
 ```
 
 Make a token and its hash:
@@ -400,6 +401,12 @@ printf '%s' "$token" | sha256sum
 ```
 
 Each client sees only the tools its scopes allow, and a call outside its scopes returns `scope_refused`. A request with no known token gets HTTP 401. To revoke a token, remove its table and restart the server. The server speaks plain HTTP: put it behind a proxy that ends TLS. `GET /healthz` and `GET /readyz` return 200 without a token.
+
+**A client that cannot send a header.** Some cloud clients, such as a ChatGPT connector, take only OAuth or no authentication. For such a client, make a separate entry with `url_token = true`, give it the smallest scopes it needs, and give the client the URL `<url>/mcp/<token>` with no authentication. The rules:
+
+- Only a marked entry works in a path. The token of any other entry gets HTTP 401 there, the same answer as an unknown token.
+- The server writes no path token to its log or to an answer.
+- A URL is not kept as a secret. A proxy in front of the server writes it to its access log, and the client keeps it in its settings. Turn off the access log of the proxy for `/mcp/` paths, and revoke the entry when the URL was shown to someone else.
 
 Register the server with your agent. Replace `<url>` with the address of the server and `<token>` with the client token:
 
