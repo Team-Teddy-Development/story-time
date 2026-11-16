@@ -37,7 +37,7 @@ enum Backend {
 
 const TRACKER_CLI_TIMEOUT: Duration = Duration::from_secs(120);
 
-struct Cli {
+pub(crate) struct Cli {
     program: PathBuf,
     root: PathBuf,
     token: Option<(String, String)>,
@@ -45,7 +45,16 @@ struct Cli {
 }
 
 impl Cli {
-    fn run(&self, args: &[String], input: Option<&str>) -> Result<String, String> {
+    /// A `gh` CLI for read-only checks. It inherits `GH_TOKEN` from the environment.
+    pub(crate) fn gh(root: &Path) -> Cli {
+        Cli {
+            program: PathBuf::from("gh"),
+            root: root.to_path_buf(),
+            token: None,
+            timeout: TRACKER_CLI_TIMEOUT,
+        }
+    }
+    pub(crate) fn run(&self, args: &[String], input: Option<&str>) -> Result<String, String> {
         let mut command = Command::new(&self.program);
         command
             .args(args)

@@ -1,3 +1,5 @@
+mod common;
+
 use serde_json::{json, Value};
 use std::{
     collections::BTreeMap,
@@ -47,23 +49,6 @@ Prose that sits before the first section.
 ## Story
 As a user, I want login.
 ";
-
-const STUB_GH: &str = r#"
-use std::{env, fs::OpenOptions, io::{Read, Write}};
-fn main() {
-    let args: Vec<String> = env::args().skip(1).collect();
-    let mut input = String::new();
-    let _ = std::io::stdin().read_to_string(&mut input);
-    let mut log = OpenOptions::new().create(true).append(true).open("gh-calls").unwrap();
-    writeln!(log, "{:?}", args).unwrap();
-    match (args[0].as_str(), args[1].as_str()) {
-        ("issue", "create") => println!("https://github.com/acme/shop/issues/11"),
-        ("issue", "list") => println!("[]"),
-        ("issue", "view") => println!("{{\"labels\":[],\"state\":\"OPEN\"}}"),
-        _ => {}
-    }
-}
-"#;
 
 struct Sandbox(PathBuf);
 impl Sandbox {
@@ -119,22 +104,17 @@ impl Sandbox {
             .unwrap()
     }
     fn install_stub_gh(&self) {
-        let mut rustc = Command::new("rustc")
-            .args(["--crate-name", "gh_stub", "-o"])
-            .arg(self.0.join("bin/gh"))
-            .arg("-")
-            .stdin(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()
-            .unwrap();
-        rustc
-            .stdin
-            .take()
-            .unwrap()
-            .write_all(STUB_GH.as_bytes())
-            .unwrap();
-        let out = rustc.wait_with_output().unwrap();
-        assert!(out.status.success(), "{}", text(&out.stderr));
+        common::install_stub_gh(&self.0.join("bin"));
+        common::respond(
+            &self.0,
+            "issue create",
+            0,
+            "https://github.com/acme/shop/issues/11\n",
+            "",
+        );
+        common::respond(&self.0, "issue list", 0, "[]\n", "");
+        common::respond(&self.0, "label list", 0, "[]\n", "");
+        common::respond(&self.0, "issue view", 0, "{\"labels\":[],\"state\":\"OPEN\",\"url\":\"https://github.com/acme/shop/issues/11\"}\n", "");
     }
     fn gh_calls(&self) -> String {
         fs::read_to_string(self.0.join("gh-calls")).unwrap_or_default()

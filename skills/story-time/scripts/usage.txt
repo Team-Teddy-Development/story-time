@@ -34,6 +34,8 @@ Commands:
                                            Native: list open Gitea tracker issues (GET only; never prints the token)
   metrics --from YYYY-MM-DD --to YYYY-MM-DD [--json]
                                            Native: throughput, WIP, and cycle time from changelog status events; read-only
+  check-pr [--body-file F] [--json]
+                                           Native: check a PR's Stories: line, acceptance, and closing keywords (CI)
   config                                  Show the effective project config
   help                                     This text
 
