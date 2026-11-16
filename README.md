@@ -390,6 +390,7 @@ id = "agent-a"
 token_sha256 = "<64 lowercase hexadecimal digits>"
 scopes = ["read", "write"]   # read, write, comment
 prefixes = ["ST"]            # optional; limits write and comment to these story prefixes
+orgs = ["varsity"]           # optional; limits each scope to the repositories of these orgs
 url_token = true             # optional; this client can give its token in the URL path
 ```
 
@@ -401,6 +402,13 @@ printf '%s' "$token" | sha256sum
 ```
 
 Each client sees only the tools its scopes allow, and a call outside its scopes returns `scope_refused`. A request with no known token gets HTTP 401. To revoke a token, remove its table and restart the server. The server speaks plain HTTP: put it behind a proxy that ends TLS. `GET /healthz` and `GET /readyz` return 200 without a token.
+
+**A client of one org.** A server with a registry can hold several orgs. An entry with `orgs` uses only the repositories of those orgs, with each of its scopes. An entry with no `orgs` key uses every repository. The rules:
+
+- A call that names a repository of another org returns `repository_not_allowed`, the same answer as a repository that the server does not have.
+- `story_repos`, and `story_config` with no repository, list only the repositories of those orgs.
+- The limit is an org, not one repository. Links resolve inside one org, so a client reads the linked stories of each repository of its org.
+- The server refuses to start when an entry names an org that the registry does not hold, or names an org when the server has no registry. The message names the client and the org.
 
 **A client that cannot send a header.** Some cloud clients, such as a ChatGPT connector, take only OAuth or no authentication. For such a client, make a separate entry with `url_token = true`, give it the smallest scopes it needs, and give the client the URL `<url>/mcp/<token>` with no authentication. The rules:
 
@@ -456,7 +464,7 @@ One server can hold several orgs. A repository names its `org`, or takes the top
 - A link between stories resolves only inside one org. `story_lint`, `story_update`, and `story_graph` do not look in a repository of another org.
 - Two orgs can declare the same prefix. Two repositories of one org cannot.
 - A repository `key` is unique in the whole file, so each tool takes `repository` and no org.
-- Each client token still reads every registered repository. Give a token only to a client that can read all of them.
+- A client token uses every registered repository, unless its entry in the clients file has `orgs`. Give a client of one org an entry with `orgs`.
 
 The server refuses to start when an entry names `forge = "gitea"`, when two repositories of one org declare one prefix, when two entries have one key, when an org is not a lowercase key, or when it cannot write the data directory. What a client sees:
 

@@ -20,6 +20,8 @@ pub(super) struct Caller {
     scopes: Vec<Scope>,
     /// Story prefixes that the write and comment scopes cover; empty covers every prefix.
     prefixes: Vec<String>,
+    /// The orgs of the registry that the client may use; empty covers every org.
+    orgs: Vec<String>,
     /// The client may give its token in the URL path. A URL is written to more places than a
     /// header is, so only a client that the file marks can do this.
     url_token: bool,
@@ -38,16 +40,22 @@ impl Caller {
             client_id: None,
             scopes: vec![Scope::Read, Scope::Write, Scope::Comment],
             prefixes: Vec::new(),
+            orgs: Vec::new(),
             url_token: false,
         }
+    }
+
+    /// Whether the caller may use the repositories of `org`, with each of its scopes.
+    pub(super) fn uses(&self, org: &str) -> bool {
+        self.orgs.is_empty() || self.orgs.iter().any(|allowed| allowed == org)
     }
 
     pub(super) fn has(&self, scope: Scope) -> bool {
         self.scopes.contains(&scope)
     }
 
-    /// Whether the caller may use `scope` on a story with `prefix`. Reads cover the whole
-    /// server. A caller limited to prefixes is refused when the target has no known prefix.
+    /// Whether the caller may use `scope` on a story with `prefix`. Reads cover each org that
+    /// the caller may use (`uses`). A caller limited to prefixes is refused when the target has no known prefix.
     pub(super) fn permits(&self, scope: Scope, prefix: Option<&str>) -> bool {
         if !self.has(scope) {
             return false;
@@ -124,6 +132,7 @@ impl Clients {
                 return Err(format!("{at}: its id or its token_sha256 is already used"));
             }
             let prefixes = list("prefixes")?.into_iter().map(str::to_owned).collect();
+            let orgs = list("orgs")?.into_iter().map(str::to_owned).collect();
             let url_token = match entry.get("url_token") {
                 None => false,
                 Some(Value::Bool(marked)) => *marked,
@@ -135,11 +144,26 @@ impl Clients {
                     client_id: Some(id.to_owned()),
                     scopes,
                     prefixes,
+                    orgs,
                     url_token,
                 },
             ));
         }
         Ok(Self(clients))
+    }
+
+    /// The first client that names an org outside `held`, with that org.
+    pub(super) fn unknown_org(&self, held: &[&str]) -> Option<(&str, &str)> {
+        self.0.iter().find_map(|(_, caller)| {
+            let org = caller
+                .orgs
+                .iter()
+                .find(|org| !held.contains(&org.as_str()))?;
+            Some((
+                caller.client_id.as_deref().unwrap_or_default(),
+                org.as_str(),
+            ))
+        })
     }
 
     /// The client whose token hash equals the hash of `token`, when that client may give its
@@ -207,6 +231,28 @@ mod tests {
 
         let local = Caller::local();
         assert!(local.permits(Scope::Write, None) && local.permits(Scope::Comment, Some("X")));
+    }
+
+    #[test]
+    fn orgs_limit_the_repositories_of_a_caller() {
+        let limited = Clients::parse(&file(
+            "scopes = [\"read\"]\norgs = [\"varsity\", \"teddy\"]\n",
+        ))
+        .unwrap();
+        let caller = limited.find("token-a", Carrier::Header).unwrap();
+        assert!(caller.uses("varsity") && caller.uses("teddy"));
+        assert!(!caller.uses("other") && !caller.uses(""));
+        assert_eq!(limited.unknown_org(&["varsity", "teddy"]), None);
+        assert_eq!(limited.unknown_org(&["varsity"]), Some(("a", "teddy")));
+        assert_eq!(limited.unknown_org(&[]), Some(("a", "varsity")));
+
+        let open = Clients::parse(&file("scopes = [\"read\"]\n")).unwrap();
+        assert!(open.find("token-a", Carrier::Header).unwrap().uses("other"));
+        assert_eq!(open.unknown_org(&[]), None);
+        assert!(Caller::local().uses("other"));
+
+        let error = Clients::parse(&file("scopes = [\"read\"]\norgs = \"varsity\"\n")).err();
+        assert_eq!(error.as_deref(), Some("client 1: orgs must be an array"));
     }
 
     #[test]
