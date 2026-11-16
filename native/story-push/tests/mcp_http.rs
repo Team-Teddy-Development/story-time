@@ -13,7 +13,7 @@ use std::{
         atomic::{AtomicUsize, Ordering},
         mpsc, Arc, Mutex,
     },
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 static NEXT: AtomicUsize = AtomicUsize::new(0);
@@ -225,6 +225,18 @@ impl Http {
             .filter_map(|line| serde_json::from_str(line).ok())
             .collect()
     }
+    /// The audit lines once `done` holds for them. The server writes each line to stderr before
+    /// it answers, but the reader thread can take it after the answer arrives (ST-159).
+    fn audit_when(&self, done: impl Fn(&[Value]) -> bool) -> Vec<Value> {
+        let deadline = Instant::now() + Duration::from_secs(5);
+        loop {
+            let lines = self.audit_lines();
+            if done(&lines) || Instant::now() > deadline {
+                return lines;
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+    }
 }
 impl Drop for Http {
     fn drop(&mut self) {
@@ -393,7 +405,7 @@ fn story_show_over_http_equals_story_show_over_stdio() {
     );
     assert_eq!(over_http, over_stdio["result"]);
 
-    let audit = server.audit_lines();
+    let audit = server.audit_when(|lines| !lines.is_empty());
     assert_eq!(audit.len(), 1, "{audit:?}");
     assert_eq!(audit[0]["tool"], "story_show");
     assert_eq!(audit[0]["client_id"], "reader");
@@ -425,7 +437,8 @@ fn a_read_only_token_cannot_see_or_run_write_tools() {
     );
     assert_eq!(refused["structuredContent"]["error"]["retryable"], false);
     assert_eq!(fixture.snapshot(), before, "a refused call changes no file");
-    let audit = server.audit_lines();
+    let audit =
+        server.audit_when(|lines| lines.last().is_some_and(|l| l["tool"] == "story_update"));
     let last = audit.last().unwrap();
     assert_eq!(last["tool"], "story_update");
     assert_eq!(last["error_code"], "scope_refused");
