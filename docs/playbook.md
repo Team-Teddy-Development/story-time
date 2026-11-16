@@ -138,13 +138,15 @@ Mandates in a text file are advice. These make them hold.
 
 | Mechanism | Catches |
 |---|---|
-| `story-link` CI check, **required** on the default branch | A PR with no `Stories:` line, or one naming an id or issue that is not a story |
+| `story-link` CI check (`story check-pr`), **required** on the default branch | A PR with no `Stories:` line, or one naming an id or issue that is not a story; with `STORY_ACCEPTANCE=fail`, a named story that is not accepted or a closing keyword that no accepted story covers |
 | `story-ids` CI check | Two branches (often parallel agents) creating the same new story id |
 | `story set status=ready` lint gate | Unestimated stories, vague or non-Given/When/Then criteria, orphan spikes, missing design links |
 | Definitions of Ready and Done in settings | Project rules, applied at ready and at accept |
 | story-accept with evidence | A story closed without proof (commands, test names, PR links) |
 
 ### `.github/workflows/story-link.yml`
+
+The check is the native `story check-pr` verb. Pin `<sha>` to a story-time commit.
 
 ```yaml
 name: story-link
@@ -154,40 +156,40 @@ on:
 permissions:
   contents: read
   issues: read
+  pull-requests: read
 jobs:
   story-link:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Every PR is associated with one or more stories
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@stable
+      - id: cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.story-root/bin/story
+          key: story-<sha>
+      - if: steps.cache.outputs.cache-hit != 'true'
+        run: cargo install --locked --git https://github.com/Team-Teddy-Development/story-time --rev <sha> story-time-native --bin story --root ~/.story-root
+      - name: Check declared stories
         env:
-          PREFIX: ST
           PR_BODY: ${{ github.event.pull_request.body }}
           IS_INCIDENT: ${{ contains(github.event.pull_request.labels.*.name, 'incident') }}
-          GH_TOKEN: ${{ github.token }}
+          STORY_ACCEPTANCE: ${{ vars.STORY_ACCEPTANCE }}
           REPO: ${{ github.repository }}
-        run: |
-          # Only declared stories count: lines starting "Story:" or "Stories:".
-          text=$(grep -iE '^[[:space:]]*Stor(y|ies):' <<<"$PR_BODY" || true)
-          fail=0; found=0
-          for id in $(grep -oE "${PREFIX}-[0-9]{3,}" <<<"$text" | sort -u); do
-            if [ -f "backlog/$id.md" ]; then echo "Story: $id"; found=1
-            else echo "::error::$id is named but backlog/$id.md does not exist."; fail=1; fi
-          done
-          for n in $(grep -oE '(^|[^&A-Za-z0-9])#[0-9]+' <<<"$text" | grep -oE '[0-9]+' | sort -u); do
-            labels=$(gh api "repos/$REPO/issues/$n" --jq 'if .pull_request then "PR" else ([.labels[].name] | join(",")) end' 2>/dev/null || echo "MISSING")
-            if grep -qE '(^|,)(story|spike|bug|chore)(,|$)' <<<"$labels"; then echo "Story issue: #$n"; found=1
-            else echo "::error::#$n is not a story issue ($labels)."; fail=1; fi
-          done
-          [ "$fail" = 1 ] && exit 1
-          [ "$found" = 1 ] && exit 0
-          if [ "$IS_INCIDENT" = "true" ]; then
-            echo "Incident PR without a story: its bug story is due within one business day." | tee -a "$GITHUB_STEP_SUMMARY"
-            exit 0
-          fi
-          echo "::error::This PR names no story. Add 'Stories: ${PREFIX}-### (#issue)' to the PR body."
-          exit 1
+          GH_TOKEN: ${{ github.token }}
+        run: ~/.story-root/bin/story check-pr
 ```
+
+The check reads the prefix and backlog folder from `.story-time/settings.json`. Its rules:
+
+1. **Links (always fail).** Every `ST-###` has a card, and every `#N` is an issue with a story-type label (`story`, `spike`, `bug`, `chore`), not a pull request. A PR with no `Stories:` line fails unless it has the `incident` label.
+2. **Acceptance.** Each reference not marked `(partial)` names a `done` card with every criterion ticked. Run story-accept on the PR branch before requesting merge. Mark a reference `(partial)` when the PR delivers only part of the story: `Stories: ST-904 (#905) (partial)`.
+3. **Link consistency.** That card has a `remote`, and it matches the reference's `(#N)`. Skipped with `sync: off`.
+4. **Closing keywords.** `Closes #N` (and `fix`, `resolve` in any tense, `owner/repo#N`, or an issue URL) may target only an issue that an accepted reference covers, or an issue that is not a story issue.
+
+Rules 2–4 follow the repository variable `STORY_ACCEPTANCE`. Unset or `warn` prints `::warning::` lines and passes; `fail` fails the check. A PR cannot change a repository variable. Start in `warn`. When the check shows no warnings for 7 days, the repository owner sets `STORY_ACCEPTANCE=fail`. The `incident` label exempts rules 2–4.
 
 Make it a required status check on the default branch (a branch ruleset or branch protection).
 
