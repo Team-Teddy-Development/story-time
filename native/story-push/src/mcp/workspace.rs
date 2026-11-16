@@ -8,6 +8,7 @@ use super::{
     forge::{self, GitHub},
     forge_auth::{self, App},
     registry::{branch_ok, Registry, RegistryRepo},
+    retry,
 };
 use crate::Failure;
 use serde_json::{json, Value};
@@ -309,11 +310,20 @@ impl Workspace {
         input: Option<&[u8]>,
         timeout: Duration,
     ) -> Result<String, String> {
-        let ran = self.run(repo, args, environment, input, timeout)?;
-        if ran.ok {
-            Ok(String::from_utf8_lossy(&ran.stdout).into_owned())
-        } else {
-            Err(self.failed(args, &ran))
+        // A name that did not resolve reached no server, so the command can run again.
+        let ran = retry::again(
+            retry::GIT_PAUSE,
+            |failed: &Ran| retry::name_did_not_resolve(&String::from_utf8_lossy(&failed.stderr)),
+            || match self.run(repo, args, environment, input, timeout) {
+                Ok(ran) if ran.ok => Ok(Ok(ran)),
+                Ok(ran) => Err(ran),
+                Err(not_run) => Ok(Err(not_run)),
+            },
+        );
+        match ran {
+            Ok(Ok(ran)) => Ok(String::from_utf8_lossy(&ran.stdout).into_owned()),
+            Ok(Err(not_run)) => Err(not_run),
+            Err(ran) => Err(self.failed(args, &ran)),
         }
     }
 

@@ -206,11 +206,11 @@ impl App {
         request: reqwest::blocking::RequestBuilder,
         step: &str,
     ) -> Result<Value, String> {
-        let response = request
+        let request = request
             .bearer_auth(self.jwt(now())?)
             .header("Accept", "application/vnd.github+json")
-            .header("X-GitHub-Api-Version", "2022-11-28")
-            .send()
+            .header("X-GitHub-Api-Version", "2022-11-28");
+        let response = super::retry::send(request)
             .map_err(|_| format!("GitHub did not answer the {step} request"))?;
         let status = response.status();
         if !status.is_success() {

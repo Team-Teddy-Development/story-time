@@ -192,8 +192,15 @@ impl Fixture {
         .collect()
     }
     fn serve(&self, registry: &Path, extra: &[&str]) -> Http {
-        let mut child = self
-            .command()
+        self.serve_on(registry, extra, None)
+    }
+    /// `path` replaces the PATH of the server, so that a test can give it another `git`.
+    fn serve_on(&self, registry: &Path, extra: &[&str], path: Option<&std::ffi::OsStr>) -> Http {
+        let mut command = self.command();
+        if let Some(path) = path {
+            command.env("PATH", path);
+        }
+        let mut child = command
             .args(self.hosted_args(registry))
             .args(extra)
             .stdin(Stdio::null())
@@ -475,6 +482,75 @@ fn a_repository_that_cannot_be_reached_is_unavailable_and_the_rest_keep_working(
     let lint = server.call("story_lint", json!({"repository": "web"}));
     assert_eq!(lint["error"]["code"], "repository_unavailable", "{lint}");
     assert_eq!(lint["error"]["details"]["repository"], "gone");
+}
+
+/// ST-147: a `git` that fails the first `fails` fetches as a resolver failure does, and counts
+/// each fetch in the file that this returns with the PATH for the server.
+fn git_with_dns_failures(
+    fixture: &Fixture,
+    name: &str,
+    fails: u32,
+) -> (std::ffi::OsString, PathBuf) {
+    use std::os::unix::fs::PermissionsExt;
+    let found = Command::new("sh")
+        .args(["-c", "command -v git"])
+        .output()
+        .unwrap();
+    let real = String::from_utf8(found.stdout).unwrap().trim().to_owned();
+    let bin = fixture.base.join(name);
+    fs::create_dir_all(&bin).unwrap();
+    let count = bin.join("fetches");
+    let script = format!(
+        "#!/bin/sh\ncase \" $* \" in *\" fetch \"*)\n  n=$(cat '{count}' 2>/dev/null || echo 0); n=$((n+1)); echo $n > '{count}'\n  if [ $n -le {fails} ]; then\n    echo \"fatal: unable to access 'https://github.com/o/r.git/': Could not resolve host: github.com\" >&2\n    exit 128\n  fi;;\nesac\nexec '{real}' \"$@\"\n",
+        count = count.display()
+    );
+    fs::write(bin.join("git"), script).unwrap();
+    fs::set_permissions(bin.join("git"), fs::Permissions::from_mode(0o755)).unwrap();
+    let mut path = bin.into_os_string();
+    path.push(":");
+    path.push(std::env::var_os("PATH").unwrap_or_default());
+    (path, count)
+}
+
+#[test]
+fn a_fetch_is_tried_again_when_the_forge_name_does_not_resolve() {
+    let fetches = |count: &Path| -> u32 {
+        fs::read_to_string(count)
+            .map(|text| text.trim().parse().unwrap())
+            .unwrap_or(0)
+    };
+    let one = "org = \"fixture\"\nfetch_ttl_seconds = 600\n\n[[repo]]\nkey = \"core\"\nclone = \"{}\"\nforge = \"github\"\nprefixes = [\"VC\", \"ST\"]\n";
+
+    // Two failures, then the fetch works: the client sees no failure.
+    let fixture = Fixture::new();
+    let registry = fixture.base.join("one.toml");
+    fs::write(&registry, one.replace("{}", &fixture.file_url("core"))).unwrap();
+    let (path, count) = git_with_dns_failures(&fixture, "flaky", 2);
+    let server = fixture.serve_on(&registry, &[], Some(&path));
+    let shown = server.ok("story_show", json!({"repository": "core", "id": "VC-109"}));
+    assert_eq!(shown["sha"], fixture.head("core", "main").as_str());
+    assert_eq!(fetches(&count), 3, "2 failures and the fetch that worked");
+    drop(server);
+
+    // The name never resolves: each fetch that the server starts is tried 4 times.
+    let fixture = Fixture::new();
+    let registry = fixture.base.join("one.toml");
+    fs::write(&registry, one.replace("{}", &fixture.file_url("core"))).unwrap();
+    let (path, count) = git_with_dns_failures(&fixture, "down", u32::MAX);
+    let server = fixture.serve_on(&registry, &[], Some(&path));
+    let shown = server.call("story_show", json!({"repository": "core", "id": "VC-109"}));
+    assert_eq!(shown["error"]["code"], "repository_unavailable", "{shown}");
+    assert!(
+        shown["error"]["details"]["reason"]
+            .as_str()
+            .is_some_and(|reason| reason.contains("Could not resolve host")),
+        "{shown}"
+    );
+    let tried = fetches(&count);
+    assert!(
+        tried >= 4 && tried % 4 == 0,
+        "{tried} tries: 4 for each fetch"
+    );
 }
 
 #[test]
