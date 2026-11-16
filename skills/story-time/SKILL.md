@@ -129,7 +129,7 @@ part of either Rust push execution path.
 | `story show <id>` | Print one story. Native Rust; read-only |
 | `story metrics --from YYYY-MM-DD --to YYYY-MM-DD [--json]` | Throughput, WIP, and cycle time for a window from changelog status events, with gaps `unknown`. Native Rust; read-only |
 | `story check-pr [--body-file F] [--json]` | Check a PR's `Stories:` line, acceptance, and closing keywords (CI). Reads `PR_BODY`, `IS_INCIDENT`, `STORY_ACCEPTANCE`, `REPO`. Native Rust; read-only |
-| `story sync-merge [--all] [--workflow F] [--json]` | Mirror merged cards to their issues and comment once per PR on each named issue (CI, after a push to the default branch). Native Rust |
+| `story sync-merge [--all] [--from SHA] [--workflow F] [--json]` | Mirror merged cards to their issues and comment once per PR on each named issue (CI, after a push to the default branch; GitHub and Gitea). Native Rust |
 | `story lint [id...] [--json]` | INVEST / Definition of Ready check. Exit 1 if any story has errors. Native Rust; read-only |
 | `story rank [--limit N] [--include-refined]` | WSJF ranking of ready, unblocked stories, plus why others were excluded. Native Rust; read-only |
 | `story set <id> key=value... [--note N]` | Update fields with a changelog entry. `status=ready` is lint-gated. Native Rust |
