@@ -2,7 +2,7 @@
 
 *   **Author:** Eric Jernigan
 *   **Status:** In Review
-*   **Revision:** 3.1 (after EGM review Stage 7)
+*   **Revision:** 3.2 (after EGM review Stage 8)
 *   **Date:** 2026-11-16
 *   **Stories:** ST-151 (#344), ST-152 (#346). Prerequisites: ST-153 (#348),
     ST-154 (#350).
@@ -132,7 +132,8 @@ Five facts in the current code constrain the fix:
     `(partial)` reference and an `incident` PR pass. A closing keyword aimed
     at a story issue that no passing reference covers is a finding. `warn`
     mode warns and passes. (ST-152 AC1–AC6. AC1 and AC2 read the merge ref;
-    AC5 is amended by D7 and D15; AC6's mode source is D17. See Decisions.)
+    AC5 is amended by D7 and D15; AC6's mode comes from `vars.STORY_ACCEPTANCE` (see Terms and Settings).
+    D-numbers refer to Decisions.)
 *   The same rule runs in every repository that adopts the new template,
     from one tested Rust implementation. (ST-152)
 *   After a successful `story-sync` run, every issue named by a merged PR in
@@ -145,7 +146,8 @@ Five facts in the current code constrain the fix:
     checkout is clean at the end. The workflow pushes no commit. (ST-151 AC4, AC7)
 *   With `sync: off` or an unsupported tracker, the run writes nothing to the
     tracker. A push with no PR, or a PR with no `Stories:` line, gets no
-    comment, but its changed cards are still mirrored. A skipped run, and a
+    merge comment. Its changed cards are still mirrored, and a status change
+    gets a state comment. A skipped run, and a
     push with no PR or no `Stories:` line, name the commit SHA. (ST-151 AC5, AC6 as amended by D16)
 *   **Success measures.** The story-time maintainer computes both with
     `gh` queries over the last 30 days of merged PRs and records them in the
@@ -171,6 +173,8 @@ Five facts in the current code constrain the fix:
 *   A `released` or deployed state after `done`. A team whose Definition of
     Done requires deployment marks its references `(partial)`.
 *   A public `story push` flag that skips write-back.
+*   A machine-readable evidence format per criterion. `story-accept` and PR
+    review own the evidence.
 
 ## Decisions
 
@@ -190,16 +194,12 @@ revision.
 | D6 | Which card state is mirrored? | The card on the default-branch HEAD at the start of the run. | 0.80 |
 | D7 | Closing keywords | Allowed on a reference that passes the acceptance rule. | 0.88 |
 | D8 | Roll-out of the acceptance rule | `warn` first. | 0.86 |
-| D8b | Order of ST-153 | ST-153 merges before any repository switches to `fail`. | 1.00 |
 | D9 | Card with no `remote` named on a PR | A `check-pr` finding ("run story push before merge"). Skipped with `sync: off`. | 0.98 |
 | D10 | CI install of the `story` binary | `actions/cache` keyed on the pinned source revision; `cargo install` on a miss. | 0.30 (weak) |
-| D11 | Evidence format per criterion | Out of scope. `story-accept` and PR review own the evidence. | 0.76 |
-| D12 | Deploy-time done | Out of scope (see Non-Goals). | 0.82 |
 | D13 | Ordering of runs | One run at a time (a concurrency group that queues, without cancelling the running one). Each run covers the range from the last successful run to HEAD. | 0.61 |
 | D14 | A bare `#N` reference | Mapped to the card whose `remote` is `N`, and then checked like an ID reference. | 0.22 (weak) |
 | D15 | A closing keyword on an unnamed story issue | A finding when the target has a story-type label and no passing reference covers it. | 0.56 |
-| D16 | Changed cards on a push with no PR or no `Stories:` line | Mirrored. Only the comments need a PR and a `Stories:` line. This amends ST-151 AC6. | 0.42 (weak) |
-| D17 | Source of `STORY_ACCEPTANCE` | Repository variable. This is a constraint, not a judgment: a PR can change its own workflow file. | 0.06 (Jev's score; the constraint decides it) |
+| D16 | Changed cards on a push with no PR or no `Stories:` line | Mirrored, with a state comment on a status change. Only merge comments need a PR and a `Stories:` line. This amends ST-151 AC6. | 0.42 (weak); state comment 0.09 (weak) |
 | D18 | Trigger to switch to `fail` | The repository owner switches when the 7-day warn count is 0. | 0.22 (weak) |
 
 D5 note: Jev first chose a `pull_request: closed` trigger with confidence
@@ -243,8 +243,9 @@ The PR and issue numbers below are examples.
 *   **Given**: Commit `def456` is pushed to the default branch with no PR. It
     sets `backlog/ST-909.md` to `archived`.
 *   **When**: `story-sync` runs.
-*   **Then**: ST-909's issue is closed. No comment is posted. The report says
-    `no pull request for def456; mirrored 1 card, no comments`.
+*   **Then**: ST-909's issue is closed and gets one state comment,
+    `Status archived from def456`. No merge comment is posted. The report
+    says `no pull request for def456; mirrored 1 card`.
 
 ### CUJ 5: Closing keywords
 
@@ -307,7 +308,10 @@ the check stays red until the author resolves the conflicts.
         `bug`, or `chore`), not a PR.
     *   A PR with no reference fails, unless it has the `incident` label.
 2.  **Acceptance.** For each reference not marked `(partial)`, the card is
-    `status: done` with zero `- [ ]` lines under `## Acceptance Criteria`. A
+    `status: done`, and every entry that the existing parser
+    `story::acceptance_criteria` (`native/story-push/src/story.rs:236`)
+    returns is done. That parser also reads `## Exit Criteria` for spikes, so
+    a spike is held to its exit criteria. A
     bare `#N` reference uses the card whose `remote` is `N`. If no card has
     that remote, the reference is a finding.
 3.  **Link consistency.** For each reference not marked `(partial)`, the card
@@ -358,28 +362,22 @@ repository, because `GITHUB_TOKEN` can write only there.
 1.  **Gate.** Read the settings. With `sync: off` or an unsupported tracker,
     report `skipped (<reason>) at <sha>` and exit 0. If `github.repo` is not
     the workflow repository, report a permanent failure and stop.
-2.  **Range.** Find the head commit of the last successful `push` run of this
-    workflow on the default branch (`gh run list --workflow story-sync
-    --branch <default> --event push --status success --limit 1`). Scheduled
-    and dispatched `--all` runs post no comments, so they never advance the
-    range. The range is that commit to the current HEAD, walked with
-    `git rev-list --first-parent`. Every merge commit and squash commit on
-    the default branch is a first-parent commit. The run takes the `--all`
-    path and reports why in three cases: there is no earlier success, the
-    commit is not an ancestor of HEAD (for example after a force push), or
-    the range has more than 200 first-parent commits. A run on the `--all`
-    path posts no comments, so the PRs in that range get none. This is a
-    known gap of the first run after install.
+2.  **Range.** The range starts at the head SHA of the last successful
+    push-triggered run of this workflow on the default branch, and ends at
+    the current HEAD. It contains the first-parent commits between them.
+    Every merge commit and squash commit on the default branch is a
+    first-parent commit. Scheduled and dispatched `--all` runs post no
+    comments, so they never advance the range. The run takes the `--all`
+    path, and reports why, in three cases: there is no earlier success (the
+    first run, a renamed workflow, or expired run history); the anchor is
+    not an ancestor of HEAD (for example after a force push); or the run
+    history cannot be read. A run on the `--all` path posts no comments, so
+    the PRs in that range get none. This is an accepted gap.
 3.  **Merged PRs.** For each first-parent commit in the range, ask GitHub for
     its pull requests. Keep each PR that is merged, has the default branch as
     its base, and has a `merge_commit_sha` in the range.
-4.  **Mirror.** Select three kinds of card:
-    *   every card that the range changed;
-    *   every card named by a kept PR;
-    *   every card whose `remote` is the target of a closing keyword in a kept
-        PR's body.
-
-    Read each card at HEAD.
+4.  **Mirror.** Select every card that the range changed, and every card
+    named by a kept PR. Read each card at HEAD.
     *   A card deleted at HEAD is skipped with reason `deleted`.
     *   A card with `pending_create` is skipped with reason `pending_create`.
     *   A card with no `remote` is skipped with reason `unlinked`.
@@ -387,13 +385,16 @@ repository, because `GITHUB_TOKEN` can write only there.
         title, labels, and body, and closes or reopens the issue from the
         card's status. It writes no file.
 
-    A card whose `status` differs between the range start and HEAD gets one
-    state comment on its issue: `Status <new status> from <commit>`. The
-    commit is the last commit in the range that changed that card. The
-    comment carries the marker keyed on that commit. The marker check, not
-    the result of `update`, decides whether to post. A rerun therefore posts
-    a comment that an earlier failed run missed, and never posts a second
-    one (ST-151 AC2).
+    The merge comment in step 5 satisfies ST-151 AC2 for each named story.
+    A card that no kept PR names, but whose `status` differs between the
+    range start and HEAD, gets one state comment instead: `Status <new
+    status> from <commit>`. This covers reverts, direct pushes, and unnamed
+    cards. The commit is the last commit in the range that changed that card.
+    The comment carries its own marker,
+    `<!-- story-time:v1:merge-sync-state=<commit> -->`, so it never collides
+    with a merge marker. The marker check, not the result of `update`,
+    decides whether to post. A rerun therefore posts a comment that an
+    earlier failed run missed, and never posts a second one.
 5.  **Comment.** For each kept PR, parse its references. For each referenced
     issue, post one comment, unless one already carries this PR's marker.
     *   The comment is `Merged in #<PR> (<merge sha>)` followed by
@@ -411,8 +412,7 @@ repository, because `GITHUB_TOKEN` can write only there.
     retryable failure.
 
 **Backstop.** `story sync-merge --all` mirrors every linked card from HEAD and
-posts no comments. It makes at most 30 tracker writes per minute, to reduce
-secondary-rate-limit errors.
+posts no comments. A rate-limit response is a retryable failure.
 
 ### Comment marker
 
@@ -526,10 +526,10 @@ as a resolution.
 | The switch to `fail` never happens | Acceptance stays optional. | Roll-out step 4 names the trigger and the owner. The second success measure counts merged references that skipped acceptance. |
 | Tracker outage partway through a run | Some issues are not updated. | A retryable failure keeps the range, so the next push run covers it again. |
 | A permanent failure (404, mismatch) | One issue cannot be updated. | It is reported in the job summary, and the range advances, so it does not block later runs. |
-| Rate limits during `--all` or a large range | Calls are throttled. | `--all` makes at most 30 writes per minute. A range over 200 commits takes the `--all` path. |
+| Rate limits during `--all` or a large range | Calls are throttled. | A rate-limit response is retryable, so the next run continues. Pacing is a Future Improvement. |
 | Labels recolored on each run | Label colors change on every merge. | ST-154 fixes the gateway before `story-sync` ships. |
-| Warn-mode close-then-reopen | A keyword closes an issue whose card is not done. | Step 4 selects the keyword's target card and reopens the issue in the same run. `fail` mode prevents it. |
-| First run after install, or after a force push | It takes the `--all` path, so the PRs in that range get no merge comment. | Accepted gap. State is still mirrored. |
+| Warn-mode keyword close | A keyword closes an issue whose card is not done. | If the card is named or changed, the same run reopens it. Otherwise the weekly `--all` reopens it, up to 7 days later. `fail` mode prevents it. |
+| First run, renamed workflow, expired run history, or force push | The run takes the `--all` path, so the PRs in that range get no merge comment. | Accepted gap. State is still mirrored. |
 | A build script reads the token | Third-party code during `cargo install` reads a write token. | The build runs in a separate job with `permissions: {}`. The sync job checks out with `persist-credentials: false`. |
 | Tracker repository differs from the code repository | `GITHUB_TOKEN` cannot write. | Step 1 stops with a permanent failure. A cross-repository token is out of scope. |
 
@@ -586,6 +586,7 @@ as a resolution.
 *   A reusable `workflow_call` workflow (Alternative I).
 *   Prebuilt release binaries (Alternative H).
 *   Unblock notices for dependent stories.
+*   Pacing for `--all` if rate limits appear.
 
 --------------------------------------------------------------------------------
 
@@ -603,7 +604,7 @@ as a resolution.
         splits each line into reference units: an ID or a `#N` starts a unit,
         a `(#N)` directly after an ID joins that unit, and `(partial)` marks
         the current unit.
-    *   `closing_targets(body: &str) -> Vec<u64>`.
+    *   `closing_targets(body: &str) -> Vec<u64>`, used by `check-pr` only.
     *   Unit tests:
         *   `ST-904 (#905) (partial)` gives one partial unit with both fields.
         *   `#344` alone gives an issue-only unit.
@@ -679,6 +680,7 @@ as a resolution.
     *   AC5: a keyword on an uncovered story issue fails. On a covered issue
         it passes.
     *   AC6: `warn` mode exits 0 with `::warning::`.
+    *   A spike with unticked Exit Criteria fails rule 2.
     *   Extra tests:
         *   An unlinked card is a finding, except with `sync: off`.
         *   A bare `#N` maps to its card.
@@ -703,15 +705,17 @@ as a resolution.
     *   Extra tests:
         *   The range starts at the last successful push run, so a skipped
             run's PR is covered. A successful `--all` run does not advance it.
-        *   A last-success commit that is not an ancestor, or a range over
-            200 commits, takes the `--all` path.
+        *   A last-success commit that is not an ancestor, or a missing run
+            history, takes the `--all` path.
         *   One push that carries two PRs gets both comments, and a true merge
             of a 50-commit branch makes one PR lookup.
         *   A retryable failure exits 1. A permanent failure (404) exits 0,
             and the next run's range starts after it.
         *   A rerun after a run that closed an issue but failed before
             commenting posts the AC2 state comment once.
-        *   A keyword-closed issue of an unnamed, not-done card is reopened.
+        *   An unnamed card whose status changed gets one state comment with
+            the `merge-sync-state` marker. A named card gets only the merge
+            comment.
         *   Deleted and `pending_create` cards are skipped with their reasons.
 
 #### 9. `scripts/story-policy.rs` (Modify)
