@@ -199,7 +199,7 @@ After the socket binds, the server prints `listening on <addr>` to stderr.
 
 #### 2. Registry
 
-A TOML file defines one registry org. The file is mounted from a ConfigMap and parsed with the existing `toml_subset::parse`. Prefixes are declared, so a reviewer sees every prefix in the ConfigMap:
+A TOML file defines the registry: the repositories of one or more orgs. The file is mounted from a ConfigMap and parsed with the existing `toml_subset::parse`. Prefixes are declared, so a reviewer sees every prefix in the ConfigMap:
 
 ```toml
 org = "varsity"
@@ -220,10 +220,20 @@ prefixes = ["VE"]
 The registry file has three load-time checks:
 
 *   It refuses `forge = "gitea"`.
-*   It refuses a prefix that two repositories declare.
+*   It refuses a prefix that two repositories of one org declare.
 *   Lint fails for a backlog file whose prefix is not declared, under the rule `links.undeclared_prefix`.
 
-v1 serves one registry org per process. Serving several orgs from one process is a Future Improvement.
+**Several orgs (amendment of 2026-11-16, ST-141).** v1 served one org for each process. One process now serves several:
+
+*   A `[[repo]]` table can name its `org`. A repository with no `org` takes the top-level one, and `default` when the file has none. An org name has the form of a repository key.
+*   The registry stays flat. `toml_subset` has no nested table arrays, and a flat file keeps the one-org format valid with no change.
+*   A repository key is unique in the whole file. Each tool still takes `repository`, and no tool takes an org.
+*   An org is the boundary of every link. The org index that lint and `story_update` use holds only the repositories of the org of the target repository. The Neo4j projection is made and read for one org at a time, and `sync` in a `story_graph` result names only the repositories of that org.
+*   Two orgs can declare the same prefix. The check for a prefix that two repositories declare applies inside one org.
+*   A graph node is keyed by the tracker target of its repository. When two orgs register one tracker target, the projection of the second org fails with `config_invalid`, because a shared node would join the two orgs.
+*   `story_repos` gives the `org` of each repository.
+
+Not part of this amendment: a link between two orgs, and a read limit for each client. Each client token still reads every registered repository; ST-142 adds that limit, and it must be in place before a second org with other readers goes live.
 
 #### 3. Workspace: bare clones and freshness
 

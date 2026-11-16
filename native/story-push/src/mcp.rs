@@ -610,12 +610,14 @@ impl Server {
     /// repositories resolve in. Each root declares the prefix in its settings. A root with no
     /// story-time settings is not part of the org.
     ///
-    /// A server with a registry builds the org from it: every registered repository at the
-    /// head of its default branch, with the prefixes that the registry declares. A repository
-    /// that the server cannot read fails the call, because a link into it cannot be checked.
-    fn org(&self) -> Result<Option<OrgIndex>, ToolError> {
-        let keys = self.keys();
-        if keys.len() < 2 && self.workspace.is_none() {
+    /// A server with a registry builds the org of the repository `of` from it: every registered
+    /// repository of that org at the head of its default branch, with the prefixes that the
+    /// registry declares. A repository that the server cannot read fails the call, because a
+    /// link into it cannot be checked. A repository of another org is not part of the index, so
+    /// no link resolves into it.
+    fn org(&self, of: &str) -> Result<Option<OrgIndex>, ToolError> {
+        let keys = self.org_keys(of);
+        if self.keys().len() < 2 && self.workspace.is_none() {
             return Ok(None);
         }
         let mut repos = Vec::new();
@@ -634,6 +636,24 @@ impl Server {
             });
         }
         Ok(Some(OrgIndex::new(repos)))
+    }
+
+    /// The keys of the repositories in the org of the repository `of`. The local roots of a
+    /// server with no registry are one org.
+    fn org_keys(&self, of: &str) -> Vec<String> {
+        let Some(workspace) = &self.workspace else {
+            return self.keys();
+        };
+        let repos = workspace.repos();
+        let org = repos
+            .iter()
+            .find(|repo| repo.key == of)
+            .map(|repo| &repo.org);
+        repos
+            .iter()
+            .filter(|repo| Some(&repo.org) == org)
+            .map(|repo| repo.key.clone())
+            .collect()
     }
 
     /// The prefixes that the registry declares for the repository `key`.
@@ -1153,7 +1173,7 @@ fn story_lint(server: &Server, args: &Map<String, Value>) -> Result<Value, ToolE
             })
             .collect::<Result<_, _>>()?,
     };
-    let org = server.org()?;
+    let org = server.org(&repo.root.key)?;
     let ctx = lint::Context {
         stories: Some(&all),
         root: Some(&repo.root.path),
@@ -1341,7 +1361,7 @@ fn update_in(server: &Server, repo: &Repo, args: &Map<String, Value>) -> Result<
         }
     }
     let note = args.get("note").and_then(Value::as_str);
-    let org = server.org()?;
+    let org = server.org(&repo.root.key)?;
     let change = set::apply(
         &current,
         &changes,
@@ -2138,6 +2158,7 @@ fn repos_schema() -> Value {
     let entry = object(
         &[
             "key",
+            "org",
             "prefixes",
             "sha",
             "fetched_at",
@@ -2146,6 +2167,7 @@ fn repos_schema() -> Value {
         ],
         json!({
             "key": {"type": "string"},
+            "org": {"type": "string"},
             "prefixes": texts(),
             "sha": nullable_text,
             "fetched_at": nullable_text,

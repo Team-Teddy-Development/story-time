@@ -1,5 +1,6 @@
-//! The registry of a hosted server (ADR 0007): the repositories of one org, each with its clone
-//! URL and the story prefixes it declares. The file is TOML, so that a reviewer sees every
+//! The registry of a hosted server (ADR 0007): the repositories of each org, each with its clone
+//! URL and the story prefixes it declares. A repository names its org, or takes the top-level one.
+//! Links between stories resolve inside one org, so two orgs can declare the same prefix. The file is TOML, so that a reviewer sees every
 //! prefix in one place. Loading refuses an entry the server cannot serve.
 
 use crate::toml_subset;
@@ -12,12 +13,17 @@ pub(super) struct Registry {
 
 pub(super) struct RegistryRepo {
     pub(super) key: String,
+    /// The org whose stories this repository's links resolve in.
+    pub(super) org: String,
     pub(super) clone: String,
     pub(super) default_branch: Option<String>,
     pub(super) prefixes: Vec<String>,
 }
 
 const DEFAULT_TTL: u64 = 30;
+/// The org of a repository when the registry names none.
+const DEFAULT_ORG: &str = "default";
+const KEY_FORM: &str = "^[a-z0-9][a-z0-9._-]{0,63}$";
 
 fn key_ok(key: &str) -> bool {
     let mut bytes = key.bytes();
@@ -49,6 +55,15 @@ impl Registry {
                 .filter(|seconds| (1..=86_400).contains(seconds))
                 .ok_or("fetch_ttl_seconds must be an integer from 1 to 86400")?,
         };
+        let org_in = |table: &Value, at: &str| match table.get("org") {
+            None => Ok(None),
+            Some(value) => value
+                .as_str()
+                .filter(|org| key_ok(org))
+                .map(|org| Some(org.to_owned()))
+                .ok_or_else(|| format!("{at}: org must match {KEY_FORM}")),
+        };
+        let top_org = org_in(&document, "the registry")?.unwrap_or_else(|| DEFAULT_ORG.to_owned());
         let entries = document
             .get("repo")
             .and_then(Value::as_array)
@@ -60,13 +75,9 @@ impl Registry {
                 .get("key")
                 .and_then(Value::as_str)
                 .filter(|key| key_ok(key))
-                .ok_or_else(|| {
-                    format!(
-                        "repo {}: key must match ^[a-z0-9][a-z0-9._-]{{0,63}}$",
-                        index + 1
-                    )
-                })?;
+                .ok_or_else(|| format!("repo {}: key must match {KEY_FORM}", index + 1))?;
             let at = format!("repo {key}");
+            let org = org_in(entry, &at)?.unwrap_or_else(|| top_org.clone());
             let text = |name: &str| {
                 entry
                     .get(name)
@@ -119,15 +130,18 @@ impl Registry {
                 return Err(format!("{at}: the key is used by two entries"));
             }
             for prefix in &prefixes {
-                if let Some(other) = repos.iter().find(|repo| repo.prefixes.contains(prefix)) {
+                let holds =
+                    |repo: &&RegistryRepo| repo.org == org && repo.prefixes.contains(prefix);
+                if let Some(other) = repos.iter().find(holds) {
                     return Err(format!(
-                        "{at}: prefix {prefix} is already declared by repo {}; one repository owns a prefix",
+                        "{at}: prefix {prefix} is already declared by repo {} of org {org}; one repository of an org owns a prefix",
                         other.key
                     ));
                 }
             }
             repos.push(RegistryRepo {
                 key: key.to_owned(),
+                org,
                 clone: clone.to_owned(),
                 default_branch,
                 prefixes,
@@ -171,6 +185,47 @@ mod tests {
         assert_eq!(registry.repos[0].default_branch.as_deref(), Some("main"));
         assert_eq!(registry.repos[0].prefixes, ["VC", "ST"]);
         assert_eq!(registry.repos[1].default_branch, None);
+    }
+
+    #[test]
+    fn a_repository_takes_its_own_org_or_the_top_level_org() {
+        let one = Registry::parse(TWO).unwrap();
+        assert_eq!(one.repos[0].org, "varsity");
+        assert_eq!(one.repos[1].org, "varsity");
+        let two = Registry::parse(&TWO.replace("key = \"web\"", "key = \"web\"\norg = \"teddy\""))
+            .unwrap();
+        assert_eq!(two.repos[0].org, "varsity");
+        assert_eq!(two.repos[1].org, "teddy");
+        let none = Registry::parse(&TWO.replace("org = \"varsity\"\n", "")).unwrap();
+        assert_eq!(none.repos[0].org, "default");
+    }
+
+    #[test]
+    fn one_prefix_can_be_in_two_orgs_but_not_twice_in_one() {
+        let shared = TWO.replace("[\"VE\"]", "[\"VE\", \"ST\"]");
+        let message = refused(&shared);
+        assert!(
+            message.contains("repo web")
+                && message.contains("ST")
+                && message.contains("repo core of org varsity"),
+            "{message}"
+        );
+        let apart = shared.replace("key = \"web\"", "key = \"web\"\norg = \"teddy\"");
+        let registry = Registry::parse(&apart).unwrap();
+        assert_eq!(registry.repos[1].prefixes, ["VE", "ST"]);
+    }
+
+    #[test]
+    fn an_org_or_key_the_server_cannot_serve_is_refused_by_name() {
+        let in_two_orgs = TWO.replace("key = \"web\"", "key = \"core\"\norg = \"teddy\"");
+        assert!(refused(&in_two_orgs).contains("repo core: the key is used by two entries"));
+        let bad = TWO.replace("key = \"web\"", "key = \"web\"\norg = \"Team Teddy\"");
+        assert!(
+            refused(&bad).contains("repo web: org must match"),
+            "{}",
+            refused(&bad)
+        );
+        assert!(refused(&TWO.replace("org = \"varsity\"", "org = 7")).contains("the registry: org"));
     }
 
     fn refused(text: &str) -> String {

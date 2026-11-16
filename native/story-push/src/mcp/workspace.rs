@@ -774,6 +774,7 @@ impl Workspace {
                 let status = status.lock().unwrap_or_else(|e| e.into_inner());
                 json!({
                     "key": repo.key,
+                    "org": repo.org,
                     "prefixes": repo.prefixes,
                     "sha": status.sha,
                     "fetched_at": status.fetched_at,

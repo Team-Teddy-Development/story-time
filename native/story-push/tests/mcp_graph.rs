@@ -766,6 +766,22 @@ impl Org {
     }
 
     fn start(neo4j: &Neo4j, stories: &[(&str, &str, &str)]) -> Self {
+        let repos = [
+            ("core", "VC", "", ""),
+            ("other", "OT", "", ""),
+            ("web", "VE", "", ""),
+        ];
+        Self::start_with(neo4j, &repos, stories)
+    }
+
+    /// `repos` gives each repository its key, its prefix, its org, and its GitHub tracker
+    /// target. An empty org leaves the repository in the top-level org `fixture`. An empty
+    /// target gives it the files tracker.
+    fn start_with(
+        neo4j: &Neo4j,
+        repos: &[(&str, &str, &str, &str)],
+        stories: &[(&str, &str, &str)],
+    ) -> Self {
         let base = std::env::temp_dir().join(format!(
             "story-mcp-graph-org-{}-{}",
             std::process::id(),
@@ -774,19 +790,24 @@ impl Org {
         fs::create_dir_all(&base).unwrap();
         let base = base.canonicalize().unwrap();
         let mut registry = String::from("org = \"fixture\"\nfetch_ttl_seconds = 1\n");
-        for (repo, prefix) in [("core", "VC"), ("other", "OT"), ("web", "VE")] {
+        for (repo, prefix, org, target) in repos.iter().copied() {
             let dir = base.join("up").join(repo);
             fs::create_dir_all(dir.join(".story-time")).unwrap();
             Self::git(&base, &dir, &["init", "-q", "-b", "main"]);
-            fs::write(
-                dir.join(".story-time/settings.json"),
-                format!(r#"{{"tracker": "files", "prefix": "{prefix}"}}"#),
-            )
-            .unwrap();
+            let settings = match target {
+                "" => format!(r#"{{"tracker": "files", "prefix": "{prefix}"}}"#),
+                target => format!(
+                    r#"{{"tracker": "github", "sync": "ask", "prefix": "{prefix}", "github": {{"repo": "{target}"}}}}"#
+                ),
+            };
+            fs::write(dir.join(".story-time/settings.json"), settings).unwrap();
             registry.push_str(&format!(
                 "[[repo]]\nkey = \"{repo}\"\nclone = \"file://{}\"\nforge = \"github\"\nprefixes = [\"{prefix}\"]\n",
                 dir.display()
             ));
+            if !org.is_empty() {
+                registry.push_str(&format!("org = \"{org}\"\n"));
+            }
         }
         fs::write(base.join("registry.toml"), registry).unwrap();
         fs::write(
@@ -806,7 +827,7 @@ impl Org {
         for (repo, id, text) in stories {
             org.write(repo, id, text);
         }
-        for repo in ["core", "other", "web"] {
+        for (repo, _, _, _) in repos {
             org.commit(repo);
         }
         let path = |name: &str| org.base.join(name).to_str().unwrap().to_owned();
@@ -1107,6 +1128,139 @@ fn a_registry_server_answers_directed_queries_across_repositories_without_creden
         !lint.to_string().contains("which does not exist"),
         "the link to VC-109 resolves without Neo4j: {lint}"
     );
+}
+
+/// The key of each repository in the `sync` part of a graph.
+fn synced_keys(graph: &Value) -> Vec<&str> {
+    graph["sync"]["repositories"]
+        .as_array()
+        .unwrap_or_else(|| panic!("{graph}"))
+        .iter()
+        .map(|repo| repo["repository"].as_str().unwrap())
+        .collect()
+}
+
+/// ST-141: `core` and `web` are one org. `teddy` is another org and declares VC as `core` does.
+#[test]
+fn a_graph_of_one_org_holds_nothing_of_another_org() {
+    let Some(neo4j) = Neo4j::open() else { return };
+    let org = Org::start_with(
+        &neo4j,
+        &[
+            ("core", "VC", "", ""),
+            ("web", "VE", "", ""),
+            ("teddy", "VC", "teddy", ""),
+        ],
+        &[
+            (
+                "core",
+                "VC-109",
+                &story("VC-109", "Roster API", "ready", ""),
+            ),
+            (
+                "web",
+                "VE-046",
+                &story("VE-046", "Roster page", "ready", "depends_on: [VC-109]\n"),
+            ),
+            (
+                "teddy",
+                "VC-109",
+                &story("VC-109", "Teddy roster", "ready", ""),
+            ),
+            // VE-046 is in the other org only, so this link gets a missing node in `teddy`.
+            (
+                "teddy",
+                "VC-300",
+                &story("VC-300", "Teddy page", "draft", "depends_on: [VE-046]\n"),
+            ),
+            (
+                "teddy",
+                "VC-301",
+                &story("VC-301", "Teddy filters", "draft", "depends_on: [VC-109]\n"),
+            ),
+        ],
+    );
+
+    // The dependents of VC-109 in `core` are in its own org. VC-301 of `teddy` waits on the
+    // VC-109 of `teddy`, and is not one of them.
+    let ours = org.ok(
+        "story_graph",
+        json!({"repository": "core", "id": "VC-109", "direction": "dependents", "depth": 2}),
+    );
+    assert_eq!(org_stories(&ours), ["core/VC-109", "web/VE-046"], "{ours}");
+    assert_eq!(synced_keys(&ours), ["core", "web"], "{ours}");
+    assert!(!ours.to_string().contains("teddy"), "{ours}");
+    assert!(!ours.to_string().contains("Teddy"), "{ours}");
+
+    let theirs = org.ok("story_graph", json!({"repository": "teddy"}));
+    assert_eq!(
+        org_stories(&theirs),
+        [
+            "teddy/VC-109",
+            "teddy/VC-300",
+            "teddy/VC-301",
+            "teddy/VE-046"
+        ],
+        "{theirs}"
+    );
+    assert_eq!(synced_keys(&theirs), ["teddy"], "{theirs}");
+    assert_eq!(
+        edges(&theirs),
+        [
+            "Story:teddy/VC-300 DEPENDS_ON Story:teddy/VE-046",
+            "Story:teddy/VC-301 DEPENDS_ON Story:teddy/VC-109",
+        ],
+        "{theirs}"
+    );
+    assert_eq!(node(&theirs, "Story:teddy/VE-046")["missing"], true);
+    for text in ["Roster API", "Roster page", "core", "web"] {
+        assert!(!theirs.to_string().contains(text), "{text}: {theirs}");
+    }
+
+    // A read of the first org after the second org was projected still holds only its own.
+    let again = org.ok("story_graph", json!({"repository": "web", "id": "VE-046"}));
+    assert_eq!(
+        org_stories(&again),
+        ["core/VC-109", "web/VE-046"],
+        "{again}"
+    );
+}
+
+/// ST-141: a node is keyed by the tracker target of its repository, so two orgs cannot both
+/// project one target.
+#[test]
+fn one_tracker_target_in_two_orgs_is_refused_for_the_second_org() {
+    let Some(neo4j) = Neo4j::open() else { return };
+    let org = Org::start_with(
+        &neo4j,
+        &[
+            ("core", "VC", "", "example/shared"),
+            ("teddy", "TD", "teddy", "example/shared"),
+        ],
+        &[
+            (
+                "core",
+                "VC-109",
+                &story("VC-109", "Roster API", "ready", ""),
+            ),
+            (
+                "teddy",
+                "TD-001",
+                &story("TD-001", "Teddy roster", "ready", ""),
+            ),
+        ],
+    );
+    let first = org.ok("story_graph", json!({"repository": "core"}));
+    assert_eq!(org_stories(&first), ["core/VC-109"], "{first}");
+    let second = org.call("story_graph", json!({"repository": "teddy"}));
+    assert_eq!(second["error"]["code"], "config_invalid", "{second}");
+    assert_eq!(
+        second["error"]["details"],
+        json!({"reason": "duplicate repository identity", "repository": "core"})
+    );
+    // The first org still reads its own stories, and none of the second org.
+    let again = org.ok("story_graph", json!({"repository": "core"}));
+    assert_eq!(org_stories(&again), ["core/VC-109"], "{again}");
 }
 
 #[test]
