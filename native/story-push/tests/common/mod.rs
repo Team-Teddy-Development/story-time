@@ -64,9 +64,11 @@ pub fn install_stub_gh(bin_dir: &Path) {
 /// Adds one answer to `dir/responses.tsv`, with its stdout stored in a numbered file.
 pub fn respond(dir: &Path, prefix: &str, exit: i32, stdout: &str, stderr: &str) {
     let table = dir.join("responses.tsv");
-    let count = std::fs::read_to_string(&table)
-        .map(|t| t.lines().count())
-        .unwrap_or(0);
+    let count = std::fs::read_dir(dir)
+        .unwrap()
+        .flatten()
+        .filter(|e| e.file_name().to_string_lossy().starts_with("response-"))
+        .count();
     let file = format!("response-{count}.out");
     std::fs::write(dir.join(&file), stdout).unwrap();
     let mut out = std::fs::OpenOptions::new()
@@ -85,4 +87,14 @@ pub fn path_with_git(bin_dir: &Path) -> std::ffi::OsString {
         .unwrap();
     let git = PathBuf::from(String::from_utf8(git.stdout).unwrap().trim());
     std::env::join_paths([bin_dir.to_path_buf(), git.parent().unwrap().to_path_buf()]).unwrap()
+}
+
+/// Adds one answer ahead of every existing answer in `dir/responses.tsv`.
+pub fn respond_first(dir: &Path, prefix: &str, exit: i32, stdout: &str, stderr: &str) {
+    let table = dir.join("responses.tsv");
+    let old = std::fs::read_to_string(&table).unwrap_or_default();
+    std::fs::write(&table, "").unwrap();
+    respond(dir, prefix, exit, stdout, stderr);
+    let first = std::fs::read_to_string(&table).unwrap();
+    std::fs::write(&table, format!("{first}{old}")).unwrap();
 }
