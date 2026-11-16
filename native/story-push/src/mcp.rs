@@ -1932,6 +1932,12 @@ impl Tool {
         matches!(self.name, "story_list" | "story_show" | "story_lint")
     }
 
+    /// Whether this tool calls the forge: it proposes a change or reads or writes comments.
+    fn uses_forge(&self) -> bool {
+        propose::handles(self.name)
+            || matches!(self.name, "story_comments" | "story_resolve_comment")
+    }
+
     /// The scope a hosted client needs for this tool.
     fn scope(&self) -> Scope {
         if self.name == "story_resolve_comment" {
@@ -2019,6 +2025,17 @@ impl Tool {
                 &format!("/{missing}"),
                 format!("/{missing} is required."),
             ));
+        }
+        if let Some(workspace) = &server.workspace {
+            let on_gitea = server
+                .key(args)
+                .is_ok_and(|key| workspace.forge_of(&key) == Some(registry::Forge::Gitea));
+            if self.uses_forge() && on_gitea {
+                return Err(fail(
+                    "forge_not_supported",
+                    "Writes and comments on a Gitea repository are not supported yet.",
+                ));
+            }
         }
         match &server.workspace {
             Some(workspace) if propose::handles(self.name) => {
@@ -2202,6 +2219,7 @@ fn repos_schema() -> Value {
             "key",
             "org",
             "prefixes",
+            "forge",
             "sha",
             "fetched_at",
             "state",
@@ -2211,6 +2229,7 @@ fn repos_schema() -> Value {
             "key": {"type": "string"},
             "org": {"type": "string"},
             "prefixes": texts(),
+            "forge": {"enum": ["github", "gitea"]},
             "sha": nullable_text,
             "fetched_at": nullable_text,
             "state": {"enum": ["ready", "cloning", "unavailable"]},

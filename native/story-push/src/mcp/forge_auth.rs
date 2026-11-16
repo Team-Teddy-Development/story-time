@@ -68,7 +68,8 @@ struct Target {
     name: String,
 }
 
-fn target(clone: &str) -> Result<Option<Target>, String> {
+/// `allow_http` lets a token go over plain http to a host that is not loopback.
+fn target(clone: &str, allow_http: bool) -> Result<Option<Target>, String> {
     let Some((scheme, rest)) = clone.split_once("://") else {
         return Err("the clone URL has no scheme".into());
     };
@@ -80,8 +81,8 @@ fn target(clone: &str) -> Result<Option<Target>, String> {
         .rsplit_once(':')
         .filter(|(_, port)| port.bytes().all(|b| b.is_ascii_digit()))
         .map_or(authority, |(host, _)| host);
-    let loopback = matches!(host, "127.0.0.1" | "localhost" | "[::1]");
-    if authority.is_empty() || !(scheme == "https" || (scheme == "http" && loopback)) {
+    let plain_ok = allow_http || super::registry::is_loopback(host);
+    if authority.is_empty() || !(scheme == "https" || (scheme == "http" && plain_ok)) {
         return Err("a token goes only to an https URL".into());
     }
     let (owner, name) = named(path)?;
@@ -279,7 +280,7 @@ impl App {
     /// What a `git` child needs to reach `clone`: the environment that carries the token, and
     /// the secret strings to keep out of every output. A `file` URL needs neither.
     pub(super) fn git_environment(&self, clone: &str) -> Result<Access, String> {
-        let Some(target) = target(clone)? else {
+        let Some(target) = target(clone, false)? else {
             return Ok(Access::default());
         };
         let token = self.token(&target.owner, &target.name)?;
@@ -297,6 +298,37 @@ impl App {
             tokens.insert(full.clone(), token);
         }
         Ok(tokens[&full].value.clone())
+    }
+}
+
+/// The bot token of a Gitea server. Gitea takes a token as the basic password.
+pub(super) struct Gitea {
+    token: String,
+}
+
+impl Gitea {
+    /// The token in `text`, which is one word with optional white space around it.
+    pub(super) fn new(text: &str) -> Result<Self, String> {
+        let token = text.trim();
+        if token.is_empty() || token.contains(char::is_whitespace) {
+            return Err("the token must be one word and not empty".into());
+        }
+        Ok(Self {
+            token: token.to_owned(),
+        })
+    }
+
+    /// The token and its basic form, which no output may show.
+    pub(super) fn secrets(&self) -> Vec<String> {
+        access("", &self.token).secrets
+    }
+
+    /// What a `git` child needs to reach `clone`. A `file` URL needs nothing.
+    pub(super) fn git_environment(&self, clone: &str, allow_http: bool) -> Result<Access, String> {
+        Ok(match target(clone, allow_http)? {
+            Some(target) => access(&target.origin, &self.token),
+            None => Access::default(),
+        })
     }
 }
 
@@ -431,7 +463,7 @@ mod tests {
 
     #[test]
     fn a_clone_url_names_its_repository_and_only_https_takes_a_token() {
-        let github = target("https://github.com/Varsity-Engine/varsity-core.git")
+        let github = target("https://github.com/Varsity-Engine/varsity-core.git", false)
             .unwrap()
             .unwrap();
         assert_eq!(github.origin, "https://github.com");
@@ -439,12 +471,12 @@ mod tests {
             (github.owner.as_str(), github.name.as_str()),
             ("Varsity-Engine", "varsity-core")
         );
-        let local = target("http://127.0.0.1:8123/git/o/core.git")
+        let local = target("http://127.0.0.1:8123/git/o/core.git", false)
             .unwrap()
             .unwrap();
         assert_eq!(local.origin, "http://127.0.0.1:8123");
         assert_eq!((local.owner.as_str(), local.name.as_str()), ("o", "core"));
-        assert!(target("file:///srv/git/core.git").unwrap().is_none());
+        assert!(target("file:///srv/git/core.git", false).unwrap().is_none());
         for refused in [
             "http://github.com/o/core.git",
             "http://127.0.0.1.example.com/o/core.git",
@@ -452,8 +484,68 @@ mod tests {
             "https://github.com/o/..",
             "ssh://github.com/o/core.git",
         ] {
-            assert!(target(refused).is_err(), "{refused}");
+            assert!(target(refused, false).is_err(), "{refused}");
         }
+    }
+
+    #[test]
+    fn plain_http_to_another_host_takes_a_token_only_with_the_permission() {
+        let lan = "http://192.168.1.56:30003/team-teddy/xanthos.git";
+        assert!(target(lan, false).is_err());
+        let allowed = target(lan, true).unwrap().unwrap();
+        assert_eq!(allowed.origin, "http://192.168.1.56:30003");
+        assert_eq!(
+            (allowed.owner.as_str(), allowed.name.as_str()),
+            ("team-teddy", "xanthos")
+        );
+        assert!(target("http://127.0.0.1:3000/o/core.git", false).is_ok());
+        assert!(target("https://gitea.example/o/core.git", false).is_ok());
+        assert!(target("ssh://gitea.example/o/core.git", true).is_err());
+        assert!(target("file:///srv/git/core.git", true).unwrap().is_none());
+    }
+
+    #[test]
+    fn a_gitea_token_goes_only_in_the_value_variable_and_a_file_url_takes_none() {
+        let token = "gta_ExampleGiteaBotToken";
+        let gitea = Gitea::new(&format!("{token}\n")).unwrap();
+        let clone = "http://192.168.1.56:30003/team-teddy/xanthos.git";
+        assert!(gitea.git_environment(clone, false).is_err());
+        let access = gitea.git_environment(clone, true).unwrap();
+        let basic = base64(format!("x-access-token:{token}").as_bytes());
+        assert_eq!(
+            access.environment,
+            [
+                ("GIT_CONFIG_COUNT".to_owned(), "1".to_owned()),
+                (
+                    "GIT_CONFIG_KEY_0".to_owned(),
+                    "http.http://192.168.1.56:30003/.extraheader".to_owned()
+                ),
+                (
+                    "GIT_CONFIG_VALUE_0".to_owned(),
+                    format!("AUTHORIZATION: basic {basic}")
+                ),
+            ]
+        );
+        for (name, value) in &access.environment {
+            let holds = value.contains(token) || value.contains(&basic);
+            assert_eq!(holds, name == "GIT_CONFIG_VALUE_0", "{name}");
+        }
+        assert_eq!(access.secrets, [token.to_owned(), basic.clone()]);
+        assert_eq!(gitea.secrets(), [token.to_owned(), basic]);
+        let none = gitea.git_environment("file:///srv/git/xanthos.git", false);
+        let none = none.unwrap();
+        assert!(none.environment.is_empty() && none.secrets.is_empty());
+    }
+
+    #[test]
+    fn a_gitea_token_that_is_empty_or_holds_white_space_is_refused_without_its_text() {
+        assert!(Gitea::new("").is_err());
+        assert!(Gitea::new(" \n").is_err());
+        let error = Gitea::new("two words").err().unwrap();
+        assert!(
+            !error.contains("two") && !error.contains("words"),
+            "{error}"
+        );
     }
 
     #[test]

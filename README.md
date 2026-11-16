@@ -434,7 +434,7 @@ With `--registry`, the HTTP server needs no checkout. It keeps a bare clone of e
 
 ```bash
 story mcp --http 0.0.0.0:8080 --registry <registry.toml> --data <dir> --clients <clients.toml> \
-  [--github-app-id-file <file> --github-app-key-file <file>]
+  [--github-app-id-file <file> --github-app-key-file <file>] [--gitea-token-file <file>]
 ```
 
 ```toml
@@ -443,7 +443,7 @@ fetch_ttl_seconds = 30          # optional; 30 is the default
 [[repo]]
 key = "varsity-core"
 clone = "https://github.com/Varsity-Engine/varsity-core.git"
-forge = "github"                # the only forge this server serves
+forge = "github"                # "github" or "gitea"
 default_branch = "main"         # optional; the default is the HEAD of the remote
 prefixes = ["VC", "ST"]         # every story prefix of this repository
 [[repo]]
@@ -457,6 +457,13 @@ org = "team-teddy"              # optional; this repository is in another org
 clone = "https://github.com/Team-Teddy-Development/story-time.git"
 forge = "github"
 prefixes = ["ST"]               # another org can declare a prefix that `varsity` also has
+[[repo]]
+key = "xanthos"
+org = "team-teddy"
+clone = "http://192.168.1.56:30003/team-teddy/xanthos.git"
+forge = "gitea"
+allow_http = true               # needed for plain http to a host that is not loopback
+prefixes = ["XAN"]
 ```
 
 One server can hold several orgs. A repository names its `org`, or takes the top-level one; with neither, its org is `default`. An org is a boundary for links:
@@ -466,13 +473,19 @@ One server can hold several orgs. A repository names its `org`, or takes the top
 - A repository `key` is unique in the whole file, so each tool takes `repository` and no org.
 - A client token uses every registered repository, unless its entry in the clients file has `orgs`. Give a client of one org an entry with `orgs`.
 
-The server refuses to start when an entry names `forge = "gitea"`, when two repositories of one org declare one prefix, when two entries have one key, when an org is not a lowercase key, or when it cannot write the data directory. What a client sees:
+The server refuses to start when an entry names a `forge` other than `github` and `gitea`, when a `gitea` entry has a plain `http://` clone to a host that is not loopback and no `allow_http = true`, when a `github` entry sets `allow_http`, when two repositories of one org declare one prefix, when two entries have one key, when an org is not a lowercase key, or when it cannot write the data directory. What a client sees:
 
 - A read fetches the repository when its last fetch is older than `fetch_ttl_seconds`. `story_list`, `story_show`, and `story_lint` name the commit they read in `sha` and the time of the fetch in `fetched_at`.
 - The same three tools take `ref`, the name of a branch, and read the head of that branch.
-- `story_repos` lists each repository with its `org` and its `state`: `ready`, `cloning`, or `unavailable` with `last_error`.
+- `story_repos` lists each repository with its `org`, its `forge`, and its `state`: `ready`, `cloning`, or `unavailable` with `last_error`.
 - A repository that the server cannot reach returns the retryable error `repository_unavailable`. The other repositories keep working, and `/readyz` stays 200.
 - `story_lint` checks links across every registered repository, and reports `links.undeclared_prefix` for a story whose prefix the registry does not declare for its repository.
+
+#### Gitea repositories (read only)
+
+A `gitea` entry is read like a `github` entry. `--gitea-token-file` names a file that holds the token of a Gitea bot user, on one line. The server needs `--registry` to take it, and it refuses to start when the file is missing, empty, or holds white space inside the token. Git sends the token only to the origin of the clone, as the basic password. No tool result and no log line shows it. Without the flag, the server reads a Gitea repository with no credential, so a private repository is `unavailable`. The GitHub App flags are separate and serve only `github` entries.
+
+Writes and comments on a Gitea repository are not supported yet. On a server that has write tools, `story_update`, `story_note`, `story_create`, `story_comments`, and `story_resolve_comment` return the error `forge_not_supported` for a Gitea repository. They push nothing and send no forge request. ST-149 adds writes and ST-150 adds comments.
 
 #### Writes: one branch and one pull request for each story
 
