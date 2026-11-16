@@ -607,6 +607,95 @@ fn the_registry_is_the_org_for_links_and_declares_each_prefix() {
     assert_eq!(keys, ["core", "web"]);
 }
 
+/// The rule and severity of each lint finding of the story `id`.
+fn findings_of(lint: &Value, id: &str) -> Vec<(String, String)> {
+    lint["results"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|result| result["id"] == id)
+        .unwrap_or_else(|| panic!("{lint}"))["findings"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|f| {
+            (
+                f["rule"].as_str().unwrap().to_owned(),
+                f["severity"].as_str().unwrap().to_owned(),
+            )
+        })
+        .collect()
+}
+
+/// ST-141: a third repository `teddy` in its own org declares the prefix VC, which `core` of
+/// the org `fixture` also declares.
+#[test]
+fn two_orgs_keep_their_stories_and_links_apart() {
+    let fixture = Fixture::new();
+    let up = fixture.upstream("teddy");
+    fs::create_dir_all(&up).unwrap();
+    fixture.git(&up, &["init", "-q", "-b", "main"]);
+    fixture.write("teddy", ".story-time/settings.json", &settings("VC"));
+    fixture.write(
+        "teddy",
+        "backlog/VC-109.md",
+        &story("VC-109", "Teddy roster", "depends_on: []\n"),
+    );
+    // VE-046 is in `web` of the other org only.
+    fixture.write(
+        "teddy",
+        "backlog/VC-300.md",
+        &story("VC-300", "Teddy page", "depends_on: [VE-046]\n"),
+    );
+    fixture.commit("teddy", "first");
+    let registry = fixture.registry(&format!(
+        "\n[[repo]]\nkey = \"teddy\"\norg = \"teddy\"\nclone = \"{}\"\nforge = \"github\"\nprefixes = [\"VC\"]\n",
+        fixture.file_url("teddy")
+    ));
+    let server = fixture.serve(&registry, &[]);
+
+    // Each repository has the story of its own org under the shared id.
+    let ours = server.ok("story_show", json!({"repository": "core", "id": "VC-109"}));
+    let theirs = server.ok("story_show", json!({"repository": "teddy", "id": "VC-109"}));
+    assert_eq!(title(&ours), "Roster API");
+    assert_eq!(title(&theirs), "Teddy roster");
+
+    let repos = server.ok("story_repos", json!({}));
+    let orgs: Vec<(&str, &str)> = repos["repositories"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|repo| (repo["key"].as_str().unwrap(), repo["org"].as_str().unwrap()))
+        .collect();
+    assert_eq!(
+        orgs,
+        [("core", "fixture"), ("web", "fixture"), ("teddy", "teddy")]
+    );
+
+    // VC-109 is in two repositories, one for each org. The link of `web` goes to `core`, the
+    // one repository of its org that declares VC, so it is not ambiguous.
+    let web = server.ok(
+        "story_lint",
+        json!({"repository": "web", "ids": ["VE-046"]}),
+    );
+    let linked = findings_of(&web, "VE-046");
+    assert!(
+        !linked.iter().any(|f| f.0 == "links.ambiguous")
+            && !linked.contains(&("independent.deps".into(), "error".into())),
+        "{linked:?}"
+    );
+    // No repository of the org `teddy` holds VE-046, so that link does not resolve.
+    let teddy = server.ok(
+        "story_lint",
+        json!({"repository": "teddy", "ids": ["VC-300"]}),
+    );
+    let unlinked = findings_of(&teddy, "VC-300");
+    assert!(
+        unlinked.contains(&("independent.deps".into(), "error".into())),
+        "{unlinked:?}"
+    );
+}
+
 /// A stub of GitHub: the App API under `/api`, and one private repository under `/git` that it
 /// serves as static files (git's dumb HTTP protocol) to a request with the installation token.
 struct Stub {

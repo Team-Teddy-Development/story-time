@@ -423,7 +423,7 @@ story mcp --http 0.0.0.0:8080 --registry <registry.toml> --data <dir> --clients 
 ```
 
 ```toml
-org = "varsity"
+org = "varsity"                 # optional; the org of each repository that names none
 fetch_ttl_seconds = 30          # optional; 30 is the default
 [[repo]]
 key = "varsity-core"
@@ -436,13 +436,26 @@ key = "varsity-web"
 clone = "https://github.com/Varsity-Engine/varsity-web.git"
 forge = "github"
 prefixes = ["VE"]
+[[repo]]
+key = "story-time"
+org = "team-teddy"              # optional; this repository is in another org
+clone = "https://github.com/Team-Teddy-Development/story-time.git"
+forge = "github"
+prefixes = ["ST"]               # another org can declare a prefix that `varsity` also has
 ```
 
-The server refuses to start when an entry names `forge = "gitea"`, when two entries declare one prefix, or when it cannot write the data directory. What a client sees:
+One server can hold several orgs. A repository names its `org`, or takes the top-level one; with neither, its org is `default`. An org is a boundary for links:
+
+- A link between stories resolves only inside one org. `story_lint`, `story_update`, and `story_graph` do not look in a repository of another org.
+- Two orgs can declare the same prefix. Two repositories of one org cannot.
+- A repository `key` is unique in the whole file, so each tool takes `repository` and no org.
+- Each client token still reads every registered repository. Give a token only to a client that can read all of them.
+
+The server refuses to start when an entry names `forge = "gitea"`, when two repositories of one org declare one prefix, when two entries have one key, when an org is not a lowercase key, or when it cannot write the data directory. What a client sees:
 
 - A read fetches the repository when its last fetch is older than `fetch_ttl_seconds`. `story_list`, `story_show`, and `story_lint` name the commit they read in `sha` and the time of the fetch in `fetched_at`.
 - The same three tools take `ref`, the name of a branch, and read the head of that branch.
-- `story_repos` lists each repository with its `state`: `ready`, `cloning`, or `unavailable` with `last_error`.
+- `story_repos` lists each repository with its `org` and its `state`: `ready`, `cloning`, or `unavailable` with `last_error`.
 - A repository that the server cannot reach returns the retryable error `repository_unavailable`. The other repositories keep working, and `/readyz` stays 200.
 - `story_lint` checks links across every registered repository, and reports `links.undeclared_prefix` for a story whose prefix the registry does not declare for its repository.
 

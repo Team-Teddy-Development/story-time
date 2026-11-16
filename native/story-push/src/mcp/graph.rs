@@ -464,13 +464,21 @@ fn story_graph_sync(server: &Server, args: &Map<String, Value>) -> Result<Value,
     }))
 }
 
-/// For a registry server: makes the projection match the commits the server reads now, and
-/// returns each repository with its identity and commit, plus the count of skipped links. A
-/// repository that the server cannot read, or that has no story-time settings, is left out.
-fn ensure_synced(server: &Server, neo4j: &Neo4j) -> Result<(Vec<Unit>, u64), ToolError> {
+/// For a registry server: makes the projection of the org of the repository `of` match the
+/// commits the server reads now, and returns each repository of that org with its identity and
+/// commit, plus the count of skipped links. A repository that the server cannot read, or that
+/// has no story-time settings, is left out. Each org is projected by itself, so no link and no
+/// answer crosses from one org to another.
+fn ensure_synced(server: &Server, neo4j: &Neo4j, of: &str) -> Result<(Vec<Unit>, u64), ToolError> {
     let mut units = Vec::new();
     let mut repos = Vec::new();
-    for key in server.keys() {
+    let in_org = server.org_keys(of);
+    let others: Vec<String> = server
+        .keys()
+        .into_iter()
+        .filter(|key| !in_org.contains(key))
+        .collect();
+    for key in in_org {
         let named = Map::from_iter([("repository".to_owned(), json!(key))]);
         let repo = match server.open(&named) {
             Ok(repo) => repo,
@@ -512,6 +520,22 @@ fn ensure_synced(server: &Server, neo4j: &Neo4j) -> Result<(Vec<Unit>, u64), Too
         let skipped = rows.iter().filter_map(|row| row[3].as_u64()).sum();
         return Ok((units, skipped));
     }
+    // A node is keyed by the tracker target of its repository. Two orgs that register one
+    // target would share nodes, and a read of one org would follow the links of the other.
+    let ids: Vec<&str> = units.iter().map(|unit| unit.identity.as_str()).collect();
+    let shared = neo4j.run(vec![(
+        "MATCH (r:StoryRepository) WHERE r.id IN $ids AND r.key IN $others RETURN r.key",
+        json!({ "ids": ids, "others": others }),
+    )])?;
+    if let Some(other) = shared.first().and_then(|rows| rows.first()) {
+        let mut error = fail(
+            "config_invalid",
+            "A repository of another org has the same tracker target, so their stories cannot be told apart.",
+        );
+        error.details =
+            json!({ "reason": "duplicate repository identity", "repository": other[0] });
+        return Err(error);
+    }
     let mut org = Vec::new();
     for (unit, repo) in units.iter().zip(&repos) {
         org.push(OrgRepo {
@@ -540,7 +564,7 @@ fn story_graph(server: &Server, args: &Map<String, Value>) -> Result<Value, Tool
     let neo4j = neo4j(server)?;
     let repository = identity(&repo);
     let synced = match server.workspace {
-        Some(_) => Some(ensure_synced(server, neo4j)?),
+        Some(_) => Some(ensure_synced(server, neo4j, &repo.root.key)?),
         None => None,
     };
     let limit = args.get("limit").and_then(Value::as_u64).unwrap_or(200);
