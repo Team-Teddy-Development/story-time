@@ -1,374 +1,533 @@
 # Merge Sync: Keep Story Issues in Step with Merged Pull Requests
 
 *   **Author:** Eric Jernigan
-*   **Status:** Draft
+*   **Status:** In Review
 *   **Date:** 2026-11-16
-*   **Stories:** ST-151 (#344), ST-152 (#346)
-*   **Predecessor:** `docs/designs/merge-sync.md` (EGM brainstorm brief, with its correction block)
+*   **Stories:** ST-151 (#344), ST-152 (#346). Prerequisites: ST-153 (#348),
+    ST-154.
+*   **Predecessor:** `docs/designs/merge-sync.md`, the brainstorm brief.
 
 --------------------------------------------------------------------------------
 
 ## Overview
 
-story-time keeps each story as a card file (`backlog/ST-###.md`) and mirrors it
-to a tracker issue with `story push`. A pull request declares its stories on a
-`Stories: ST-### (#issue)` line, and the `story-link` check
-(`.github/workflows/story-link.yml` → `scripts/story-policy.rs story-link`)
-verifies that each named story or issue exists.
+story-time keeps each story as a card file (`backlog/ST-###.md`). The `story`
+CLI mirrors each card to a tracker issue with `story push`. A pull request
+declares its stories on a line such as `Stories: ST-151 (#344)`. The
+`story-link` check verifies that each named story has a card, and that each
+named `#N` is an issue with a story-type label, not a pull request.
 
-This design adds two checks around the merge, one on each side of it:
+The completion step is the `story-accept` agent skill. An agent runs it,
+checks each acceptance criterion against evidence and the Definition of Done
+(the `definitionOfDone` list in `.story-time/settings.json`), ticks the
+criteria boxes, and sets the card's `status` to `done`. Then `story push`
+closes the issue. The skill's description says to run it "when a story's PR
+merges". The card edit then needs a second commit after the merge. In the
+source case below, that step was skipped.
 
-1.  **Before merge (ST-152):** `story-link` also fails when a named story is not
-    `done` on the PR's head branch, unless the reference is marked `(partial)`.
-    This moves the `story-accept` step into the PR, where the author can still
-    act on it.
-2.  **After merge (ST-151):** a new `story-sync` workflow on the default branch
-    runs `story push` for the cards the merge changed. It then posts one comment
-    on each named issue. The comment names the PR and the merge commit. The
-    workflow mirrors card state to the tracker. It never changes a card.
+This design adds a check before the merge and a sync after it:
 
-The backlog card stays the single source of truth. `story push` stays the only
-thing that opens or closes a story issue. `story-accept` stays the only way to
-set a story to `done`.
+1.  **Check before merge (ST-152).** A new read-only CLI verb,
+    `story check-pr`, replaces the body of every `story-link` workflow. It
+    keeps today's link rules and adds an acceptance rule: each story named on
+    the PR must be `done` with every criterion ticked, unless the reference is
+    marked `(partial)`. In `fail` mode the PR fails. In `warn` mode, the
+    default, the check only warns. The agent therefore runs `story-accept` on
+    the PR branch and commits the `done` card in the PR. ST-153 changes the
+    skill text to say so.
+2.  **Sync after merge (ST-151).** A new `story-sync` workflow runs
+    `story sync-merge` after each push to the default branch. The verb
+    updates the issue of each story that changed since the last successful
+    sync from the card on the default branch. It closes or reopens the issue
+    and fixes its title, labels, and body. It posts one comment on each issue
+    named by each merged PR in that range. It never writes a card file and
+    never changes a status.
+
+The card stays the single source of truth for story state. Within
+story-time, one tracker gateway opens and closes story issues; `story push`
+and `story sync-merge` both use it. GitHub also closes an issue when a merged
+PR body has a closing keyword (`Closes #N`). This design allows that only
+where the card already says `done`. `story-accept` stays the only way to set
+`done`.
 
 ## The Problem
 
 Story issues close only when an agent runs `story push` after `story-accept`.
-When that step is skipped, the issue stays open, or it drifts from its card.
-The ST-151 source case, in `Varsity-Engine/varsity-mcp`:
+When that step is skipped, the issue stays open, or its title and labels drift
+from the card. The ST-151 source case is in `Varsity-Engine/varsity-mcp`, a
+repository that uses story-time:
 
 *   PR #80 merged with no `Stories:` line.
-*   Issue #79 had no ID title prefix and no labels until a later groom
-    republished it.
+*   Issue #79 had no ID title prefix and no labels. They appeared only after a
+    later backlog grooming pass (a review that re-publishes cards) ran
+    `story push`.
 
-There are two separate failures, and one fix does not cover both:
+There are two separate failures:
 
 *   **Acceptance is skipped.** The PR merges while its story is still
-    `in-progress`. No later automation can fix this without inventing
-    acceptance. A ticked box is not acceptance: `story-accept` also checks the
-    Definition of Done, CI, review threads, and evidence per criterion.
+    `in-progress`. No automation can fix this after the fact without inventing
+    acceptance. A ticked box alone is not acceptance.
 *   **Publishing is skipped.** The card on the default branch says `done`, but
-    nobody ran `story push`, so the issue is still open. The same happens for
-    title, label, and body drift. Automation can fix this one safely, because
-    it only copies a state that a reviewed merge already set.
+    nobody ran `story push`, so the issue is still open or out of date.
+    Automation can fix this, because it only copies a state that is already on
+    the default branch.
 
-Three facts in the current code constrain the fix:
+Five facts in the current code constrain the fix:
 
 *   `story push` sets the issue state from the card. It closes the issue when
     the card is `done`, `split`, or `archived`, and reopens it otherwise
     (`native/story-push/src/gateway.rs:400`, `:511`, `github_state` at `:912`).
-    A GitHub closing keyword (`Closes #12`) therefore conflicts with it: the
-    keyword closes the issue on merge, and the next push reopens it.
 *   `story push` writes back to the card on every create and update. It sets
-    `remote`, `remote_url`, and `updated`, and it appends a changelog line
-    (`native/story-push/src/story.rs:144-185`). A CI run of `story push`
-    therefore leaves uncommitted card changes.
-*   The CLI tracker gateway has no comment operation. The hosted MCP server
-    reads and replies to comments through its own GitHub App
-    (`native/story-push/src/mcp.rs`, `story_comments`), but `story push` does not.
+    `remote`, `remote_url`, and `updated`, and appends a changelog line
+    (`native/story-push/src/story.rs:144-185`). Running it as-is in CI leaves
+    uncommitted card changes.
+*   The CLI gateway has no comment operation. story-time's hosted MCP server
+    (the remote service agents use to edit stories) comments through its own
+    GitHub App (`native/story-push/src/mcp/comments.rs`).
+*   Consumer repositories run a bash `story-link` template copied from
+    `docs/playbook.md:147-190`. Only this repository runs the Rust checker
+    `scripts/story-policy.rs`. A rule added only to that checker never
+    reaches the repositories where the source incident happened.
+*   Each `story push` process runs `gh label create <name> --force` with no
+    `--color` for each label it applies (`gateway.rs:886-901`). `gh` picks a
+    random color when none is given, and `--force` overwrites the existing
+    color. Every fresh process therefore recolors the labels it touches. A CI
+    job runs a fresh process on every merge. ST-154 fixes this before
+    `story-sync` ships.
+
+## Terms and Settings
+
+*   **Card fields.** `status` is the story state. `remote` is the linked issue
+    number. `pending_create` is a marker that `story push` writes before an
+    issue create that it has not yet confirmed (`native/story-push/src/lib.rs:316-340`).
+*   **Reference.** One story on a `Stories:` line, in the form
+    `<ID> [(#N)] [(partial)]` or `#N [(partial)]`. `<ID>` uses the
+    repository's prefix, for example `ST-151`. A reference is one unit:
+    `(partial)` applies to the whole unit, whatever comes between it and the
+    ID.
+*   **`.story-time/settings.json` keys:**
+    *   `prefix`: the story ID prefix (default `ST`). Both verbs read it.
+    *   `tracker`: `files` (no tracker; cards only), `github`, `gitea`, `ado`,
+        `jira`, or `linear`. "Unsupported" below means any value other than
+        `github`.
+    *   `sync`: `off`, `ask`, or `auto`. In CI, `ask` and `auto` both allow
+        `story sync-merge` to write: adding the workflow is the consent, and
+        no one is there to answer a question. `off` makes the verb skip.
+*   **`STORY_ACCEPTANCE`.** A GitHub repository variable
+    (`vars.STORY_ACCEPTANCE`), `warn` or `fail`. When it is unset, the check
+    uses `warn`. A pull request cannot change a repository variable. It can
+    change its own workflow file or `.story-time/settings.json`, so the mode
+    must not live there.
 
 ## Goals
 
-*   A PR that names a story that is not `done` and not marked `(partial)` fails
-    `story-link` before merge, and the failure names the story and its status.
-    (ST-152)
-*   After a merge to the default branch, every issue named on the PR's
-    `Stories:` line has exactly one comment that names the PR and the merge
-    commit, and a rerun adds no second comment. (ST-151 AC1)
-*   After that run, each named issue's open or closed state, title, labels, and
-    body match what `story push` writes for the card on the default branch.
-    (ST-151 AC2, AC3)
-*   No automation changes any card's `status`, and the workflow checkout is
-    clean when the run ends. It pushes no commit. (ST-151 AC4, AC7)
-*   A repository with `sync: off`, a files-only tracker, a push with no PR, or
-    a PR with no `Stories:` line gets no tracker writes and a "skipped" report
-    that includes the commit SHA. (ST-151 AC5, AC6)
+*   In `fail` mode, a PR that names a story that is not `done` with every
+    criterion ticked, and not marked `(partial)`, fails `story-link`. The
+    failure names the story, its status, and its unticked count. A
+    `(partial)` reference and an `incident` PR pass. A closing keyword aimed
+    at a story issue that no passing reference covers is a finding. `warn`
+    mode warns and passes. (ST-152 AC1–AC6, as amended by D1, D7, and D15.)
+*   The same rule runs in every repository that adopts the new template,
+    from one tested Rust implementation. (ST-152)
+*   After a successful `story-sync` run, every issue named by a merged PR in
+    the synced range has exactly one comment for that PR's merge commit. A
+    rerun adds no second comment. (ST-151 AC1)
+*   After that run, each issue whose card changed in the synced range has the
+    open or closed state, title, labels, and body that `story push` would
+    write for the card on the default branch. (ST-151 AC2, AC3)
+*   No automation changes any card, and the workflow checkout is clean at the
+    end. The workflow pushes no commit. (ST-151 AC4, AC7)
+*   With `sync: off` or an unsupported tracker, the run writes nothing to the
+    tracker. A push with no PR, or a PR with no `Stories:` line, gets no
+    comment, but its changed cards are still mirrored. Every skip names the
+    commit SHA. (ST-151 AC5, AC6 as amended by D16)
+*   **Success measure.** The number of merged PRs in the last 30 days whose
+    named story is `done` on the default branch while its issue is still
+    open. It drops to 0 after `story-sync` ships. The count of `warn`
+    findings drives the switch to `fail`.
 
 ## Non-Goals
 
 *   Setting any story to `done` from CI. Only `story-accept` does that.
-*   GitHub or Gitea closing keywords (`Closes #N`) as a way to close story
-    issues.
-*   Trackers other than GitHub in the first slice. The logic lives in the Rust
-    CLI so that a later Gitea or ADO wrapper reuses it, but no wrapper ships now.
-*   Comments or notifications to dependent stories that become unblocked.
-    `story rank` already derives unblocked work from `depends_on`.
-*   Installing the workflows into consumer repositories. They stay playbook
-    templates that each repository copies, as `story-link.yml` and
-    `story-ids.yml` do today.
-*   A `released` or deployed state after `done`.
+*   Trackers other than GitHub in this release. The logic is in the Rust CLI,
+    so a later Gitea or ADO wrapper can reuse it, but no wrapper ships now.
+*   Closing keywords in commit messages. GitHub acts on them when a commit
+    lands on the default branch, but `check-pr` reads only the PR body.
+    `story-sync` reopens such an issue if the card's change is in its range,
+    and `--all` reopens it in any case.
+*   Comments to dependent stories that become unblocked.
+*   Installing workflows into consumer repositories automatically.
+*   A `released` or deployed state after `done`. A team whose Definition of
+    Done requires deployment marks its references `(partial)`.
+*   A public `story push` flag that skips write-back.
 
 ## Decisions
 
-The author delegated each open decision to TypeSafe Jev (typed choice). Each
-line records the choice and Jev's confidence.
+The author delegated each open decision to TypeSafe Jev, a typed judgment
+service. Jev picks one option from a fixed list and returns a probability for
+each option. The Confidence column is Jev's separate certainty in its
+answer, from 0 to 1. Below about 0.5, the call is weak, and pushback is
+cheapest there. The author adopted every call in this table for this
+revision.
 
 | # | Question | Decision | Confidence |
 | --- | --- | --- | --- |
-| Q1 | How does a CI push stay clean? | New `story push --no-write-back` flag. In that mode a card with no `remote` is skipped and reported, never created. | author choice |
-| Q2 | Where does post-merge logic live? | A new CLI verb `story sync-merge` in `native/story-push`, with a comment operation on the gateway. | 0.80 |
-| Q3 | Closing keywords | ST-152's check fails a PR body with `close`/`fix`/`resolve` keywords that point at a story issue. | 0.43 (weak) |
-| Q4 | Roll-out of ST-152 | Mode `warn` or `fail`, set by the workflow variable `STORY_ACCEPTANCE`. The template ships `warn`. | 0.86 |
-| Q5 | Deploy-time done | Out of scope. Done means accepted at merge. Teams that need deployment use `(partial)`. | 0.82 |
-| R1 | What does ST-152 require? | Card `status: done` **and** every acceptance criterion box ticked. | 0.98 |
-| R2 | Post-merge trigger | `push` to the default branch. The job then looks up the PR from the commit. | 1.00 |
-| R3 | Evidence grammar per criterion | Out of scope. `story-accept` and PR review own the evidence. | 0.76 |
+| D1 | Where does the pre-merge rule live? | A read-only CLI verb `story check-pr`, called by every `story-link` template. | 0.96 |
+| D2 | Where does post-merge logic live? | A CLI verb `story sync-merge`, with a comment operation on the gateway. | 0.80 |
+| D3 | How does CI avoid card writes? | `sync-merge` calls the gateway's `update` directly. That call writes no file. `story push` is unchanged. | 1.00 |
+| D4 | What does the acceptance rule require? | Card `status: done` and every acceptance criterion box ticked. | 0.98 |
+| D5 | Post-merge trigger | `push` to the default branch. | 1.00 |
+| D6 | Which card state is mirrored? | The card on the default-branch HEAD at the start of the run. | 0.80 |
+| D7 | Closing keywords | Allowed on a reference that passes the acceptance rule. | 0.88 |
+| D8 | Roll-out of the acceptance rule | `warn` first. ST-153 merges before any repository switches to `fail`. | 0.86 (warn first); 1.00 (ST-153 first) |
+| D9 | Card with no `remote` named on a PR | A `check-pr` finding ("run story push before merge"). Skipped with `sync: off`. | 0.98 |
+| D10 | CI install of the `story` binary | `actions/cache` keyed on the pinned source revision; `cargo install` on a miss. | 0.30 (weak) |
+| D11 | Evidence format per criterion | Out of scope. `story-accept` and PR review own the evidence. | 0.76 |
+| D12 | Deploy-time done | Out of scope (see Non-Goals). | 0.82 |
+| D13 | Ordering of runs | One run at a time (a concurrency group that queues, without cancelling the running one). Each run covers the range from the last successful run to HEAD. | 0.61 |
+| D14 | A bare `#N` reference | Mapped to the card whose `remote` is `N`, and then checked like an ID reference. | 0.22 (weak) |
+| D15 | A closing keyword on an unnamed story issue | A finding when the target has a story-type label and no passing reference covers it. | 0.56 |
+| D16 | Changed cards on a push with no PR or no `Stories:` line | Mirrored. Only the comments need a PR and a `Stories:` line. This amends ST-151 AC6. | 0.42 (weak) |
+| D17 | Source of `STORY_ACCEPTANCE` | Repository variable, because a PR can change its own workflow file. | 0.06 (weak; the technical reason decides it) |
 
-R2 note: Jev first chose `pull_request: closed` (0.60, confidence 0.20). With
-the added fact that a `pull_request` job from a fork gets a read-only token
-and cannot write issues, Jev chose `push` (1.00).
-
-## Open Questions
-
-*   **Q6 — Parser drift.** `story-link` keeps its own `references()` in
-    `scripts/story-policy.rs`, and `story sync-merge` gets a copy in the crate.
-    This design shares one fixture file between both test suites to catch
-    drift. A single binary for both checks would remove the copy, but then
-    `story-link` must install the `story` binary. Left for a later story.
+D5 note: Jev first chose a `pull_request: closed` trigger with confidence
+0.20. It was then given one more fact: a `pull_request` job from a fork gets
+a read-only token and cannot write issues. With that fact it chose `push`,
+with confidence 1.00.
 
 ## Critical User Journeys (CUJs)
 
+The PR and issue numbers below are examples.
+
 ### CUJ 1: An agent opens a PR before acceptance
 
-*   **Given**: PR body `Stories: ST-151 (#344)`. `backlog/ST-151.md` on the
-    head branch has `status: in-progress` and two unticked criteria.
-    `STORY_ACCEPTANCE=fail`.
-*   **When**: The `story-link` check runs.
-*   **Then**: The check fails. It prints
-    `ST-151 is in-progress with 2 unticked criteria; run story-accept or mark the reference (partial)`.
-    With `STORY_ACCEPTANCE=warn`, it prints the same text as a warning and passes.
+*   **Given**: PR #900, body `Stories: ST-901 (#902)`. On the PR's merge ref,
+    `backlog/ST-901.md` has `status: in-progress` and two unticked criteria.
+    `vars.STORY_ACCEPTANCE` is `fail`.
+*   **When**: `story-link` runs `story check-pr`.
+*   **Then**: The check fails with
+    `ST-901 is in-progress with 2 unticked criteria; run story-accept or mark the reference (partial)`.
+    With `warn`, the same text is a warning, and the check passes.
 
-### CUJ 2: A multi-PR story
+### CUJ 2: A story delivered over several PRs
 
-*   **Given**: PR body `Stories: ST-152 (#346) (partial)`, and the card is
+*   **Given**: PR #903, body `Stories: ST-904 (#905) (partial)`. The card is
     `in-progress`.
-*   **When**: `story-link` runs, then the PR merges and `story-sync` runs.
-*   **Then**: `story-link` passes. `story-sync` comments on #346 and leaves it
-    open, because the card is not done.
+*   **When**: `story-link` runs. Later the PR merges, and `story-sync` runs.
+*   **Then**: `story-link` passes, because `(partial)` covers the whole
+    reference. `story-sync` comments on #905 and leaves it open.
 
-### CUJ 3: Accepted story merges
+### CUJ 3: An accepted story merges
 
-*   **Given**: The PR set `backlog/ST-151.md` to `done` through `story-accept`,
-    and issue #344 is open.
-*   **When**: The squash merge pushes commit `abc123` to `main`, and
-    `story-sync` runs `story sync-merge --sha abc123 --before <prev>`.
-*   **Then**: #344 is closed and has one comment
-    `Merged in #345 (abc123)` with a hidden marker. `git status --porcelain` is
-    empty. A rerun posts no second comment and makes no change.
+*   **Given**: PR #906 set `backlog/ST-907.md` to `done` through
+    `story-accept`. Issue #908 is open.
+*   **When**: The squash merge pushes commit `abc123`, and `story-sync` runs.
+*   **Then**: #908 is closed and has one comment,
+    `Merged in #906 (abc123)`, with a hidden marker. `git status --porcelain`
+    prints nothing. A rerun posts no second comment and changes nothing.
 
-### CUJ 4: Direct push, or no Stories line
+### CUJ 4: Direct push
 
-*   **Given**: A commit is pushed to `main` with no associated PR, or its PR body
-    has no `Stories:` line.
+*   **Given**: Commit `def456` is pushed to the default branch with no PR. It
+    sets `backlog/ST-909.md` to `archived`.
 *   **When**: `story-sync` runs.
-*   **Then**: It writes nothing to the tracker. It prints
-    `skipped: no pull request for abc123` (or `no Stories line in #N`) and
-    exits 0.
+*   **Then**: ST-909's issue is closed. No comment is posted. The report says
+    `no pull request for def456; mirrored 1 card, no comments`.
 
-### CUJ 5: Closing keyword
+### CUJ 5: Closing keywords
 
-*   **Given**: PR body `Stories: ST-151 (#344)` and the text `Closes #344`.
+*   **Given**: PR body `Stories: ST-904 (#905) (partial)` and the text
+    `Closes #905`. `vars.STORY_ACCEPTANCE` is `fail`.
 *   **When**: `story-link` runs.
 *   **Then**: It fails with
-    `#344 is a story issue; remove the closing keyword, story push closes it after acceptance`.
-    `warn` mode only warns.
+    `#905 is not covered by a passing reference; remove the closing keyword`.
+    The same failure occurs for `Fixes #910`, where #910 is the story issue of
+    an unnamed ST-911. `Closes #908` with ST-907 `done` and named passes.
 
-## Technical Plan (Architecture)
+### CUJ 6: A burst of merges
+
+*   **Given**: Three PRs merge within one minute.
+*   **When**: The first `story-sync` run starts. The second waits, and the
+    third replaces the second in the queue.
+*   **Then**: The third run covers the range from the first run's commit to
+    HEAD. That range includes the second PR's changes and its merge commit,
+    so the second PR's cards are mirrored and its issues get their comment.
+
+## Proposed Architecture
 
 ### Components
 
 ```text
-           PR open/edit/sync                         push to main
-                  |                                        |
-      .github/workflows/story-link.yml          .github/workflows/story-sync.yml
-                  |                                        |
-      scripts/story-policy.rs story-link        story sync-merge --sha S --before B
-        - references() (+ partial flag)            (native/story-push, new verb)
-        - read head-branch cards                   1. load .story-time/settings.json
-        - status + tick check   (ST-152)           2. gateway.pull_for_commit(S)
-        - closing-keyword check (ST-152)           3. stories_line::parse(PR body)
-        - STORY_ACCEPTANCE warn|fail               4. changed cards: git diff B..S -- backlog/
-                  |                                5. push plan, write_back = false
-              pass / fail                          6. gateway.comment_once(issue, marker)
-                                                   7. JSON report, exit 0 (or 1 on error)
-                                                           |
-                                                   GitHub issues (via gh)
+  PR opened / edited / synced                      push to default branch
+             |                                              |
+   story-link.yml (template and repo)              story-sync.yml (one at a time)
+             |                                              |
+   story check-pr  (read-only)                     story sync-merge
+     - parse references                              - range = last successful run .. HEAD
+     - link rules (hard fail)                        - merged PRs in the range
+     - acceptance, unlinked, keyword                 - mirror cards changed in the range
+       rules (warn | fail)                           - one marked comment per PR per issue
+             |                                       - report; job summary on failure
+         pass / fail                                         |
+                                                    tracker gateway (GitHub via gh)
+             \______ shared: reference parser, card reader, gateway ______/
 ```
 
-### Pre-merge check (ST-152)
+Both verbs live in `native/story-push`, the crate that builds the `story`
+binary. They share one reference parser and one card reader.
 
-`scripts/story-policy.rs` already parses `Story:`/`Stories:` lines and checks
-that each ID has a card. It gains three rules, in this order:
+### Pre-merge check: `story check-pr` (ST-152)
 
-1.  **Partial marker.** A reference followed by `(partial)` on the same
-    declaration line is exempt from the acceptance rule. The marker binds to
-    the nearest ID or `#N` before it.
-2.  **Acceptance.** For each non-partial `ST-###`, the check reads
-    `backlog/ST-###.md` from the PR checkout (the head branch, through
-    `actions/checkout`). It reads `status:` from the frontmatter and counts
-    `- [ ]` lines under `## Acceptance Criteria`. The rule passes only for
-    `status: done` with zero unticked boxes. A bare `#N` with no ID is not
-    checked, because there is no card to read.
-3.  **Closing keywords.** The check scans the whole body for
-    `close|closes|closed|fix|fixes|fixed|resolve|resolves|resolved` followed by
-    `#N`, case-insensitive. It fails when `#N` is the `remote` of a named card,
-    or when it is an issue that carries the story label (the same label lookup
-    `validate_links` uses).
+**Input.** The PR body comes from an environment variable, never through
+`${{ }}` in a `run:` line. The mode comes from `vars.STORY_ACCEPTANCE`. The
+cards come from the PR's merge ref (`refs/pull/N/merge`), which
+`actions/checkout` uses for `pull_request` events. The merge ref reflects
+the default branch when the event fired. It is the closest available
+approximation of the tree that the merge will produce.
 
-`STORY_ACCEPTANCE` selects the outcome of rules 2 and 3. `fail` exits 1. `warn`
-or unset prints `::warning::` lines and exits 0. The existing link rules stay
-hard failures in both modes. An `incident` label exempts rules 2 and 3, as it
-already exempts a missing reference.
+**Rules, in order:**
 
-### Post-merge sync (ST-151)
+1.  **Link rules (always a hard failure).**
+    *   Each `<ID>` has a card file.
+    *   Each `#N` is an issue with a story-type label (`story`, `spike`,
+        `bug`, or `chore`), not a PR.
+    *   When a reference has both `<ID>` and `(#N)`, `N` equals the card's
+        `remote`.
+    *   A PR with no reference fails, unless it has the `incident` label.
+2.  **Acceptance.** For each reference not marked `(partial)`, the card is
+    `status: done` with zero `- [ ]` lines under `## Acceptance Criteria`. A
+    bare `#N` reference uses the card whose `remote` is `N`. If no card has
+    that remote, the reference is a finding.
+3.  **Unlinked card.** For each reference not marked `(partial)`, the card
+    has a `remote`. This rule is skipped when `sync` is `off`.
+4.  **Closing keywords.** For each closing keyword in the body (`close`,
+    `fix`, or `resolve` in any tense, followed by `#N`), `#N` is covered by a
+    reference that passed rules 2 and 3, or it is not a story-type issue.
+    Otherwise it is a finding.
 
-**Trigger and token.** `story-sync.yml` runs on `push` to the default branch,
-with `permissions: contents: read, issues: write, pull-requests: read`. The
-job uses `GITHUB_TOKEN`, which the CLI already prefers through `GH_TOKEN`. A
-`push` job always runs default-branch code with the repository token. Fork PRs
-are covered, because the merged commit is on the base repository.
+`STORY_ACCEPTANCE` selects the outcome of rules 2–4. `fail` exits 1. `warn`
+or unset prints one `::warning::` line per finding and exits 0. The
+`incident` label exempts rules 2–4.
 
-**`story sync-merge`.** A new verb in `native/story-push`, GitHub-only in v1:
+### Post-merge sync: `story sync-merge` (ST-151)
 
-1.  Load the config. If `sync` is `off`, or `tracker` is not a supported
-    tracker, return `{"skipped": "<reason>"}` and exit 0 (AC5). Gitea and ADO
-    return `skipped: tracker gitea not supported by sync-merge yet`.
-2.  Find the PR: `GET /repos/{repo}/commits/{sha}/pulls`, keeping only PRs whose
-    `merged_at` is set. No PR → skip and report (AC6).
-3.  Parse the PR body with `stories_line::parse`. No references → skip and
-    report (AC6).
-4.  Build the push set: the cards that `git diff --name-only B..S -- <backlogDir>`
-    changed, plus every named ID that has a card file. When `B` is all zeros
-    (new branch), use `S^1`.
-5.  Run the existing push planner and executor with `write_back = false`
-    (Q1). The issue state follows the card through the existing
-    `github_state` close or reopen (AC2). The title, labels, and body follow
-    the card through the existing `update` (AC3). A card with no `remote` is
-    skipped with reason `unlinked`.
-6.  For each named issue (`(#N)` on the line, or the named card's `remote`),
-    call `comment_once(issue, marker, body)`. The marker is
-    `<!-- story-time:merge-sync sha=<S> -->`. The method lists the issue
-    comments and posts only when no comment contains the marker (AC1).
-7.  Print a JSON report: `pr`, `sha`, `pushed[]`, `skipped[{id, reason}]`,
-    `commented[]`, `existing[]`. Any tracker error exits 1 and names the step.
+**Trigger and token.** `story-sync.yml` runs on `push` to the default branch.
+It uses a concurrency group with `cancel-in-progress: false`, so runs happen
+one at a time. GitHub keeps at most one waiting run; a newer run replaces it.
+The job permissions are `contents: read`, `issues: write`,
+`pull-requests: read`, and `actions: read`. `GH_TOKEN` is set only on the
+`story sync-merge` step, not on the build step. The tracker repository in
+settings (`github.repo`) must equal the workflow's repository, because
+`GITHUB_TOKEN` can write only there. A run reports and stops if they differ.
 
-The verb never writes a card (AC4, AC7). It never sets a status: it calls
-only the planner and executor, and with `write_back = false` the executor
-performs no `atomic_write`.
+**Steps:**
 
-**`story push --no-write-back`.** `execute()` in `lib.rs` today calls
-`story::link` and `atomic_write` after each create or update. With the flag:
+1.  **Gate.** Read the settings. With `sync: off` or an unsupported tracker,
+    report `skipped (<reason>) at <sha>` and exit 0. If `github.repo` is not
+    the workflow repository, record a failure and stop.
+2.  **Range.** Find the head commit of the last successful run of this
+    workflow on the default branch (`gh run list --workflow story-sync
+    --branch <default> --status success --limit 1`). The range is that
+    commit to the current HEAD. If there is no earlier success, or its
+    commit is not an ancestor of HEAD (for example after a force push), run
+    the `--all` path and report why.
+3.  **Merged PRs.** For each commit in the range, ask GitHub for its pull
+    requests. Keep each PR that is merged, has the default branch as its
+    base, and whose `merge_commit_sha` is in the range. A merge queue batch
+    or a fast-forward therefore yields every PR it carries.
+4.  **Mirror.** Select every card that the range changed, plus every card
+    named by a kept PR. Read each card at HEAD. For each card that has a
+    `remote` and no `pending_create`, call the gateway's `update`. That call
+    writes the title, labels, and body, and closes or reopens the issue from
+    the card's status. It writes no file. A card without a `remote` is
+    skipped with reason `unlinked`. A failed update is recorded, and the run
+    continues. When an update closes or reopens an issue that step 5 will
+    not comment on, the run posts one comment naming the last commit in the
+    range that changed that card, with the same marker form keyed on that
+    commit (ST-151 AC2).
+5.  **Comment.** For each kept PR, parse its references. For each referenced
+    issue, post one comment unless one already carries this PR's marker. The
+    comment is `Merged in #<PR> (<merge sha>)` followed by
+    `<!-- story-time:v1:merge-sync=<merge sha> -->`. The issue is the
+    reference's `(#N)`, or else its card's `remote`. A mismatch between them
+    is recorded as a failure, with no comment. The comment list is read with
+    pagination. A PR with no `Stories:` line gets no comment and is reported
+    by number.
+6.  **Report.** Print a JSON report with `range`, `prs`, `updated`, `skipped`
+    (each with an ID and a reason), `commented`, `existing` (issues that
+    already had the marker), and `failed`. If `failed` is not empty, write
+    it to the job summary and exit 1. The run is then not "successful", so
+    the next run covers its range again.
 
-*   the planner turns every `create` into `skip` (reason `unlinked`);
-*   the executor runs `update` and the state sync, but skips `story::link` and
-    `atomic_write`;
-*   the push lock is still taken, so a parallel local write cannot interleave.
+**Backstop.** `story sync-merge --all` mirrors every linked card from HEAD and
+posts no comments. It runs on `workflow_dispatch` and on a weekly schedule.
+It paces its calls to stay under GitHub's secondary rate limits.
 
-### Data shapes
+### Comment marker
 
-```text
-stories_line::Reference { id: Option<String>, issue: Option<u64>, partial: bool }
-stories_line::parse(body: &str) -> Vec<Reference>
-stories_line::closing_targets(body: &str) -> Vec<u64>
-
-Gateway::pull_for_commit(&self, sha: &str) -> Result<Option<Pull { number: u64, body: String }>, String>
-Gateway::comment_once(&mut self, issue: &str, marker: &str, body: &str) -> Result<Commented, String>
-enum Commented { Posted(url), Existing }
-```
+The marker follows the existing versioned namespace
+(`native/story-push/src/mcp/comments.rs:11`,
+`<!-- story-time:v1:resolves=github:... -->`). The `resolves=` parser
+accepts only its own exact form, so it does not read a `merge-sync=` marker
+as a resolution.
 
 ## Alternatives Considered
 
 ### Alternative A: Auto-accept on merge when every box is ticked (brainstorm hypothesis)
 
 *   **Pros**: Closes stories even when the agent forgot `story-accept`.
-*   **Cons**: A ticked box is not acceptance. It skips the Definition of Done,
-    CI, review threads, and evidence checks. It needs a follow-up bot PR to
-    record `done`, which brings write tokens, loop guards, and PRs whose
-    checks do not run under `GITHUB_TOKEN`.
-*   **Reason for Rejection**: Rejected by author: it creates a second, weaker
-    path to `done`. ST-151 AC4 forbids status changes.
+*   **Cons**: A ticked box is not acceptance. This skips the Definition of
+    Done and the evidence checks. It needs a bot PR to record `done`, which
+    brings write tokens and loop guards.
+*   **Reason for Rejection**: It creates a second, weaker path to `done`.
 
-### Alternative B: GitHub closing keywords (`Closes #N`)
+### Alternative B: Ban closing keywords on every story issue
 
-*   **Pros**: No new code.
-*   **Cons**: Closes the issue at merge, before acceptance. The next
-    `story push` reopens it, because the card is not done
-    (`gateway.rs:912`).
-*   **Reason for Rejection**: Rejected by author: two closers that disagree.
-    The design bans the keywords for story issues (Q3).
+*   **Pros**: There is only one closer.
+*   **Cons**: It drops GitHub's PR-to-issue link even when the card is
+    already `done`.
+*   **Reason for Rejection**: When the reference passes the acceptance rule,
+    the keyword and the card agree. Only uncovered targets conflict, and rule
+    4 catches them (D7, D15).
 
 ### Alternative C: Post-merge job on `pull_request: closed`
 
-*   **Pros**: The PR body is in the event, so no API lookup is needed.
-*   **Cons**: A fork PR gets a read-only token and no secrets, so the job
-    cannot write issues. `pull_request_target` gets a write token but mixes
-    base code with PR-supplied data. A direct push is not seen.
-*   **Reason for Rejection**: Rejected by author (through Jev, R2): the
-    `push` trigger covers forks and direct pushes.
+*   **Pros**: The PR body is in the event, so no lookup is needed.
+*   **Cons**: A fork PR gets a read-only token. `pull_request_target` gets a
+    write token, but it runs with data that the PR supplies. A direct push
+    is not seen.
+*   **Reason for Rejection**: Fork PRs could not be synced, and direct pushes
+    would be missed (D5).
 
 ### Alternative D: Plain `story push` in CI, then discard card changes
 
 *   **Pros**: No CLI change. Unlinked cards get issues.
-*   **Cons**: The new issue number is lost. If the card is done, the issue is
-    closed in the same run, and the next local push misses it in the
-    open-issue title lookup and creates a duplicate. The cleanup is YAML with
-    no tests.
-*   **Reason for Rejection**: Rejected by author (Q1).
+*   **Cons**: For a card with no `remote`, `story push` takes the direct
+    create path (`lib.rs:224-232`). Discarding the write-back loses the new
+    issue number, so the next local push creates a duplicate issue.
+*   **Reason for Rejection**: It creates duplicate issues (D3).
 
-### Alternative E: Logic in workflow shell (`gh` + `jq`), or in `story-policy.rs`
+### Alternative E: Keep the rule in `scripts/story-policy.rs`, or in workflow shell
 
-*   **Pros**: Less Rust, or reuse of the existing parser.
-*   **Cons**: Shell holds untested business logic (Article VIII). A
-    `story-policy.rs` subcommand has no gateway, so a Gitea wrapper means a
-    rewrite.
-*   **Reason for Rejection**: Rejected by author (through Jev, Q2).
+*   **Pros**: It reuses the existing checker, or needs no Rust.
+*   **Cons**: The checker reaches only this repository. Shell holds
+    untested business logic. The team constitution's Article VIII requires
+    backend business logic to be in Rust.
+*   **Reason for Rejection**: Consumer repositories would not get the rule
+    (D1).
 
-### Alternative F: Read-only sweep (`story merged`) that only comments on gaps
+### Alternative F: Parallel runs, each mirroring its own diff
 
-*   **Pros**: No tracker state changes. Low risk.
-*   **Cons**: Leaves done stories with open issues, which is the ST-151 problem.
-*   **Reason for Rejection**: Rejected by author: it does not meet ST-151
-    AC2 or AC3.
+*   **Pros**: No waiting.
+*   **Cons**: A run that reads HEAD early and finishes late writes older
+    state, and nothing selects that card again.
+*   **Reason for Rejection**: State can stay stale with no report (D13).
 
---------------------------------------------------------------------------------
+### Alternative G: Scheduled reconcile only (`--all` on a timer)
+
+*   **Pros**: One simple path that converges.
+*   **Cons**: No per-PR comments. Issues stay stale until the next tick.
+    Each tick costs calls for every linked card.
+*   **Reason for Rejection**: It misses ST-151 AC1. It is kept as the weekly
+    backstop.
+
+### Alternative H: Prebuilt release binaries instead of a cache
+
+*   **Pros**: There is no 2–4 minute build on a cache miss.
+*   **Cons**: It needs a release pipeline, a build per platform, and checksum
+    publishing.
+*   **Reason for Rejection**: That pipeline costs more than this feature.
+    The decision is weak (D10), and it is listed under Future Improvements.
+
+### Alternative I: Reusable workflow (`workflow_call`) instead of copied templates
+
+*   **Pros**: One pin bump updates every consumer. There is no copy drift.
+*   **Cons**: Consumers depend on a cross-repository call. The caller's
+    token scopes still need setup in each repository.
+*   **Reason for Rejection**: Not rejected, deferred. The copied template
+    matches today's `story-link` and `story-ids` practice. It is listed
+    under Future Improvements.
+
+### Alternative J: Status-only acceptance rule
+
+*   **Pros**: Simpler. It trusts `story-accept`.
+*   **Cons**: A hand-set `done` with unticked boxes passes.
+*   **Reason for Rejection**: Ticked boxes are cheap to check and catch that
+    case (D4).
+
+### Alternative K: `fail` from day one
+
+*   **Pros**: Enforcement starts at once.
+*   **Cons**: Every open PR that names an `in-progress` story fails before
+    ST-153 has changed the agents' instructions.
+*   **Reason for Rejection**: It blocks work that followed the old
+    instructions (D8).
+
+## Risks and Mitigations
+
+| Risk | Impact | Mitigation |
+| --- | --- | --- |
+| `story-link` is not a required check | A PR with no `Stories:` line merges (the source case). | Roll-out makes `story-link` required. `story-sync` still mirrors the changed cards (D16). |
+| A revert PR has no `Stories:` line | The card goes back to `in-progress` while the issue stays closed. | The changed card is mirrored, and the issue reopens (D16). The revert gets no comment. |
+| An agent hand-edits `done` and ticks the boxes | `check-pr` passes without `story-accept`. | Out of scope for CI. PR review and the `story-accept` changelog line are the controls. |
+| Legacy noise in `warn` mode | Every open PR that names an `in-progress` story warns. | Expected. The success measure counts warnings before the switch to `fail`. |
+| The switch to `fail` never happens | Acceptance stays optional. | The playbook roll-out names the switch. The success measure tracks it. |
+| Tracker outage partway through a run | Some issues are not updated. | The run fails, and the next run covers the same range again. The weekly `--all` repairs the rest. |
+| Rate limits during `--all` or a large range | Calls are throttled. | `--all` paces its calls. A failed run is retried from the same range. |
+| Labels recolored on each run | Label colors change on every merge. | ST-154 fixes the gateway before `story-sync` ships. |
+| Warn-mode close-then-reopen | A keyword closes a not-done issue, and `story-sync` reopens it. | Both events are visible on the issue. `fail` mode prevents it. |
+| Tracker repository differs from the code repository | `GITHUB_TOKEN` cannot write. | Step 1 stops with a recorded failure. A cross-repository token is out of scope. |
 
 ## Non-Functional Requirements
 
 *   **Security.** `story-sync` runs only on `push` to the default branch, with
-    `issues: write` and no `contents: write`. The PR body reaches the CLI as
-    API data, never through `${{ }}` in a `run:` line. `story-link` already
-    passes the body through `env`. Consumer repositories install the CLI with
-    a pinned `--rev`, so a parser change cannot start mass edits by surprise.
-*   **Idempotency.** The comment marker includes the merge SHA. Close, reopen,
-    and update are already idempotent in `story push`. A rerun of a run
-    changes nothing.
-*   **Cost.** One run makes one PR lookup and one diff. Per named story, it
-    makes one push update and one comment list plus at most one post. Each run
-    builds the CLI with `cargo install --locked`, which costs about 2–4 minutes
-    of runner time without a cache.
-*   **Roll-out and rollback.** ST-152 ships in `warn` mode. Switching to `fail`
-    is a one-line workflow change. Rolling back `story-sync` means deleting
-    the workflow file. It writes no card and no commit, so it leaves nothing
-    to undo in git.
+    no `contents: write`. `GH_TOKEN` is set on the sync step only, so the
+    build step never holds `issues: write`. `check-pr` is read-only. The PR
+    body reaches the binary as API data or through `env`. Consumers pin the
+    binary to a source revision.
+*   **Idempotency.** The gateway's `update` and its close or reopen give the
+    same result when repeated (`gateway.rs:465-516`). The comment marker
+    includes the merge SHA.
+*   **Cost (estimates, not measured).**
+    *   Each selected card costs one `issue view`, one `issue edit`, and at
+        most one close or reopen.
+    *   Each issue that a PR names costs one paginated comment list and at
+        most one comment post.
+    *   A cached run should take under a minute. A cache miss adds a 2–4
+        minute `cargo install`.
+    *   PR-branch caches are not shared between sibling PRs, so `check-pr`
+        builds once per PR branch until a default-branch run fills the cache.
 
---------------------------------------------------------------------------------
+## Roll-out
 
-### Additional Resources
+1.  Merge ST-154, so that labels keep their colors, and ST-153, so that agents
+    run `story-accept` before merge.
+2.  Ship `check-pr` with `vars.STORY_ACCEPTANCE` unset (`warn`). Make
+    `story-link` a required check.
+3.  In each consumer repository, replace the bash `story-link` workflow with
+    the new template. Add `story-sync.yml` with that repository's default
+    branch and pinned revision. A repository that does not do this keeps
+    today's link-only check and gets no post-merge sync.
+4.  Set `vars.STORY_ACCEPTANCE=fail` in each repository when its `warn`
+    count is acceptable.
+5.  To roll back `story-sync`, delete its workflow file. It writes no card
+    and no commit, so nothing in git needs undoing.
 
-*   `docs/designs/merge-sync.md`: the EGM brainstorm brief and its correction block.
+## Additional Resources
+
+*   `docs/designs/merge-sync.md`: the brainstorm brief.
 *   `docs/playbook.md` §3: the enforcement templates.
 *   `docs/native-story-push.md`: the CLI build and install.
 *   `Varsity-Engine/varsity-mcp` #79 and #80: the source incident.
+*   EGM (Elephant-Goldfish Model) review reports for this design are on
+    PR #345.
 
-### Future Improvements
+## Future Improvements
 
-*   **Skill text.** `story-accept` says "when a story's PR merges". It should
-    say "before requesting merge". This change is outside the ST-151 and ST-152
-    criteria, so it needs a follow-up `chore` story.
-*   **Gitea and ADO wrappers** for `story sync-merge`, reusing the verb.
-*   **One parser.** Have `story-link` call the `story` binary, and delete the
-    copy in `story-policy.rs` (Q6).
-*   **Unblock notices.** Report dependents that become workable.
+*   Gitea and ADO wrappers for both verbs.
+*   A reusable `workflow_call` workflow (Alternative I).
+*   Prebuilt release binaries (Alternative H).
+*   Unblock notices for dependent stories.
 
 --------------------------------------------------------------------------------
 
@@ -378,167 +537,193 @@ enum Commented { Posted(url), Existing }
 
 #### 1. `native/story-push/src/stories_line.rs` (Create)
 
-*   **Type / Scope**: Rust domain module (ST-151, ST-152).
-*   **Proposed Changes**: Add `Reference { id, issue, partial }`,
-    `parse(body) -> Vec<Reference>`, and `closing_targets(body) -> Vec<u64>`.
-    The grammar is the one in `scripts/story-policy.rs::references()`: a line
-    whose label before `:` is `story` or `stories` (case-insensitive), with
-    words split on non-`[A-Za-z0-9#_-]`. It adds `(partial)` after a reference.
-    Unit tests read `tests/fixtures/stories-lines.tsv`.
+*   **Type / Scope**: Rust domain module, shared by both verbs.
+*   **Proposed Changes**:
+    *   `Reference { id: Option<String>, issue: Option<u64>, partial: bool }`.
+    *   `parse(body: &str, prefix: &str) -> Vec<Reference>`. It finds the lines
+        whose label before `:` is `story` or `stories` (case-insensitive). It
+        splits each line into reference units: an ID or a `#N` starts a unit,
+        a `(#N)` directly after an ID joins that unit, and `(partial)` marks
+        the current unit.
+    *   `closing_targets(body: &str) -> Vec<u64>`.
+    *   Unit tests:
+        *   `ST-904 (#905) (partial)` gives one partial unit with both fields.
+        *   `#344` alone gives an issue-only unit.
+        *   A lowercase label, a malformed ID, a path-traversal ID, and a
+            missing line.
+        *   The `XY-` prefix.
+        *   Each keyword tense.
 
-#### 2. `native/story-push/src/sync_merge.rs` (Create)
+#### 2. `native/story-push/src/check_pr.rs` (Create)
+
+*   **Type / Scope**: Rust CLI verb (ST-152).
+*   **Proposed Changes**:
+    *   `story check-pr [--body-file PATH] [--json]`. It reads `PR_BODY`,
+        `IS_INCIDENT`, `STORY_ACCEPTANCE`, `REPO`, and `GH_TOKEN` from the
+        environment.
+    *   It runs rules 1–4. It gets labels through a `LabelSource` trait,
+        backed by `gh api repos/{repo}/issues/{n}`. An API failure is an
+        error, never "not a story".
+    *   Exit codes: 0 for a pass or a warning; 1 for a link failure, or a
+        finding in `fail` mode; 2 for a usage error.
+
+#### 3. `native/story-push/src/sync_merge.rs` (Create)
 
 *   **Type / Scope**: Rust CLI verb (ST-151).
-*   **Proposed Changes**: `pub fn run(args) -> Result<(String, i32), Failure>`.
-    The flags are `--sha` (required), `--before`, `--json`, `--config`, and
-    `--dir`. It runs steps 1–7 of "Post-merge sync". It takes a `MergeTracker`
-    trait (`pull_for_commit`, `comment_once`, plus the existing `Tracker`) so
-    that tests use a fake. It calls `git diff --name-only` through
-    `std::process::Command`.
-
-#### 3. `native/story-push/src/lib.rs` (Modify)
-
-*   **Type / Scope**: Rust CLI core (ST-151).
 *   **Proposed Changes**:
-    *   Add `"no-write-back"` to `PUSH_FLAGS`.
-    *   Give `plans()` a `write_back: bool`. When it is false, a `create`
-        becomes `skip` with reason `unlinked`.
-    *   Give `execute()` a `write_back: bool`. When it is false, skip
-        `story::link` and `atomic_write`, and report each update as pushed.
-    *   Register `("sync-merge", sync_merge::run)` in the command table, and
-        add `mod stories_line; mod sync_merge;`.
-    *   Keep `--dry-run` working with `--no-write-back`.
+    *   `story sync-merge [--json]` runs steps 1–6.
+    *   `story sync-merge --all [--json]` runs the backstop.
+    *   A `MergeTracker` trait (`last_success`, `pulls_for_commit`, `update`,
+        `comment_once`) allows a fake in tests.
+    *   `git rev-list`, `git merge-base --is-ancestor`, `git diff --name-only`,
+        and `git show HEAD:<path>` run through `std::process::Command`.
+    *   It writes the job summary to `$GITHUB_STEP_SUMMARY` when set.
 
 #### 4. `native/story-push/src/gateway.rs` (Modify)
 
 *   **Type / Scope**: Rust tracker adapter (ST-151).
 *   **Proposed Changes**:
-    *   Add `pull_for_commit(sha)`. It runs `gh api repos/{repo}/commits/{sha}/pulls`
-        and keeps the PR with `merged_at` set.
-    *   Add `comment_once(issue, marker, body)`. It runs
-        `gh api repos/{repo}/issues/{n}/comments --paginate`, searches for the
-        marker, and posts with `gh issue comment --body-file -` (stdin) only
-        when the marker is absent.
-    *   The Gitea and ADO branches return
-        `Err("sync-merge supports github only")`.
-    *   Unit tests use the existing fake-`gh` harness (`gateway.rs:1690`).
+    *   Add `last_success(workflow, branch)`, through `gh run list --json headSha`.
+    *   Add `pulls_for_commit(sha)`, through
+        `gh api repos/{repo}/commits/{sha}/pulls`, filtered as in step 3.
+    *   Add `comment_once(issue, marker, body)`. It runs a paginated list,
+        then `gh issue comment --body-file -` when the marker is absent.
+    *   Implement `MergeTracker` for `Gateway`.
+    *   Unit tests use the fake-`gh` harness at `gateway.rs:1690`.
+    *   The label fix itself is ST-154, not this item.
 
-#### 5. `native/story-push/src/help.rs` (Modify)
+#### 5. `native/story-push/src/lib.rs` (Modify)
+
+*   **Type / Scope**: Rust CLI core.
+*   **Proposed Changes**: Register `check-pr` and `sync-merge` in the command
+    table, and add the three `mod` lines. `push`, `plans`, and `execute` are
+    unchanged.
+
+#### 6. `native/story-push/src/help.rs` (Modify)
 
 *   **Type / Scope**: CLI help text.
-*   **Proposed Changes**: Document `story sync-merge` and
-    `story push --no-write-back`. `tests/help_contract.rs` and
-    `tests/help_lists_native.rs` must list the new verb.
+*   **Proposed Changes**: Document both verbs. Update
+    `tests/help_contract.rs` and `tests/help_lists_native.rs`.
 
-#### 6. `native/story-push/tests/sync_merge_contract.rs` (Create)
+#### 7. `native/story-push/tests/check_pr_contract.rs` (Create)
 
-*   **Type / Scope**: Rust contract tests (ST-151 AC1–AC7).
-*   **Proposed Changes**: One test per criterion, against a fake `gh` and a
-    temp git repository:
-    *   One comment per issue, and a rerun posts none (AC1).
-    *   A done card closes an open issue, and a not-done card reopens a closed
-        one (AC2).
-    *   Drift in the title, labels, or body is fixed (AC3).
-    *   No card file changes. Assert the bytes of every card before and after
-        (AC4, AC7).
-    *   `sync: off` and `tracker: none` report skipped with zero `gh` calls
-        (AC5).
-    *   No PR, and no `Stories:` line, report skipped with the SHA (AC6).
-    *   `git status --porcelain` is empty after the run (AC7).
+*   **Type / Scope**: Rust contract tests (ST-152).
+*   **Proposed Changes**: The tests run the built binary against a temporary
+    backlog and a fake `gh`. One test covers each amended criterion:
+    *   AC1: a `done`, fully ticked card passes.
+    *   AC2: a card that is not done, or has an unticked box, fails in `fail`
+        mode.
+    *   AC3: `(partial)` passes, including the CUJ 2 string.
+    *   AC4: an `incident` PR passes.
+    *   AC5: a keyword on an uncovered story issue fails. On a covered issue
+        it passes.
+    *   AC6: `warn` mode exits 0 with `::warning::`.
+    *   Extra tests:
+        *   An unlinked card is a finding, except with `sync: off`.
+        *   A bare `#N` maps to its card.
+        *   An ID and `(#N)` that disagree is a hard failure.
+        *   The `XY-` prefix works.
 
-#### 7. `native/story-push/tests/push_flag_contract.rs` (Modify)
+#### 8. `native/story-push/tests/sync_merge_contract.rs` (Create)
 
-*   **Type / Scope**: Rust contract test (ST-151).
-*   **Proposed Changes**: Check that `--no-write-back` leaves the card bytes
-    unchanged after an update. Check that it skips an unlinked card with
-    reason `unlinked` and makes zero create calls.
+*   **Type / Scope**: Rust contract tests (ST-151).
+*   **Proposed Changes**: The tests run against a fake `gh` and a temporary
+    git repository with a bare `origin`.
+    *   AC1: one comment per PR per issue, and a rerun posts none.
+    *   AC2: close and reopen follow the card.
+    *   AC3: drift is fixed.
+    *   AC4: card bytes are unchanged.
+    *   AC5: `sync: off` and `tracker: files` make zero `gh` calls.
+    *   AC6 (amended): with no PR, changed cards are mirrored, no comment is
+        posted, and the report names the SHA.
+    *   AC7: `git status --porcelain` is empty.
+    *   Extra tests:
+        *   The range starts at the last success, so a skipped run's PR is
+            covered.
+        *   A last-success commit that is not an ancestor takes the `--all`
+            path.
+        *   One push that carries two PRs gets both comments.
+        *   A tracker repository mismatch fails.
+        *   A failed run exits 1.
 
-#### 8. `scripts/story-policy.rs` (Modify)
+#### 9. `scripts/story-policy.rs` (Modify)
 
-*   **Type / Scope**: Rust CI checker (ST-152).
-*   **Proposed Changes**:
-    *   Extend `references()` to record `(partial)`.
-    *   Add `validate_acceptance(body, incident, read_card, issue_labels) -> Vec<Finding>`,
-        which applies rules 2 and 3 of "Pre-merge check". A `Finding` has `id`
-        and `message`.
-    *   In `link()`, read `STORY_ACCEPTANCE`. With `fail`, any finding exits 1.
-        With `warn` or unset, print `::warning::` and exit 0.
-    *   Add tests in the file's `#[cfg(test)]` module for: done and ticked
-        passes; not done fails; done with an unticked box fails; partial
-        passes; incident passes; a closing keyword for a story issue fails; a
-        closing keyword for a non-story issue passes; warn mode exits 0.
-    *   The tests also read `tests/fixtures/stories-lines.tsv`.
-
-#### 9. `tests/fixtures/stories-lines.tsv` (Create)
-
-*   **Type / Scope**: Shared test data (Q6).
-*   **Proposed Changes**: Rows of `body<TAB>expected references`. Both parsers
-    must agree on every row: valid, malformed, missing, unknown ID, `#N` only,
-    `(partial)`, and lowercase `stories:`.
+*   **Type / Scope**: This repository's CI checker.
+*   **Proposed Changes**: Remove the `story-link` subcommand and
+    `references()`. Keep `story-ids`, the check that rejects a new story ID
+    already used on the default branch or in an older open PR.
 
 #### 10. `.github/workflows/story-link.yml` (Modify)
 
 *   **Type / Scope**: CI configuration (ST-152).
-*   **Proposed Changes**: Add `STORY_ACCEPTANCE: warn` to the
-    `Validate declared stories` step. Its `actions/checkout` already checks out
-    the PR merge ref, so the card files are present.
+*   **Proposed Changes**: Install the cached binary as in item 11. Run
+    `story check-pr` with this `env`:
+    *   `PR_BODY`: `github.event.pull_request.body`
+    *   `IS_INCIDENT`: `contains(github.event.pull_request.labels.*.name, 'incident')`
+    *   `REPO`: `github.repository`
+    *   `GH_TOKEN`: `github.token`
+    *   `STORY_ACCEPTANCE`: `vars.STORY_ACCEPTANCE`
 
 #### 11. `.github/workflows/story-sync.yml` (Create)
 
 *   **Type / Scope**: CI configuration (ST-151).
 *   **Proposed Changes**:
-    *   Trigger on `push` to `main`, with `concurrency: story-sync` and
-        `cancel-in-progress: false`.
-    *   Set the job permissions to `contents: read`, `issues: write`, and
-        `pull-requests: read`.
-    *   Run `actions/checkout` with `fetch-depth: 0`, then
-        `dtolnay/rust-toolchain@stable`.
-    *   Install with `cargo install --path native/story-push --locked` in this
-        repository. The playbook copy uses
-        `--git https://github.com/Team-Teddy-Development/story-time --rev <sha>`.
-    *   Run `story sync-merge --sha "$GITHUB_SHA" --before "$BEFORE" --json`,
-        with `GH_TOKEN: ${{ github.token }}` and
-        `BEFORE: ${{ github.event.before }}`.
-    *   End with `git status --porcelain`, which must print nothing.
+    *   **Triggers**: `push` to `main` (consumers change it to their default
+        branch, because GitHub does not expand expressions in branch filters).
+        Also `workflow_dispatch`, with an `all` boolean input, and a weekly
+        `schedule` that runs `--all`.
+    *   **Concurrency**: `concurrency: { group: story-sync, cancel-in-progress: false }`.
+    *   **Permissions**: `contents: read`, `issues: write`,
+        `pull-requests: read`, `actions: read`.
+    *   **Steps**:
+        1.  `actions/checkout` with `fetch-depth: 0`.
+        2.  `dtolnay/rust-toolchain@stable`.
+        3.  `actions/cache` on `~/.cargo/bin/story`. This repository keys on
+            a hash of `native/story-push/**` and `Cargo.lock`. The template
+            keys on the pinned `--rev`.
+        4.  On a miss, `cargo install`. This repository installs with
+            `--path native/story-push`. The template installs with
+            `--git https://github.com/Team-Teddy-Development/story-time --rev <sha>`.
+        5.  `story sync-merge --json`, or `--all` for a dispatch or schedule
+            run. Set `GH_TOKEN: ${{ github.token }}` on this step only.
+        6.  `test -z "$(git status --porcelain)"`.
 
 #### 12. `docs/playbook.md` (Modify)
 
 *   **Type / Scope**: Documentation.
 *   **Proposed Changes**:
-    *   In §3, add the `story-sync.yml` template, the `(partial)` marker, the
-        `STORY_ACCEPTANCE` warn-to-fail roll-out, and the closing-keyword ban.
-    *   In §2, change rule 5 ("Close the loop") to state that the PR carries the
-        `done` card and that `story-sync` closes the issue after merge.
+    *   §3: Replace the bash `story-link` template with the `check-pr`
+        template. Add `story-sync.yml`, the `vars.STORY_ACCEPTANCE` roll-out,
+        `(partial)`, the closing-keyword rule, and the default-branch note.
+    *   §2 rule 5: The PR carries the `done` card, and `story-sync` closes
+        the issue after the merge.
 
-#### 13. `backlog/ST-151.md` and `backlog/ST-152.md` (Modify)
+#### 13. `backlog/ST-151.md`, `backlog/ST-152.md` (Modify; done with this revision)
 
 *   **Type / Scope**: Story cards.
-*   **Proposed Changes**:
-    *   ST-151: name `story sync-merge` and `--no-write-back` in the Notes.
-        Record that a card with no `remote` is skipped in CI (Q1).
-    *   ST-152: change AC1 to "status done and every criterion ticked" (R1).
-        Add one AC for closing keywords (Q3) and one AC for the warn and fail
-        mode (Q4).
-    *   Publish both with `story push` after the edit.
+*   **Proposed Changes**: Amend ST-151 AC6 (D16) and its Out of Scope
+    (D7). Replace the ST-151 Notes on `--no-write-back` (D3). Amend ST-152
+    AC1 and AC2 (merge ref) and AC5 (D7, D15). Name `check-pr` in ST-152.
+    Set ST-152 `depends_on: [ST-153]`. Publish both with `story push`.
 
 ### Verification Plan
 
-*   **Compilation/Build**: `cargo build --manifest-path native/story-push/Cargo.toml --release --locked`
-*   **Unit Tests**: `cargo test --manifest-path native/story-push/Cargo.toml --locked`;
-    `rustc --edition=2021 --test scripts/story-policy.rs -o "$T/policy" && "$T/policy"`
-*   **Static Analysis & Linting**: `cargo fmt --manifest-path native/story-push/Cargo.toml --check`;
-    `cargo clippy --manifest-path native/story-push/Cargo.toml --locked --all-targets -- -D warnings`;
-    `story lint ST-151 ST-152`
-*   **Test Coverage Requirement**: One named test per acceptance criterion of
-    ST-151 (7) and ST-152 (6 after the edit). A criterion with no test is
-    unmet.
-*   **E2E/Integration**:
-    *   Merge one PR in story-time that names a `done` story. Confirm that its
-        issue closes and has one `Merged in #N (sha)` comment.
-    *   Rerun the workflow from the Actions tab. Confirm that it posts no
-        second comment.
-    *   Open a PR that names an `in-progress` story. Confirm that `story-link`
-        warns in `warn` mode.
+*   **Compilation/Build**:
+    `cargo build --manifest-path native/story-push/Cargo.toml --release --locked`
+*   **Unit and contract tests**:
+    `cargo test --manifest-path native/story-push/Cargo.toml --locked`
+*   **Static Analysis & Linting**:
+    *   `cargo fmt --manifest-path native/story-push/Cargo.toml --check`
+    *   `cargo clippy --manifest-path native/story-push/Cargo.toml --locked --all-targets -- -D warnings`
+    *   `story lint ST-151 ST-152 ST-153 ST-154`
+*   **Test Coverage Requirement**: Each acceptance criterion of ST-151 (7) and
+    ST-152 (6) has at least one named contract test.
+*   **E2E/Integration**, in story-time itself:
+    1.  Open a PR that names an `in-progress` story. `story-link` warns.
+    2.  Merge a PR that names a `done` story. Its issue closes, with one
+        comment.
+    3.  Rerun `story-sync`. No second comment appears.
+    4.  Merge two PRs within one minute. Both get their comments.
 
 --------------------------------------------------------------------------------
 
