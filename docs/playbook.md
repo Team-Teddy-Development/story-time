@@ -83,7 +83,8 @@ Every agent, including subagents writing code, does this before its first edit:
 4. **Work to the criteria only.** Anything outside them, or under Out of Scope, becomes a new
    story, not part of this change.
 5. **Close the loop.** Every PR body declares its stories on a `Stories: ST-### (#issue)` line.
-   story-accept with evidence closes each story.
+   Run story-accept with evidence on the PR branch before requesting merge, so the PR carries
+   the `done` card. After the merge, `story-sync` closes the issue and comments on it.
 
 ## Every change starts as a story
 
@@ -140,6 +141,7 @@ Mandates in a text file are advice. These make them hold.
 |---|---|
 | `story-link` CI check (`story check-pr`), **required** on the default branch | A PR with no `Stories:` line, or one naming an id or issue that is not a story; with `STORY_ACCEPTANCE=fail`, a named story that is not accepted or a closing keyword that no accepted story covers |
 | `story-ids` CI check | Two branches (often parallel agents) creating the same new story id |
+| `story-sync` workflow (`story sync-merge`) on each push to the default branch | Issues left open, or out of date, after their stories merge; each named issue gets one merge comment |
 | `story set status=ready` lint gate | Unestimated stories, vague or non-Given/When/Then criteria, orphan spikes, missing design links |
 | Definitions of Ready and Done in settings | Project rules, applied at ready and at accept |
 | story-accept with evidence | A story closed without proof (commands, test names, PR links) |
@@ -192,6 +194,84 @@ The check reads the prefix and backlog folder from `.story-time/settings.json`. 
 Rules 2–4 follow the repository variable `STORY_ACCEPTANCE`. Unset or `warn` prints `::warning::` lines and passes; `fail` fails the check. A PR cannot change a repository variable. Start in `warn`. When the check shows no warnings for 7 days, the repository owner sets `STORY_ACCEPTANCE=fail`. The `incident` label exempts rules 2–4.
 
 Make it a required status check on the default branch (a branch ruleset or branch protection).
+
+### `.github/workflows/story-sync.yml`
+
+After each push to the default branch, `story sync-merge` mirrors every card the push range
+changed, and every card a merged PR names, to its issue, as `story push` would write it. It writes
+no card file. Each merged PR gets one `Merged in #<PR> (<sha>)` comment on each issue it names. A
+card that no PR names and whose status changed (a revert or a direct push) gets one
+`Status <status> from <commit>` comment. Runs are serialized, and each covers the range since the
+last successful push run, so a skipped or failed run is covered by the next one. A weekly `--all`
+run mirrors every linked card. The tracker repository in settings must be this repository.
+Replace `main` with your default branch, and pin `<sha>` to a story-time commit.
+
+```yaml
+name: story-sync
+on:
+  push:
+    branches: [main]
+  schedule:
+    - cron: '17 6 * * 1'
+  workflow_dispatch:
+    inputs:
+      all:
+        type: boolean
+        default: true
+concurrency:
+  group: story-sync
+  cancel-in-progress: false
+permissions: {}
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: dtolnay/rust-toolchain@stable
+      - id: cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.story-root/bin/story
+          key: story-<sha>
+      - if: steps.cache.outputs.cache-hit != 'true'
+        run: cargo install --locked --git https://github.com/Team-Teddy-Development/story-time --rev <sha> story-time-native --bin story --root ~/.story-root
+      - uses: actions/upload-artifact@v4
+        with:
+          name: story-bin
+          path: ~/.story-root/bin/story
+  sync:
+    needs: build
+    # A schedule event carries no repository payload; it always runs on the default branch.
+    if: github.event_name != 'workflow_dispatch' || github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: write
+      pull-requests: read
+      actions: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/download-artifact@v4
+        with:
+          name: story-bin
+          path: ${{ runner.temp }}/story-bin
+      - run: chmod +x "$RUNNER_TEMP/story-bin/story"
+      - name: Sync merged stories
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ALL: ${{ github.event_name == 'schedule' || inputs.all == true }}
+        run: |
+          if [ "$ALL" = true ]; then
+            "$RUNNER_TEMP/story-bin/story" sync-merge --all --json
+          else
+            "$RUNNER_TEMP/story-bin/story" sync-merge --json
+          fi
+      - run: test -z "$(git status --porcelain)"
+```
 
 ### `.github/workflows/story-ids.yml`
 
@@ -289,7 +369,7 @@ batches without someone watching.
 ## 5. Starting a new project
 
 1. Run **story-setup**; write your Definitions of Ready and Done; commit the settings.
-2. Add `story-link.yml` and `story-ids.yml` with your prefix, and make `story-link` required.
+2. Add `story-link.yml`, `story-ids.yml`, and `story-sync.yml`, and make `story-link` required.
 3. Paste the mandates into the repository's agent instructions.
 4. Seed the backlog: **story-map** the first epic into a walking skeleton; turn each unknown into
    a **spike** wired into the `depends_on` of the story it unblocks; use **state-machine** and
