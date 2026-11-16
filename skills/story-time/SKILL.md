@@ -96,7 +96,7 @@ The **principle-invest** skill holds the quality bar all of them apply.
 
 ## The `story` tool
 
-Use installed Rust `story` for `init`, `push`, `adopt preview`, `plan`, `config`, `show`, `list`, `lint`, `stats`, `secret`, `issues`, `note`, `machine`, `mcp`, `export`, `new`, `rank`, `set`, `split`, `table`, `judge`, `help`, and `metrics`.
+Use installed Rust `story` for `init`, `push`, `adopt preview`, `plan`, `config`, `show`, `list`, `lint`, `stats`, `secret`, `issues`, `note`, `machine`, `mcp`, `export`, `new`, `rank`, `set`, `split`, `table`, `judge`, `check-pr`, `sync-merge`, `help`, and `metrics`.
 The skill installer copies skills only; install the executable separately.
 Read `.story-time/settings.json` before selecting a tracker. Install the native
 command from the repository root:
@@ -106,7 +106,7 @@ cargo install --path native/story-push --locked
 ```
 
 `story push` runs entirely in Rust. Do not invoke the historical Node push
-handler. `story init`, `story adopt preview`, `story plan`, `story config`, `story show`, `story list`, `story lint`, `story stats`, `story secret`, `story issues`, `story note`, `story machine`, `story mcp`, `story export`, `story new`, `story rank`, `story set`, `story split`, `story table`, `story judge`, `story help`, and `story metrics` also run entirely in Rust. No command needs Node.
+handler. `story init`, `story adopt preview`, `story plan`, `story config`, `story show`, `story list`, `story lint`, `story stats`, `story secret`, `story issues`, `story note`, `story machine`, `story mcp`, `story export`, `story new`, `story rank`, `story set`, `story split`, `story table`, `story judge`, `story check-pr`, `story sync-merge`, `story help`, and `story metrics` also run entirely in Rust. No command needs Node.
 Plan JSON is the default output; other commands use `--json`.
 
 The separate Rust `gitea-gateway story-push` interface remains available in
@@ -128,6 +128,8 @@ part of either Rust push execution path.
 | `story list [--status S]` | List stories. Native Rust; read-only |
 | `story show <id>` | Print one story. Native Rust; read-only |
 | `story metrics --from YYYY-MM-DD --to YYYY-MM-DD [--json]` | Throughput, WIP, and cycle time for a window from changelog status events, with gaps `unknown`. Native Rust; read-only |
+| `story check-pr [--body-file F] [--json]` | Check a PR's `Stories:` line, acceptance, and closing keywords (CI). Reads `PR_BODY`, `IS_INCIDENT`, `STORY_ACCEPTANCE`, `REPO`. Native Rust; read-only |
+| `story sync-merge [--all] [--workflow F] [--json]` | Mirror merged cards to their issues and comment once per PR on each named issue (CI, after a push to the default branch). Native Rust |
 | `story lint [id...] [--json]` | INVEST / Definition of Ready check. Exit 1 if any story has errors. Native Rust; read-only |
 | `story rank [--limit N] [--include-refined]` | WSJF ranking of ready, unblocked stories, plus why others were excluded. Native Rust; read-only |
 | `story set <id> key=value... [--note N]` | Update fields with a changelog entry. `status=ready` is lint-gated. Native Rust |
