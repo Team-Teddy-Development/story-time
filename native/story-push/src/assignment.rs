@@ -268,6 +268,7 @@ fn eligible<'a>(stories: &'a [Js], root: &Path, statuses: &[&str]) -> Result<Vec
 fn legacy_ids(root: &Path, ledger: &Ledger) -> Result<Vec<String>, String> {
     let worktrees = git(root, &["worktree", "list", "--porcelain", "-z"])?;
     let mut ids = std::collections::BTreeSet::new();
+    let mut headers = std::collections::HashMap::new();
     for field in worktrees.split('\0') {
         let Some(path) = field.strip_prefix("worktree ") else {
             continue;
@@ -284,7 +285,7 @@ fn legacy_ids(root: &Path, ledger: &Ledger) -> Result<Vec<String>, String> {
         let loaded = config::load(Some(file.to_str().ok_or("Worktree path is not UTF-8.")?))?;
         let settings = config::parse(&loaded.raw)?;
         let dir = list::backlog_dir(None, worktree, &settings)?;
-        for story in list::stories(&dir, None)? {
+        for story in list::headers(&dir, &mut headers)? {
             let id = story.get("id").string();
             if story.get("status").string() == "in-progress"
                 && !ledger.claims.iter().any(|c| c.story_id == id)
@@ -396,7 +397,11 @@ pub fn run(args: &[String]) -> Result<(String, u8), Failure> {
     let mut ledger = load(&path)?;
     let before = ledger.clone();
     let dir = list::backlog_dir(None, &root, &settings)?;
-    let stories = list::stories(&dir, None)?;
+    let stories = if op == "next" {
+        list::stories(&dir, None)?
+    } else {
+        Vec::new()
+    };
     let changes = if matches!(op, "next" | "reconcile") {
         reconcile(&mut ledger)
     } else {

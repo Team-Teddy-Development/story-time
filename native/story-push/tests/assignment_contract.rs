@@ -406,6 +406,118 @@ fn resume_rechecks_story_status_and_recovery_checks_branch() {
 }
 
 #[test]
+fn assignment_metadata_does_not_wait_for_story_bodies() {
+    use std::io::Write;
+    use std::time::{Duration, Instant};
+
+    for op in ["status", "reconcile", "heartbeat", "release", "next"] {
+        let r = Repo::new();
+        let token = r.next("existing")["claim"]["token"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+        let dir = if op == "next" {
+            linked(&r)
+        } else {
+            r.0.clone()
+        };
+        let fifo = dir.join("backlog/ST-003.md");
+        assert!(Command::new("mkfifo")
+            .arg(&fifo)
+            .status()
+            .unwrap()
+            .success());
+        let mut body = fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(&fifo)
+            .unwrap();
+        body.write_all(b"---\r\nid: ST-003\r\nstatus: in-progress\r\n---")
+            .unwrap();
+        let mut args = vec![op.to_owned()];
+        if matches!(op, "heartbeat" | "release") {
+            args.extend(["--token".into(), token]);
+        } else if op == "next" {
+            args.extend([
+                "--owner".into(),
+                "other".into(),
+                "--pid".into(),
+                std::process::id().to_string(),
+            ]);
+        }
+        let mut child = Command::new(env!("CARGO_BIN_EXE_story"))
+            .arg("assignment")
+            .args(&args)
+            .current_dir(&r.0)
+            .env("STORY_OTLP_ENDPOINT", "")
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .spawn()
+            .unwrap();
+        let deadline = Instant::now() + Duration::from_secs(3);
+        let finished = loop {
+            if child.try_wait().unwrap().is_some() {
+                break true;
+            }
+            if Instant::now() >= deadline {
+                let _ = child.kill();
+                break false;
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        };
+        drop(body);
+        let output = child.wait_with_output().unwrap();
+        assert!(finished, "assignment {op} waited for a story body");
+        let out = success(output);
+        assert_eq!(out["legacy_in_progress"], json!(["ST-003"]));
+    }
+}
+
+#[test]
+fn legacy_metadata_is_fresh_and_malformed_headers_fail_closed() {
+    let r = Repo::new();
+    let linked = linked(&r);
+    let path = linked.join("backlog/ST-003.md");
+    for (status, expected) in [
+        ("ready", json!([])),
+        ("in-progress", json!(["ST-003"])),
+        ("done", json!([])),
+    ] {
+        fs::write(
+            &path,
+            format!("---\nid: ST-003\nstatus: {status}\n---suffix without newline"),
+        )
+        .unwrap();
+        assert_eq!(success(r.call(&["status"]))["legacy_in_progress"], expected);
+    }
+    for (header, message) in [
+        (
+            "---\nid: ST-003\nmalformed line\n---\n",
+            "Unsupported frontmatter line",
+        ),
+        (
+            "---\nid: ST-003\nstatus: in-progress\n",
+            "missing YAML frontmatter",
+        ),
+        ("not frontmatter\n---\n", "missing YAML frontmatter"),
+        (
+            "---\nstatus: in-progress\n---\n",
+            "Story id must be a string",
+        ),
+        (
+            "---\nid: 3\nstatus: in-progress\n---\n",
+            "Story id must be a string",
+        ),
+    ] {
+        fs::write(&path, header).unwrap();
+        let out = r.call(&["status"]);
+        assert_eq!(out.status.code(), Some(1));
+        assert!(String::from_utf8_lossy(&out.stderr).contains(message));
+        assert!(!ledger_path(&r).exists());
+    }
+}
+
+#[test]
 fn malformed_ledger_fails_closed_and_preserves_bytes_and_artifacts() {
     let r = Repo::new();
     r.next("run");
