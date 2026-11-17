@@ -101,6 +101,14 @@ fn classify(stderr: &str) -> ErrorKind {
     }
 }
 
+/// A tracker error message with its kind read from the message itself.
+fn classified(message: String) -> TrackerError {
+    TrackerError {
+        kind: classify(&message),
+        message,
+    }
+}
+
 pub(crate) struct Cli {
     program: PathBuf,
     root: PathBuf,
@@ -304,6 +312,10 @@ impl Gateway {
                     token,
                     client,
                     labels: None,
+                    merge: GiteaMergeCache {
+                        next_page: Some(1),
+                        ..GiteaMergeCache::default()
+                    },
                 })
             }
         };
@@ -695,7 +707,22 @@ struct Gitea {
     token: String,
     client: Client,
     labels: Option<HashMap<String, u64>>,
+    merge: GiteaMergeCache,
 }
+
+/// What `sync-merge` reads from Gitea once per run (ST-157).
+#[derive(Default)]
+struct GiteaMergeCache {
+    /// Closed pull requests read so far, newest update first.
+    pulls: Vec<MergedPull>,
+    /// The next page of the closed-pull list, or `None` when the list is exhausted.
+    next_page: Option<u32>,
+    /// The ID of the token's own user (`gitea-actions` is -2).
+    user_id: Option<i64>,
+}
+
+/// Pages of 50 closed pull requests read at most per run, to find a merge commit.
+const GITEA_PULL_PAGES: u32 = 40;
 
 impl Gitea {
     fn request(
@@ -704,19 +731,26 @@ impl Gitea {
         path: &str,
         body: Option<Value>,
     ) -> Result<(StatusCode, Value), String> {
+        let url = format!(
+            "{}/api/v1/repos/{}/{}{}",
+            self.base, self.owner, self.repo, path
+        );
+        self.request_url(method, url, body)
+    }
+
+    fn request_url(
+        &self,
+        method: Method,
+        url: String,
+        body: Option<Value>,
+    ) -> Result<(StatusCode, Value), String> {
         let mut authorization =
             reqwest::header::HeaderValue::from_str(&format!("token {}", self.token))
                 .map_err(|_| "Invalid Gitea credential.".to_string())?;
         authorization.set_sensitive(true);
         let mut request = self
             .client
-            .request(
-                method.clone(),
-                format!(
-                    "{}/api/v1/repos/{}/{}{}",
-                    self.base, self.owner, self.repo, path
-                ),
-            )
+            .request(method.clone(), url)
             .header(reqwest::header::AUTHORIZATION, authorization)
             .header(reqwest::header::ACCEPT, "application/json");
         if let Some(body) = body {
@@ -752,6 +786,104 @@ impl Gitea {
             return Err(format!("Gitea {method} failed: HTTP {}.", status.as_u16()));
         }
         Ok(value)
+    }
+
+    /// A classified `api` call, for `sync-merge`.
+    fn merge_api(
+        &self,
+        method: Method,
+        path: &str,
+        body: Option<Value>,
+    ) -> Result<Value, TrackerError> {
+        self.api(method, path, body).map_err(classified)
+    }
+
+    /// The merged pull requests whose merge commit is `sha`. Reads the closed-pull list a page
+    /// at a time and keeps what it read, because Gitea 1.21 has no commit-to-pull endpoint.
+    fn merged_pulls(&mut self, sha: &str) -> Result<Vec<MergedPull>, TrackerError> {
+        loop {
+            let found: Vec<_> = self
+                .merge
+                .pulls
+                .iter()
+                .filter(|p| p.merge_commit_sha.as_deref() == Some(sha))
+                .cloned()
+                .collect();
+            let Some(page) = self.merge.next_page else {
+                return Ok(found);
+            };
+            if !found.is_empty() {
+                return Ok(found);
+            }
+            let batch = self.merge_api(
+                Method::GET,
+                &format!("/pulls?state=closed&sort=recentupdate&page={page}&limit=50"),
+                None,
+            )?;
+            let batch = batch.as_array().ok_or_else(|| {
+                TrackerError::from("Gitea returned an invalid pull list.".to_string())
+            })?;
+            self.merge.next_page =
+                (!batch.is_empty() && page < GITEA_PULL_PAGES).then_some(page + 1);
+            self.merge.pulls.extend(batch.iter().filter_map(|p| {
+                Some(MergedPull {
+                    number: p["number"].as_u64()?,
+                    body: p["body"].as_str().unwrap_or("").to_string(),
+                    base: p["base"]["ref"].as_str().unwrap_or("").to_string(),
+                    merged: p["merged"].as_bool().unwrap_or(false),
+                    merge_commit_sha: p["merge_commit_sha"].as_str().map(str::to_string),
+                })
+            }));
+        }
+    }
+
+    /// Posts `body` and `marker` on issue `n` unless the token's own user already posted a
+    /// comment with a line equal to `marker`. Comments by anyone else never count.
+    fn comment_once(
+        &mut self,
+        n: u64,
+        marker: &str,
+        body: &str,
+    ) -> Result<CommentOutcome, TrackerError> {
+        let me = match self.merge.user_id {
+            Some(id) => id,
+            None => {
+                let (status, user) =
+                    self.request_url(Method::GET, format!("{}/api/v1/user", self.base), None)?;
+                if !status.is_success() {
+                    return Err(classified(format!(
+                        "Gitea GET user failed: HTTP {}.",
+                        status.as_u16()
+                    )));
+                }
+                let id = user["id"].as_i64().ok_or_else(|| {
+                    TrackerError::from("Gitea returned an invalid user.".to_string())
+                })?;
+                self.merge.user_id = Some(id);
+                id
+            }
+        };
+        let comments = self.merge_api(Method::GET, &format!("/issues/{n}/comments"), None)?;
+        let comments = comments.as_array().ok_or_else(|| {
+            TrackerError::from("Gitea returned an invalid comment list.".to_string())
+        })?;
+        let posted = comments.iter().any(|c| {
+            c["user"]["id"].as_i64() == Some(me)
+                && c["body"]
+                    .as_str()
+                    .unwrap_or("")
+                    .lines()
+                    .any(|l| l.trim() == marker)
+        });
+        if posted {
+            return Ok(CommentOutcome::Existing);
+        }
+        self.merge_api(
+            Method::POST,
+            &format!("/issues/{n}/comments"),
+            Some(json!({"body": format!("{body}\n{marker}")})),
+        )?;
+        Ok(CommentOutcome::Posted)
     }
 
     fn load_labels(&mut self) -> Result<(), String> {
@@ -1078,11 +1210,12 @@ impl Gateway {
         }
     }
 
-    /// The configured GitHub repository, `owner/name`.
-    pub(crate) fn github_repo(&self) -> Option<&str> {
+    /// The configured repository, `owner/name`, for GitHub and Gitea.
+    pub(crate) fn repo_name(&self) -> Option<String> {
         match &self.backend {
-            Backend::Github { repo, .. } => Some(repo),
-            _ => None,
+            Backend::Github { repo, .. } => Some(repo.clone()),
+            Backend::Gitea(gitea) => Some(format!("{}/{}", gitea.owner, gitea.repo)),
+            Backend::Ado { .. } => None,
         }
     }
 
@@ -1091,6 +1224,9 @@ impl Gateway {
         let id = value_id(&story["remote"]).map_err(|_| {
             TrackerError::permanent("Story has no valid positive numeric remote item to update.")
         })?;
+        if matches!(self.backend, Backend::Gitea(_)) {
+            return self.update(story).map_err(classified);
+        }
         let card = crate::story::tracker_card(story, self.tracker(), &self.config)
             .map_err(TrackerError::permanent)?;
         let (repo, cli, labels) = self.github_parts()?;
@@ -1104,6 +1240,11 @@ impl Gateway {
         workflow: &str,
         branch: &str,
     ) -> Result<Option<String>, TrackerError> {
+        if matches!(self.backend, Backend::Gitea(_)) {
+            return Err(TrackerError::permanent(
+                "Gitea has no run history API; pass --from.",
+            ));
+        }
         let (repo, cli, _) = self.github_parts()?;
         let out = cli.run_classified(
             &strings(&[
@@ -1136,6 +1277,9 @@ impl Gateway {
 
     /// The pull requests GitHub associates with `sha`, unfiltered.
     pub(crate) fn pulls_for_commit(&mut self, sha: &str) -> Result<Vec<MergedPull>, TrackerError> {
+        if let Backend::Gitea(gitea) = &mut self.backend {
+            return gitea.merged_pulls(sha);
+        }
         let (repo, cli, _) = self.github_parts()?;
         let out = cli.run_classified(
             &strings(&["api", &format!("repos/{repo}/commits/{sha}/pulls")]),
@@ -1163,6 +1307,15 @@ impl Gateway {
 
     /// The repository's default branch.
     pub(crate) fn default_branch(&mut self) -> Result<String, TrackerError> {
+        if let Backend::Gitea(gitea) = &self.backend {
+            let repo = gitea.merge_api(Method::GET, "", None)?;
+            return repo["default_branch"]
+                .as_str()
+                .map(str::to_string)
+                .ok_or_else(|| {
+                    TrackerError::from("Gitea returned an invalid repository.".to_string())
+                });
+        }
         let (repo, cli, _) = self.github_parts()?;
         let out = cli.run_classified(
             &strings(&[
@@ -1187,6 +1340,9 @@ impl Gateway {
         marker: &str,
         body: &str,
     ) -> Result<CommentOutcome, TrackerError> {
+        if let Backend::Gitea(gitea) = &mut self.backend {
+            return gitea.comment_once(n, marker, body);
+        }
         let (repo, cli, _) = self.github_parts()?;
         let out = cli.run_classified(
             &strings(&[
@@ -1650,6 +1806,10 @@ mod tests {
                     .build()
                     .unwrap(),
                 labels: None,
+                merge: GiteaMergeCache {
+                    next_page: Some(1),
+                    ..GiteaMergeCache::default()
+                },
             },
             handle,
         )

@@ -273,6 +273,55 @@ jobs:
       - run: test -z "$(git status --porcelain)"
 ```
 
+### `.gitea/workflows/story-sync.yml` (Gitea)
+
+The same job for a repository whose settings name `tracker: gitea` (ST-157). Gitea 1.21 has no
+run-history API, so the range starts at the push event's `before` commit (`--from`). A failed run
+is retried by re-running it, which replays the same push; the weekly `--all` run mirrors every
+linked card. The Actions token (`secrets.GITEA_TOKEN`, user `gitea-actions`) writes the issues and
+comments, and only its own comments count as markers. Use a runner that has `cargo`, or install a
+toolchain first; set `STORY_ROOT` to a persistent directory so the build is kept between runs.
+Replace `main`, `<runner>`, and `<sha>`.
+
+```yaml
+name: story-sync
+on:
+  push:
+    branches: [main]
+  schedule:
+    - cron: '17 6 * * 1'
+jobs:
+  sync:
+    runs-on: <runner>
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Install story
+        env:
+          REV: <sha>
+        run: |
+          root="${STORY_ROOT:-$HOME/.story-root}/$REV"
+          if [ ! -x "$root/bin/story" ]; then
+            cargo install --locked --git https://github.com/Team-Teddy-Development/story-time \
+              --rev "$REV" story-time-native --bin story --root "$root"
+          fi
+          echo "$root/bin" >> "$GITHUB_PATH"
+      - name: Sync merged stories
+        env:
+          GITEA_TOKEN: ${{ secrets.GITEA_TOKEN }}
+          BEFORE: ${{ github.event.before }}
+          EVENT: ${{ github.event_name }}
+        run: |
+          if [ "$EVENT" = schedule ]; then
+            story sync-merge --all --json
+          else
+            story sync-merge --from "$BEFORE" --json
+          fi
+      - run: test -z "$(git status --porcelain)"
+```
+
 ### `.github/workflows/story-ids.yml`
 
 ```yaml
