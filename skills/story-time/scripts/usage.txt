@@ -36,7 +36,7 @@ Commands:
                                            Native: throughput, WIP, and cycle time from changelog status events; read-only
   check-pr [--body-file F] [--json]
                                            Native: check a PR's Stories: line, acceptance, and closing keywords (CI)
-  sync-merge [--all] [--workflow F] [--json]
+  sync-merge [--all] [--from SHA] [--workflow F] [--json]
                                            Native: mirror merged cards and comment once per PR on story issues (CI)
   config                                  Show the effective project config
   help                                     This text

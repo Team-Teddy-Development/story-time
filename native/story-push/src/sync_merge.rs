@@ -1,5 +1,5 @@
 //! `story sync-merge`: after a push to the default branch, mirror merged cards to their issues
-//! and comment once per pull request on each named issue (ST-151).
+//! and comment once per pull request on each named issue (ST-151; Gitea: ST-157).
 //! Design: `docs/designs/merge-sync-design.md`.
 
 use crate::gateway::{CommentOutcome, ErrorKind, Gateway, MergedPull, TrackerError};
@@ -12,7 +12,7 @@ use std::{
     process::Command,
 };
 
-const FLAGS: [&str; 5] = ["all", "json", "workflow", "config", "dir"];
+const FLAGS: [&str; 6] = ["all", "json", "workflow", "from", "config", "dir"];
 
 /// The tracker calls `sync-merge` makes, so tests and other trackers can stand in.
 pub(crate) trait MergeTracker {
@@ -254,32 +254,48 @@ struct Settings<'a> {
     workflow: &'a str,
     branch: Option<&'a str>,
     all: bool,
+    /// The range start from the push event (`--from`), used in place of the run history.
+    from: Option<&'a str>,
+}
+
+/// `sha` when it is an ancestor of HEAD, else the reason it cannot start the range.
+fn anchor(root: &Path, sha: &str) -> Result<String, &'static str> {
+    let ancestor = Command::new("git")
+        .args(["merge-base", "--is-ancestor", sha, "HEAD"])
+        .current_dir(root)
+        .status()
+        .is_ok_and(|s| s.success());
+    if ancestor {
+        Ok(sha.to_string())
+    } else {
+        Err("anchor is not an ancestor of HEAD")
+    }
 }
 
 fn sync(repo: &Repo, tracker: &mut dyn MergeTracker, settings: &Settings, report: &mut Report) {
     report.to = git(repo.root, &["rev-parse", "HEAD"])
         .map(|s| s.trim().to_string())
         .unwrap_or_default();
-    // Range: from the last successful push run, else the --all path.
+    // Range: from --from or the last successful push run, else the --all path.
     let mut start = None;
+    let mut take = |found: Result<String, &str>, report: &mut Report| match found {
+        Ok(sha) => start = Some(sha),
+        Err(reason) => report.reason = Some(reason.into()),
+    };
     if settings.all {
         report.reason = Some("requested".into());
+    } else if let Some(from) = settings.from {
+        // A push that creates the branch carries the zero commit as `before`.
+        if from.is_empty() || from.bytes().all(|b| b == b'0') {
+            take(Err("push has no earlier commit"), report);
+        } else {
+            take(anchor(repo.root, from), report);
+        }
     } else if let Some(branch) = settings.branch {
         match tracker.last_success(settings.workflow, branch) {
             Ok(None) => report.reason = Some("no earlier successful push run".into()),
             Err(_) => report.reason = Some("run history cannot be read".into()),
-            Ok(Some(sha)) => {
-                let ancestor = Command::new("git")
-                    .args(["merge-base", "--is-ancestor", &sha, "HEAD"])
-                    .current_dir(repo.root)
-                    .status()
-                    .is_ok_and(|s| s.success());
-                if ancestor {
-                    start = Some(sha);
-                } else {
-                    report.reason = Some("anchor is not an ancestor of HEAD".into());
-                }
-            }
+            Ok(Some(sha)) => take(anchor(repo.root, &sha), report),
         }
     }
     let Some(start) = start else {
@@ -534,11 +550,11 @@ pub(crate) fn run(args: &[String]) -> Result<(String, u8), Failure> {
     if ctx.config["sync"] == "off" {
         return skip("sync off");
     }
-    if ctx.config["tracker"] != "github" {
+    if ctx.config["tracker"] != "github" && ctx.config["tracker"] != "gitea" {
         return skip("unsupported tracker");
     }
     let mut gateway = Gateway::new(&ctx.config, &ctx.root)?;
-    let repo_name = gateway.github_repo().unwrap_or_default().to_string();
+    let repo_name = gateway.repo_name().unwrap_or_default();
     if let Some(workflow_repo) = &workflow_repo {
         if !workflow_repo.eq_ignore_ascii_case(&repo_name) {
             let mut report = Report {
@@ -549,7 +565,7 @@ pub(crate) fn run(args: &[String]) -> Result<(String, u8), Failure> {
             report.fail(
                 "settings".into(),
                 TrackerError::permanent(format!(
-                    "github.repo {repo_name} is not the workflow repository {workflow_repo}"
+                    "the tracker repository {repo_name} is not the workflow repository {workflow_repo}"
                 )),
             );
             return output(report.text(), report.json(), 0);
@@ -585,6 +601,7 @@ pub(crate) fn run(args: &[String]) -> Result<(String, u8), Failure> {
         workflow: &workflow,
         branch: branch.as_deref(),
         all,
+        from: flags.value("from"),
     };
     let mut report = Report::default();
     sync(&repo, &mut gateway, &settings, &mut report);
