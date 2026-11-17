@@ -12,6 +12,49 @@ Recheck source freshness, readiness, dependencies, and WIP before pulling a sele
 story. WIP limits concurrent work per person, not total planned stories. A missing
 capacity is unknown; do not derive available points or dates from `sprintDays`.
 
+## Local unattended agent loops
+
+Use the native assignment command before choosing work. A story's status is not
+proof that an agent still owns it. On this Linux machine, the assignment ledger
+shares ownership across linked Git worktrees and reserves configured WIP slots.
+
+```bash
+story assignment status
+story assignment next --owner <unique-run-id> --pid <agent-process-id>
+```
+
+Supply the long-running agent's PID, not the short-lived story command or an
+unrelated shell. Keep its returned token private. Reuse the run ID for the same
+agent only. The command checks ranked readiness and dependencies, but does not
+change story status, grant scope admission, or mark acceptance.
+
+Follow the JSON `reason` rather than interpreting every exit-zero result as work:
+
+- `claimed` or `resumed`: use `claim.story_id`, then run story-kickoff.
+- `recovered`: inspect and resume the partial work in `claim.worktree` on
+  `claim.branch`; never create a fresh implementation beside it.
+- `recovery_required` or `recovery_ineligible`: follow `next_action` to the
+  recorded worktree or restore the story's prerequisites before requesting work.
+- `capacity_full`, `legacy_ownership_unknown`, or `owner_conflict`: preserve
+  current work. Reconcile the named owners; do not increase WIP or reset statuses.
+- `no_eligible_story`: refine one near-term candidate or its concrete blocker.
+  Unknown sprint velocity prevents a forecast, not a claim with free WIP.
+
+Send `story assignment heartbeat --token <token>` while working. After acceptance
+or an explicit handoff, run `story assignment release --token <token>`. Release
+invalidates the token, not the story's lifecycle status. A released in-progress
+story still needs explicit lifecycle reconciliation before another claim.
+
+`story assignment reconcile` invalidates tokens only for verified terminated
+local process identities. Old heartbeats alone never release work. Unknown
+legacy in-progress stories remain protected and require named ownership evidence.
+When an open PR exists, continue that PR instead of starting implementation again.
+Missing admission, unresolved public decisions, and live owners remain blockers.
+
+For repos without the native assignment command, use the manual workflow below;
+do not substitute a private per-agent claim file. See
+[local assignments](../story-time/references/assignments.md) for the recovery contract.
+
 ## 1. Stop starting, start finishing
 
 ```bash
@@ -19,7 +62,9 @@ story list --status in-progress --json
 ```
 
 If anything is already in progress, especially if it's the user's own,
-recommend finishing it first and ask whether they still want a new story.
+identify its current owner and finish or recover it first. In an owner-authorized
+unattended loop, use the assignment protocol above instead of repeatedly asking
+whether to continue.
 The WIP limit is `team.wipLimit` from `story config` (default: one story
 per person).
 
@@ -67,7 +112,7 @@ Alternatives:
 
 ## 5. Commit to it
 
-When the user confirms:
+When the user selects it, or an authorized unattended assignment returns it:
 
 ```bash
 story set ST-012 status=in-progress --note "picked: <one-line reason>"

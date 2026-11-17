@@ -1,4 +1,5 @@
 pub mod adoption;
+pub mod assignment;
 mod adoption_apply;
 mod check_pr;
 pub mod config;
@@ -68,6 +69,7 @@ pub const NATIVE_COMMANDS: &[(&str, Native)] = &[
     ("note", |args| note::run(args).map(|out| (out, 0))),
     ("new", |args| new_story::run(args).map(|out| (out, 0))),
     ("rank", |args| rank::run(args).map(|out| (out, 0))),
+    ("assignment", assignment::run),
     ("judge", judge::run),
     ("set", |args| set::run(args).map(|out| (out, 0))),
     ("split", |args| split::run(args).map(|out| (out, 0))),
