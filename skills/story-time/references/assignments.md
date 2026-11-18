@@ -15,6 +15,13 @@ story assignment reconcile
 story assignment release --token TOKEN
 ```
 
+For manual kickoff of a named story, run `story assignment next --owner RUN
+--pid PID --story ID`. This uses the same reservation lock and capacity as
+ranked selection. It never falls back to another story. A `story_unavailable`
+or `story_mismatch` result does not admit work. Confirm the returned story ID
+before changing status. A direct `story set` is a lifecycle edit, not an
+execution reservation or a supported substitute for kickoff.
+
 Use the actual persistent agent process ID. The process must be visible in the
 same host environment. The token is a bearer capability; keep command results
 out of public logs. The CLI always emits structured JSON for successful

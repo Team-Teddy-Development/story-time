@@ -266,6 +266,117 @@ fn linked(r: &Repo) -> PathBuf {
     path
 }
 
+fn manual_claim(path: &Path, id: &str, pid: &str) -> Value {
+    success(call(
+        path,
+        &["next", "--owner", "manual", "--pid", pid, "--story", id],
+    ))
+}
+
+#[test]
+fn manual_kickoff_and_ranked_dispatch_share_the_last_slot() {
+    for manual_first in [true, false] {
+        let repo = Repo::new();
+        let manual = linked(&repo);
+        let worker = Owner::new();
+        let coordinator = Owner::new();
+        let manual_path = manual.join("backlog/ST-001.md");
+        let original = fs::read(&manual_path).unwrap();
+        let try_manual = || {
+            let result = manual_claim(&manual, "ST-001", &worker.pid());
+            if result["reason"] == "claimed" {
+                assert_eq!(result["claim"]["story_id"], "ST-001");
+                let output = Command::new(env!("CARGO_BIN_EXE_story"))
+                    .args(["set", "ST-001", "status=in-progress"])
+                    .current_dir(&manual)
+                    .env("STORY_OTLP_ENDPOINT", "")
+                    .output()
+                    .unwrap();
+                assert!(
+                    output.status.success(),
+                    "{}",
+                    String::from_utf8_lossy(&output.stderr)
+                );
+            }
+            result
+        };
+        let try_dispatch = || claim(&repo, "coordinator", &coordinator.pid());
+        let (kickoff, dispatch) = if manual_first {
+            let kickoff = try_manual();
+            (kickoff, try_dispatch())
+        } else {
+            let dispatch = try_dispatch();
+            (try_manual(), dispatch)
+        };
+        if manual_first {
+            assert_eq!(kickoff["reason"], "claimed");
+            assert_eq!(dispatch["reason"], "capacity_full");
+            assert!(fs::read_to_string(&manual_path)
+                .unwrap()
+                .contains("status: in-progress"));
+        } else {
+            assert_eq!(dispatch["reason"], "claimed");
+            assert_eq!(dispatch["claim"]["story_id"], "ST-002");
+            assert_eq!(kickoff["reason"], "capacity_full");
+            assert_eq!(fs::read(&manual_path).unwrap(), original);
+        }
+        assert!(if manual_first { &dispatch } else { &kickoff }["claim"].is_null());
+        assert_eq!(ledger(&repo)["claims"].as_array().unwrap().len(), 1);
+    }
+}
+
+#[test]
+fn manual_kickoff_races_ranked_dispatch_across_linked_worktrees() {
+    let repo = Repo::new();
+    let manual = linked(&repo);
+    let manual_pid = Owner::new();
+    let dispatch_pid = Owner::new();
+    let barrier = std::sync::Barrier::new(2);
+    let (kickoff, dispatch) = std::thread::scope(|scope| {
+        let kickoff = scope.spawn(|| {
+            barrier.wait();
+            manual_claim(&manual, "ST-001", &manual_pid.pid())
+        });
+        let dispatch = scope.spawn(|| {
+            barrier.wait();
+            claim(&repo, "coordinator", &dispatch_pid.pid())
+        });
+        (kickoff.join().unwrap(), dispatch.join().unwrap())
+    });
+    let mut outcomes = [
+        kickoff["reason"].as_str().unwrap(),
+        dispatch["reason"].as_str().unwrap(),
+    ];
+    outcomes.sort_unstable();
+    assert_eq!(outcomes, ["capacity_full", "claimed"]);
+    for (result, id) in [(&kickoff, "ST-001"), (&dispatch, "ST-002")] {
+        if result["reason"] == "claimed" {
+            assert_eq!(result["claim"]["story_id"], id);
+        } else {
+            assert!(result["claim"].is_null());
+        }
+    }
+    assert_eq!(ledger(&repo)["claims"].as_array().unwrap().len(), 1);
+}
+
+#[test]
+fn manual_kickoff_does_not_reserve_an_unrequested_story() {
+    let repo = Repo::new();
+    let pid = std::process::id().to_string();
+    assert_eq!(
+        manual_claim(&repo.0, "ST-999", &pid)["reason"],
+        "story_unavailable"
+    );
+    assert_eq!(ledger(&repo)["claims"], json!([]));
+    assert_eq!(manual_claim(&repo.0, "ST-001", &pid)["reason"], "claimed");
+    let before = fs::read(ledger_path(&repo)).unwrap();
+    assert_eq!(
+        manual_claim(&repo.0, "ST-002", &pid)["reason"],
+        "story_mismatch"
+    );
+    assert_eq!(fs::read(ledger_path(&repo)).unwrap(), before);
+}
+
 #[test]
 fn concurrent_linked_worktrees_have_one_wip_winner() {
     let r = Repo::new();
