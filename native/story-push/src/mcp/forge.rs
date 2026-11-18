@@ -1,8 +1,11 @@
 //! The pull requests of a hosted server (ADR 0007). A write of a registry server is a commit on
 //! the branch `story-time/<ID>`; this module finds or opens the one pull request of that branch
-//! through the GitHub REST API. Each call carries the installation token of one repository.
+//! through the REST API of GitHub or of Gitea. Each call carries the token of one repository.
 
-use reqwest::blocking::{Client, RequestBuilder};
+use reqwest::{
+    blocking::{Client, RequestBuilder},
+    header::{HeaderValue, AUTHORIZATION},
+};
 use serde_json::{json, Value};
 use std::{collections::HashMap, sync::Mutex, time::Duration};
 
@@ -10,7 +13,48 @@ use std::{collections::HashMap, sync::Mutex, time::Duration};
 const PAGE_LIMIT: usize = 30;
 const PAGES_KEPT: usize = 256;
 
-pub(super) struct GitHub {
+/// What differs between the REST APIs of two forges. The calls are the same.
+struct Flavor {
+    /// The name of the forge in error text.
+    name: &'static str,
+    /// The word before the token in the `Authorization` header.
+    scheme: &'static str,
+    headers: &'static [(&'static str, &'static str)],
+    lookup: Lookup,
+}
+
+/// How to find the open pull request of a branch.
+enum Lookup {
+    /// The list takes a `head` filter.
+    HeadFilter,
+    /// The list has no `head` filter (Gitea 1.21): read it page by page.
+    Listing,
+}
+
+const GITHUB: Flavor = Flavor {
+    name: "GitHub",
+    scheme: "Bearer",
+    headers: &[
+        ("Accept", "application/vnd.github+json"),
+        ("X-GitHub-Api-Version", "2022-11-28"),
+    ],
+    lookup: Lookup::HeadFilter,
+};
+
+const GITEA: Flavor = Flavor {
+    name: "Gitea",
+    scheme: "token",
+    headers: &[("Accept", "application/json")],
+    lookup: Lookup::Listing,
+};
+
+/// The open pull requests that one list page holds at most. A server can cap it lower.
+const LIST_LIMIT: usize = 50;
+/// The pages of open pull requests that are read to find one branch.
+const LIST_PAGES: usize = 40;
+
+pub(super) struct Rest {
+    flavor: &'static Flavor,
     api: String,
     client: Client,
     /// The last answer for each page of comments, which a `304` answer stands for.
@@ -31,37 +75,59 @@ pub(super) struct Access {
     pub(super) token: String,
 }
 
-impl GitHub {
-    pub(super) fn new(api: &str) -> Result<Self, String> {
+impl Rest {
+    pub(super) fn github(api: &str) -> Result<Self, String> {
+        Self::new(&GITHUB, api)
+    }
+
+    pub(super) fn gitea(api: &str) -> Result<Self, String> {
+        Self::new(&GITEA, api)
+    }
+
+    fn new(flavor: &'static Flavor, api: &str) -> Result<Self, String> {
         let client = Client::builder()
             .timeout(Duration::from_secs(20))
             .user_agent("story-time-mcp")
             .build()
             .map_err(|_| "could not build the HTTP client")?;
         Ok(Self {
+            flavor,
             api: api.trim_end_matches('/').to_owned(),
             client,
             pages: Mutex::default(),
         })
     }
 
+    /// The request with the token and the headers of this forge.
+    fn signed(&self, access: &Access, request: RequestBuilder) -> RequestBuilder {
+        let mut request = request;
+        for (name, value) in self.flavor.headers {
+            request = request.header(*name, *value);
+        }
+        match HeaderValue::from_str(&format!("{} {}", self.flavor.scheme, access.token)) {
+            Ok(mut value) => {
+                value.set_sensitive(true);
+                request.header(AUTHORIZATION, value)
+            }
+            Err(_) => request,
+        }
+    }
+
     fn send(&self, access: &Access, request: RequestBuilder, step: &str) -> Result<Value, String> {
-        let request = request
-            .bearer_auth(&access.token)
-            .header("Accept", "application/vnd.github+json")
-            .header("X-GitHub-Api-Version", "2022-11-28");
+        let name = self.flavor.name;
+        let request = self.signed(access, request);
         let response = super::retry::send(request)
-            .map_err(|_| format!("GitHub did not answer the {step} request"))?;
+            .map_err(|_| format!("{name} did not answer the {step} request"))?;
         let status = response.status();
         if !status.is_success() {
             return Err(format!(
-                "GitHub answered the {step} request with status {}",
+                "{name} answered the {step} request with status {}",
                 status.as_u16()
             ));
         }
         response
             .json::<Value>()
-            .map_err(|_| format!("GitHub answered the {step} request with invalid JSON"))
+            .map_err(|_| format!("{name} answered the {step} request with invalid JSON"))
     }
 
     fn pulls(&self, access: &Access) -> String {
@@ -75,20 +141,56 @@ impl GitHub {
         access: &Access,
         branch: &str,
     ) -> Result<Option<String>, String> {
-        let url = format!(
-            "{}?state=open&per_page=1&head={}:{branch}",
-            self.pulls(access),
-            access.owner
-        );
-        let found = self.send(access, self.client.get(url), "pull request list")?;
-        let pulls = found
-            .as_array()
-            .ok_or("GitHub answered the pull request list request with no list")?;
-        Ok(pulls
-            .iter()
-            .find(|pull| pull["head"]["ref"] == branch)
-            .and_then(|pull| pull["html_url"].as_str())
-            .map(str::to_owned))
+        let name = self.flavor.name;
+        let list = |url: String| -> Result<Vec<Value>, String> {
+            let found = self.send(access, self.client.get(url), "pull request list")?;
+            found.as_array().cloned().ok_or_else(|| {
+                format!("{name} answered the pull request list request with no list")
+            })
+        };
+        let url_of = |pulls: &[Value], own: &dyn Fn(&Value) -> bool| {
+            pulls
+                .iter()
+                .find(|pull| pull["head"]["ref"] == branch && own(pull))
+                .and_then(|pull| pull["html_url"].as_str())
+                .map(str::to_owned)
+        };
+        match self.flavor.lookup {
+            Lookup::HeadFilter => {
+                let pulls = list(format!(
+                    "{}?state=open&per_page=1&head={}:{branch}",
+                    self.pulls(access),
+                    access.owner
+                ))?;
+                Ok(url_of(&pulls, &|_| true))
+            }
+            Lookup::Listing => {
+                // A pull request from a fork can have the same head name. Only a head in this
+                // repository is the branch of this server.
+                let own = format!("{}/{}", access.owner, access.name);
+                let from_here = |pull: &Value| {
+                    pull["head"]["repo"]["full_name"]
+                        .as_str()
+                        .is_some_and(|repo| repo.eq_ignore_ascii_case(&own))
+                };
+                for page in 1..=LIST_PAGES {
+                    let pulls = list(format!(
+                        "{}?state=open&page={page}&limit={LIST_LIMIT}",
+                        self.pulls(access)
+                    ))?;
+                    if pulls.is_empty() {
+                        return Ok(None);
+                    }
+                    if let Some(url) = url_of(&pulls, &from_here) {
+                        return Ok(Some(url));
+                    }
+                }
+                Err(format!(
+                    "{name} has more than {} open pull requests",
+                    LIST_PAGES * LIST_LIMIT
+                ))
+            }
+        }
     }
 
     /// Opens a pull request from `head` to `base`, and returns its URL.
@@ -108,11 +210,11 @@ impl GitHub {
         made["html_url"]
             .as_str()
             .map(str::to_owned)
-            .ok_or_else(|| "GitHub returned no pull request URL".into())
+            .ok_or_else(|| format!("{} returned no pull request URL", self.flavor.name))
     }
 }
 
-impl GitHub {
+impl Rest {
     fn issue(&self, access: &Access, issue: u64) -> String {
         format!(
             "{}/repos/{}/{}/issues/{issue}/comments",
@@ -128,24 +230,20 @@ impl GitHub {
             let pages = self.pages.lock().unwrap_or_else(|e| e.into_inner());
             pages.get(url).cloned()
         };
-        let mut request = self
-            .client
-            .get(url)
-            .bearer_auth(&access.token)
-            .header("Accept", "application/vnd.github+json")
-            .header("X-GitHub-Api-Version", "2022-11-28");
+        let mut request = self.signed(access, self.client.get(url));
         if let Some(known) = &known {
             request = request.header("If-None-Match", &known.etag);
         }
+        let name = self.flavor.name;
         let response = super::retry::send(request)
-            .map_err(|_| format!("GitHub did not answer the {step} request"))?;
+            .map_err(|_| format!("{name} did not answer the {step} request"))?;
         let status = response.status();
         if let (304, Some(known)) = (status.as_u16(), known) {
             return Ok(known);
         }
         if !status.is_success() {
             return Err(format!(
-                "GitHub answered the {step} request with status {}",
+                "{name} answered the {step} request with status {}",
                 status.as_u16()
             ));
         }
@@ -166,7 +264,7 @@ impl GitHub {
             .json::<Value>()
             .ok()
             .and_then(|body| body.as_array().cloned())
-            .ok_or_else(|| format!("GitHub answered the {step} request with no list"))?;
+            .ok_or_else(|| format!("{name} answered the {step} request with no list"))?;
         let page = Page {
             etag: etag.clone().unwrap_or_default(),
             items,
