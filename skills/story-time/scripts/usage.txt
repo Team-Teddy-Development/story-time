@@ -12,6 +12,8 @@ Commands:
   rank   [--limit N] [--include-refined]   WSJF-ranked ready stories, with exclusions
   assignment next --owner RUN --pid PID [--story ID [--fresh-only]]
                                            Native: claim ranked or explicitly requested local Linux agent work
+  assignment recover --story ID --previous-owner RUN --previous-process JSON --owner RUN --pid PID
+                                           Transfer only an exact recoverable reservation
   assignment status|reconcile              Inspect owners or recover verified terminated owners
   assignment heartbeat|release --token T   Refresh or release a current ownership token
   set    <id> key=value... [--note N] [--force]
