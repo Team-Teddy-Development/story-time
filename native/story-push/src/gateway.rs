@@ -1315,9 +1315,14 @@ fn github_rest_update(
     let path = format!("repos/{repo}/issues/{id}");
     let current = cli.github_rest("GET", &path, None)?;
     let remote = github_rest_remote(repo, &current)?;
-    if remote.remote_id != id {
+    let prefix = format!("{}: ", required(story, "id")?);
+    if remote.remote_id != id
+        || !current["title"]
+            .as_str()
+            .is_some_and(|title| title.starts_with(&prefix))
+    {
         return Err(TrackerError::permanent(
-            "GitHub returned a different issue number.",
+            "The configured GitHub issue does not belong to this story.",
         ));
     }
     let current_labels = named_labels(&current)?;

@@ -76,6 +76,29 @@ fn cloud_replay_finds_the_existing_issue_after_a_lost_create_response() {
 }
 
 #[test]
+fn cloud_push_never_mutates_an_issue_for_a_different_story() {
+    let r = Repo::new();
+    let card = r.0.join("backlog/VE-001.md");
+    let raw = fs::read_to_string(&card).unwrap();
+    fs::write(
+        &card,
+        raw.replace("status: ready\n", "status: ready\nremote: 17\n"),
+    )
+    .unwrap();
+    r.response("api --method GET repos/acme/shop/issues/17", r#"{"number":17,"title":"VE-002: An unrelated story","html_url":"https://github.com/acme/shop/issues/17","labels":[{"name":"bug"}]}"#);
+    let out = r.push();
+    assert!(!out.status.success());
+    assert!(String::from_utf8_lossy(&out.stderr).contains("does not belong"));
+    assert_eq!(
+        fs::read_to_string(r.0.join("gh-calls"))
+            .unwrap()
+            .lines()
+            .count(),
+        1
+    );
+}
+
+#[test]
 fn publish_new_story_once() {
     let r = Repo::new();
     r.response(
