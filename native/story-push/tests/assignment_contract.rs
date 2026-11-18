@@ -400,6 +400,15 @@ fn empty_ready_queue_nominates_one_ranked_preparation_without_claiming_it() {
     assert_eq!(out["after"]["claims"], json!([]));
     assert_eq!(out["reserved_wip"], 0);
     assert!(out["next_action"].as_str().unwrap().contains("ST-002"));
+    let projected = json!({"next_action": out["next_action"]});
+    assert!(projected["next_action"]
+        .as_str()
+        .unwrap()
+        .contains("Recorded WIP reservations: 0"));
+    assert!(projected["next_action"]
+        .as_str()
+        .unwrap()
+        .contains("not global execution capacity"));
     assert_eq!(before, fs::read(r.0.join("backlog/ST-002.md")).unwrap());
 }
 

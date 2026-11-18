@@ -35,10 +35,12 @@ Follow the JSON `reason` rather than interpreting every exit-zero result as work
   `claim.branch`; never create a fresh implementation beside it.
 - `recovery_required` or `recovery_ineligible`: follow `next_action` to the
   recorded worktree or restore the story's prerequisites before requesting work.
-- `capacity_full`, `legacy_ownership_unknown`, or `owner_conflict`: preserve
-  current work. Reconcile the named owners; do not increase WIP or reset statuses.
-- `no_eligible_story`: refine one near-term candidate or its concrete blocker.
-  Unknown sprint velocity prevents a forecast, not a claim with free WIP.
+- `capacity_full` or `owner_conflict`: preserve current work. Reconcile the
+  recorded owners; do not increase WIP or reset statuses.
+- `preparation_required`: use `preparation.story_id` and `next_action` for one
+  candidate. This is a recommendation, not an execution or preparation claim.
+  Establish coordinator preparation ownership before editing. If the reason is
+  `no_eligible_story`, wait for the named missing prerequisites instead.
 
 Send `story assignment heartbeat --token <token>` while working. After acceptance
 or an explicit handoff, run `story assignment release --token <token>`. Release
@@ -47,7 +49,17 @@ story still needs explicit lifecycle reconciliation before another claim.
 
 `story assignment reconcile` invalidates tokens only for verified terminated
 local process identities. Old heartbeats alone never release work. Unknown
-legacy in-progress stories remain protected and require named ownership evidence.
+legacy in-progress IDs remain quarantined across all linked worktrees. They are
+excluded from both execution selection and preparation recommendations, even if
+another worktree marks them ready. They require named ownership evidence before
+resumption, but bare statuses do not consume execution capacity.
+
+`reserved_wip` counts recorded reservations, including uncertain owners. Do not
+apply the manual status-count or sprint-capacity checks below after a native
+assignment result. Unknown sprint velocity prevents a forecast, not preparation
+or a ready claim with free execution capacity. Preparation does not waive
+readiness, dependencies, or repository admission.
+
 When an open PR exists, continue that PR instead of starting implementation again.
 Missing admission, unresolved public decisions, and live owners remain blockers.
 

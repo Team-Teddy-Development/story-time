@@ -38,11 +38,17 @@ then chooses a ready story through the existing WSJF ranking and readiness lint.
 Dependencies must still be done. Recovery requires the original worktree and
 branch. An ineligible recovery is reported, not bypassed with unrelated new work.
 
-Active claims and unknown legacy in-progress stories consume the configured
-repository WIP limit conservatively. Legacy records in registered linked
-worktrees also count. This is a local shared-repository safety limit, not a
-cross-machine scheduler or a measurement of team capacity. Participating agents
-must use this protocol; it cannot prevent an unrelated agent from bypassing it.
+`reserved_wip` counts recorded claims, including uncertain and recoverable owners,
+against the configured repository WIP limit. Bare in-progress statuses are not
+execution evidence. `legacy_in_progress` lists individually quarantined IDs from
+all registered linked worktrees. Those IDs cannot receive a new claim or a
+preparation recommendation, even when another worktree marks them ready. Their
+presence does not block an unrelated eligible story. `legacy_next_action` explains
+the hold; no lifecycle status or ownership is released.
+
+This is a local shared-repository safety limit, not a cross-machine scheduler or
+a measurement of team capacity. Participating agents must use this protocol; it
+cannot prevent an unrelated agent from bypassing it.
 
 ## Recovery and migration
 
@@ -61,16 +67,27 @@ story's actual owner, agent, branch, and PR. Do not reset the backlog based on a
 or absence of recent commits. Resume or transfer active work through its owner.
 Only after evidence establishes abandonment may the authorized coordinator use
 the normal story lifecycle tools to reconcile that story. Preserve its partial
-work and provenance. Unknown evidence stays blocked.
+work and provenance. Unknown evidence keeps that story blocked, not the whole
+execution queue.
 
 ## Loop integration
 
 Use the assignment step at each authorized loop tick. Work returned by
 `claimed`, `resumed`, or `recovered` still passes project-specific scope
-admission and story-kickoff. If nothing is eligible, refine one concrete blocker
-or wait for a named event such as CI or dependency completion. Do not repeat a
-whole-backlog inventory to simulate progress. No running session is modified by
-installing this skill; reload its instructions or send it the updated procedure.
+admission and story-kickoff. With a free slot but no eligible ready story,
+`preparation_required` nominates one unblocked, scored candidate through the same
+WSJF ranking. Read `preparation.story_id` and `next_action`. This recommendation
+creates no claim and changes no story. Establish existing coordinator preparation
+ownership and inspect prior work or PRs before editing. Restore readiness and
+admission, then request an execution claim before implementation. Unknown sprint
+velocity prevents a forecast, not this preparation step.
+
+If no scored, unblocked candidate exists, `no_eligible_story` names the missing
+prerequisites to wait for. Do not repeat a whole-backlog inventory to simulate
+progress. Do not apply a separate status-count WIP gate after the native result.
+Installing a skill does not change a cached session prompt. Existing loops that
+already invoke the installed CLI receive its new result on their next tick;
+verify that tick before claiming adoption.
 
 ## Verification
 

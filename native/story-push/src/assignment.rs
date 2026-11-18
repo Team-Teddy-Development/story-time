@@ -308,12 +308,11 @@ fn reply(
     let owners: Vec<_> = after.claims.iter().map(|c| json!({"story_id":c.story_id,"liveness":liveness(&c.process),"state":c.ownership,"worktree":c.worktree})).collect();
     let next_action = if let Some(story) = preparation {
         let id = story.get("id").string();
-        format!("Prepare {id} under the coordinator's existing preparation ownership; inspect existing work and PRs before editing. Run story show {id} and story lint {id} --json. Resolve readiness and repository admission; request assignment again before implementation. No execution claim or sprint forecast is granted. Unknown sprint velocity does not block preparation.")
+        format!("Recorded WIP reservations: {}. Legacy statuses hold individual stories, not global execution capacity. Prepare {id} under the coordinator's existing preparation ownership; inspect existing work and PRs before editing. Run story show {id} and story lint {id} --json. Resolve readiness and repository admission; request assignment again before implementation. No execution claim or sprint forecast is granted. Unknown sprint velocity does not block preparation.", after.claims.len())
     } else {
         match reason {
             "recovery_required" => "Run assignment next in claim.worktree on claim.branch; preserve and inspect existing work before resuming.",
             "recovery_ineligible" => "Inspect recorded work and restore readiness and completed dependencies before claiming; do not reset story status.",
-            "legacy_ownership_unknown" => "Inspect the listed legacy in-progress stories; establish ownership explicitly without automatic release.",
             "capacity_full" => "Wait for a recorded owner to release or reconcile a verified terminated owner.",
             "owner_conflict" => "Use a distinct run owner; the recorded owner has another live or uncertain process identity.",
             "no_eligible_story" => "Wait for completed dependencies or missing WSJF/readiness inputs. Inspect story rank --include-refined --json and story lint --json; do not claim or reset blocked work.",

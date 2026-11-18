@@ -28,9 +28,29 @@ of old in-progress records is made.
 
 Cooperating local agents can serialize claims across linked worktrees and resume
 abandoned recorded work. Legacy ownership requires one evidence-backed migration.
-The configured WIP limit is enforced conservatively across this repository's local
-claims and unknown in-progress stories. Separate clones and other machines do not
+The original implementation counted local claims and unknown in-progress stories
+against WIP. The 2026-11-18 correction below replaces that global status gate. Separate clones and other machines do not
 share this ledger. A PID must identify the actual persistent agent, not a helper.
+
+## Correction: per-story quarantine, 2026-11-18
+
+The live coordinator already consumed `assignment next`, but 242 bare legacy
+statuses still blocked every assignment. This repeated the original ownership
+error. The owner's active-evidence requirement applies to execution capacity,
+not merely the presence of an in-progress status.
+
+Keep unknown legacy IDs quarantined across linked worktrees. Never select them
+for execution or preparation, change their statuses, or infer abandonment. Count
+recorded reservations, including uncertain owners, against WIP. Keep verified
+dead-owner recovery ahead of unrelated selection. When a free slot has no ready
+candidate, nominate one existing-ranked, unblocked preparation candidate without
+a claim, or name missing prerequisites. Preparation still needs coordinator
+ownership and repository admission; unknown velocity is not an execution gate.
+
+This replaces the global legacy-status blocker, not the ledger, token fencing,
+readiness checks, or project admission. Jev selected per-story quarantine with
+confidence 1.0 and supported its fit to ST-168's original intent at probability
+0.90. Original criteria and estimates remain unchanged.
 
 Tokens are local bearer capabilities. Do not publish assignment output containing
 tokens. Releasing a token neither accepts nor resets its story. Operators retain
