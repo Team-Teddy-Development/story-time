@@ -117,6 +117,51 @@ pub(crate) struct Cli {
 }
 
 impl Cli {
+    fn uses_github_proxy(&self) -> bool {
+        self.token
+            .as_ref()
+            .is_some_and(|(name, value)| name == "GH_TOKEN" && value == "proxy-injected")
+    }
+
+    fn github_rest(
+        &self,
+        method: &str,
+        path: &str,
+        data: Option<Value>,
+    ) -> Result<Value, TrackerError> {
+        let mut args = strings(&["api", "--method", method, path]);
+        let body = data.map(|value| value.to_string());
+        if body.is_some() {
+            args.extend(strings(&["--input", "-"]));
+        }
+        let out = self.run_classified(&args, body.as_deref())?;
+        if method == "DELETE" && out.trim().is_empty() {
+            return Ok(Value::Null);
+        }
+        Ok(parse_json(&out)?)
+    }
+
+    fn github_pages(&self, path: &str) -> Result<Vec<Value>, TrackerError> {
+        let mut items = Vec::new();
+        for page in 1..=10 {
+            let delimiter = if path.contains('?') { '&' } else { '?' };
+            let list = self.github_rest(
+                "GET",
+                &format!("{path}{delimiter}per_page=100&page={page}"),
+                None,
+            )?;
+            let batch = list
+                .as_array()
+                .ok_or_else(|| TrackerError::retryable("GitHub returned an invalid list."))?;
+            items.extend(batch.iter().cloned());
+            if batch.len() < 100 {
+                return Ok(items);
+            }
+        }
+        Err(TrackerError::retryable(
+            "GitHub pagination exceeded its safety limit.",
+        ))
+    }
     /// A `gh` CLI for read-only checks. It inherits `GH_TOKEN` from the environment.
     pub(crate) fn gh(root: &Path) -> Cli {
         Cli {
@@ -330,6 +375,17 @@ impl Gateway {
         let titled = |title: Option<&str>| title.is_some_and(|t| t.starts_with(&prefix));
         let mut found = Vec::new();
         match &mut self.backend {
+            Backend::Github { repo, cli, .. } if cli.uses_github_proxy() => {
+                let date = required(story, "pending_create")?;
+                let date = chrono::NaiveDate::parse_from_str(date, "%Y-%m-%d")
+                    .map_err(|_| "Story has an invalid pending publication date.")?;
+                let path = format!("repos/{repo}/issues?state=all&since={date}T00%3A00%3A00Z");
+                for issue in cli.github_pages(&path)? {
+                    if issue.get("pull_request").is_none() && titled(issue["title"].as_str()) {
+                        found.push(github_rest_remote(repo, &issue)?);
+                    }
+                }
+            }
             Backend::Github { repo, cli, .. } => {
                 let issues = parse_json(&cli.run(
                     &strings(&[
@@ -479,6 +535,20 @@ impl Gateway {
             Backend::Github { repo, cli, labels } => {
                 let names = card_labels(&card)?;
                 ensure_github_labels(cli, repo, labels, &names)?;
+                if cli.uses_github_proxy() {
+                    let created = cli.github_rest("POST", &format!("repos/{repo}/issues"), Some(json!({
+                        "title": required(&card, "title")?, "body": required(&card, "body")?, "labels": names,
+                    })))?;
+                    let remote = github_rest_remote(repo, &created)?;
+                    if let Some(reason) = closing(story) {
+                        cli.github_rest(
+                            "PATCH",
+                            &format!("repos/{repo}/issues/{}", remote.remote_id),
+                            Some(json!({"state": "closed", "state_reason": rest_reason(reason)})),
+                        )?;
+                    }
+                    return Ok(remote);
+                }
                 let mut args = strings(&[
                     "issue",
                     "create",
@@ -643,6 +713,13 @@ impl Gateway {
     pub fn remove(&mut self, remote_id: &str) -> Result<(), String> {
         let id = validate_id(remote_id)?;
         match &mut self.backend {
+            Backend::Github { repo, cli, .. } if cli.uses_github_proxy() => {
+                cli.github_rest(
+                    "PATCH",
+                    &format!("repos/{repo}/issues/{id}"),
+                    Some(json!({"state": "closed", "state_reason": "not_planned"})),
+                )?;
+            }
             Backend::Github { repo, cli, .. } => {
                 cli.run(
                     &strings(&[
@@ -1077,6 +1154,14 @@ fn ensure_github_labels(
 ) -> Result<(), TrackerError> {
     let known = match known {
         Some(known) => known,
+        None if cli.uses_github_proxy() => {
+            let listed = cli.github_pages(&format!("repos/{repo}/labels"))?;
+            known.insert(
+                named_labels(&json!({ "labels": listed }))?
+                    .into_iter()
+                    .collect(),
+            )
+        }
         None => {
             let out = cli.run_classified(
                 &strings(&[
@@ -1094,7 +1179,14 @@ fn ensure_github_labels(
         }
     };
     for name in names {
-        if !known.contains(name) {
+        if !known.contains(name) && cli.uses_github_proxy() {
+            cli.github_rest(
+                "POST",
+                &format!("repos/{repo}/labels"),
+                Some(json!({"name": name, "color": github_label_color(name)})),
+            )?;
+            known.insert(name.clone());
+        } else if !known.contains(name) {
             cli.run_classified(
                 &strings(&[
                     "label",
@@ -1121,6 +1213,9 @@ fn github_update(
     card: &Value,
     story: &Value,
 ) -> Result<Remote, TrackerError> {
+    if cli.uses_github_proxy() {
+        return github_rest_update(cli, repo, labels, id, card, story);
+    }
     let current = parse_json(&cli.run_classified(
         &strings(&[
             "issue",
@@ -1180,6 +1275,87 @@ fn github_update(
         url: format!("https://github.com/{repo}/issues/{id}"),
         remote_id: id.to_string(),
     })
+}
+
+fn github_rest_remote(repo: &str, issue: &Value) -> Result<Remote, TrackerError> {
+    if issue.get("pull_request").is_some() {
+        return Err(TrackerError::permanent(
+            "GitHub returned a pull request instead of an issue.",
+        ));
+    }
+    let id = value_id(&issue["number"])?;
+    let url = format!("https://github.com/{repo}/issues/{id}");
+    if !issue["html_url"]
+        .as_str()
+        .is_some_and(|actual| actual.eq_ignore_ascii_case(&url))
+    {
+        return Err(TrackerError::permanent(
+            "GitHub returned an issue outside the configured repository.",
+        ));
+    }
+    Ok(Remote { url, remote_id: id })
+}
+
+fn rest_reason(reason: &str) -> &str {
+    if reason == "completed" {
+        "completed"
+    } else {
+        "not_planned"
+    }
+}
+
+fn github_rest_update(
+    cli: &Cli,
+    repo: &str,
+    labels: &mut Option<HashSet<String>>,
+    id: &str,
+    card: &Value,
+    story: &Value,
+) -> Result<Remote, TrackerError> {
+    let path = format!("repos/{repo}/issues/{id}");
+    let current = cli.github_rest("GET", &path, None)?;
+    let remote = github_rest_remote(repo, &current)?;
+    let prefix = format!("{}: ", required(story, "id")?);
+    if remote.remote_id != id
+        || !current["title"]
+            .as_str()
+            .is_some_and(|title| title.starts_with(&prefix))
+    {
+        return Err(TrackerError::permanent(
+            "The configured GitHub issue does not belong to this story.",
+        ));
+    }
+    let current_labels = named_labels(&current)?;
+    let wanted = card_labels(card)?;
+    ensure_github_labels(cli, repo, labels, &wanted)?;
+    let reason = closing(story);
+    let mut update = json!({"title": required(card, "title")?, "body": required(card, "body")?, "state": if reason.is_some() {"closed"} else {"open"}});
+    if let Some(reason) = reason {
+        update["state_reason"] = json!(rest_reason(reason));
+    }
+    cli.github_rest("PATCH", &path, Some(update))?;
+    let missing: Vec<_> = wanted
+        .iter()
+        .filter(|name| !current_labels.contains(name))
+        .collect();
+    if !missing.is_empty() {
+        cli.github_rest(
+            "POST",
+            &format!("{path}/labels"),
+            Some(json!({"labels": missing})),
+        )?;
+    }
+    for name in current_labels
+        .iter()
+        .filter(|name| managed(name, false) && !wanted.contains(name))
+    {
+        cli.github_rest(
+            "DELETE",
+            &format!("{path}/labels/{}", encode_component(name)),
+            None,
+        )?;
+    }
+    Ok(remote)
 }
 
 /// One pull request that GitHub lists for a commit.
