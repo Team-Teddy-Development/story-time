@@ -22,6 +22,13 @@ or `story_mismatch` result does not admit work. Confirm the returned story ID
 before changing status. A direct `story set` is a lifecycle edit, not an
 execution reservation or a supported substitute for kickoff.
 
+For dispatch that cannot take over old work, add `--fresh-only` to the targeted
+command. Start work only on `claimed`. Under the same lock, this mode skips
+reconciliation and returns `reservation_exists` if the requested story or run
+already has a reservation. It does not change existing claims or tokens, even
+when an owner has exited. Every recorded claim still counts toward WIP. Do not
+retry without `--fresh-only` when this mode refuses or the CLI lacks the flag.
+
 Use the actual persistent agent process ID. The process must be visible in the
 same host environment. The token is a bearer capability; keep command results
 out of public logs. The CLI always emits structured JSON for successful
@@ -59,7 +66,7 @@ cannot prevent an unrelated agent from bypassing it.
 
 ## Recovery and migration
 
-Heartbeat age is diagnostic only. `next` and `reconcile` invalidate an active
+Heartbeat age is diagnostic only. `next` without `--fresh-only` and `reconcile` invalidate an active
 token only after verifying termination. They retain the story and work location
 as recoverable. The next owner receives a new token. Old heartbeat and release
 requests cannot modify that replacement claim.
