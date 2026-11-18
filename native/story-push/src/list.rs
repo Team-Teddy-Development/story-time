@@ -6,9 +6,77 @@ use crate::{
     table, valid_id, Failure,
 };
 use std::{
+    collections::HashMap,
     fs,
+    io::{BufReader, Read},
     path::{Path, PathBuf},
 };
+
+pub(crate) fn headers(dir: &Path, cache: &mut HashMap<Vec<u8>, Js>) -> Result<Vec<Js>, String> {
+    let entries = match fs::read_dir(dir) {
+        Ok(entries) => entries,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(e) => return Err(format!("{}: {e}", dir.display())),
+    };
+    let mut headers = Vec::new();
+    for entry in entries {
+        let entry = entry.map_err(|e| format!("{}: {e}", dir.display()))?;
+        if entry
+            .file_name()
+            .to_str()
+            .and_then(crate::story_file_id)
+            .is_none()
+        {
+            continue;
+        }
+        let path = entry.path();
+        let bytes = match header_bytes(&path) {
+            Ok(bytes) => bytes,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => continue,
+            Err(e) => return Err(format!("{}: {e}", path.display())),
+        };
+        let story = match cache.get(&bytes) {
+            Some(story) => story.clone(),
+            None => {
+                let story = lenient_story::parse(&String::from_utf8_lossy(&bytes))?;
+                cache.insert(bytes, story.clone());
+                story
+            }
+        };
+        if !matches!(story.get("id"), Js::Str(_)) {
+            return Err(format!(
+                "{}: Story id must be a string; ownership remains unknown.",
+                path.display()
+            ));
+        }
+        headers.push(story);
+    }
+    Ok(headers)
+}
+
+fn header_bytes(path: &Path) -> std::io::Result<Vec<u8>> {
+    let mut reader = BufReader::new(fs::File::open(path)?).bytes();
+    let mut bytes = Vec::new();
+    for byte in reader.by_ref().take(4) {
+        bytes.push(byte?);
+    }
+    if bytes == b"---\r" {
+        if let Some(byte) = reader.next() {
+            bytes.push(byte?);
+        }
+    }
+    if bytes != b"---\n" && bytes != b"---\r\n" {
+        return Ok(bytes);
+    }
+    let start = bytes.len();
+    for byte in reader {
+        bytes.push(byte?);
+        if bytes[start..].ends_with(b"\n---") {
+            break;
+        }
+    }
+    Ok(bytes)
+}
 
 /// `FileSystemStoryRepository.list({ status })`: every `<ID>.md` in `dir`, parsed, filtered, and
 /// sorted by id the way `localeCompare(…, 'en', { numeric: true })` sorts.

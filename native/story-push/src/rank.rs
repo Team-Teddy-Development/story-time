@@ -143,6 +143,17 @@ fn rank_backlog<'a>(
     Ok((ranked, excluded))
 }
 
+pub(crate) fn ordered_candidates<'a>(
+    stories: &'a [Js],
+    statuses: &[&str],
+) -> Result<Vec<&'a Js>, String> {
+    Ok(rank_backlog(stories, statuses)?
+        .0
+        .into_iter()
+        .map(|r| r.story)
+        .collect())
+}
+
 /// `Number.prototype.toFixed(2)`.
 fn to_fixed(x: f64) -> String {
     if !x.is_finite() || x.abs() >= 1e21 {

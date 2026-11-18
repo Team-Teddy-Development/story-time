@@ -96,7 +96,7 @@ The **principle-invest** skill holds the quality bar all of them apply.
 
 ## The `story` tool
 
-Use installed Rust `story` for `init`, `push`, `adopt preview`, `plan`, `config`, `show`, `list`, `lint`, `stats`, `secret`, `issues`, `note`, `machine`, `mcp`, `export`, `new`, `rank`, `set`, `split`, `table`, `judge`, `check-pr`, `sync-merge`, `help`, and `metrics`.
+Use installed Rust `story` for `init`, `push`, `adopt preview`, `plan`, `config`, `show`, `list`, `lint`, `stats`, `secret`, `issues`, `note`, `machine`, `mcp`, `export`, `new`, `rank`, `assignment`, `set`, `split`, `table`, `judge`, `check-pr`, `sync-merge`, `help`, and `metrics`.
 The skill installer copies skills only; install the executable separately.
 Read `.story-time/settings.json` before selecting a tracker. Install the native
 command from the repository root:
@@ -106,7 +106,7 @@ cargo install --path native/story-push --locked
 ```
 
 `story push` runs entirely in Rust. Do not invoke the historical Node push
-handler. `story init`, `story adopt preview`, `story plan`, `story config`, `story show`, `story list`, `story lint`, `story stats`, `story secret`, `story issues`, `story note`, `story machine`, `story mcp`, `story export`, `story new`, `story rank`, `story set`, `story split`, `story table`, `story judge`, `story check-pr`, `story sync-merge`, `story help`, and `story metrics` also run entirely in Rust. No command needs Node.
+handler. `story init`, `story adopt preview`, `story plan`, `story config`, `story show`, `story list`, `story lint`, `story stats`, `story secret`, `story issues`, `story note`, `story machine`, `story mcp`, `story export`, `story new`, `story rank`, `story assignment`, `story set`, `story split`, `story table`, `story judge`, `story check-pr`, `story sync-merge`, `story help`, and `story metrics` also run entirely in Rust. No command needs Node.
 Plan JSON is the default output; other commands use `--json`.
 
 The separate Rust `gitea-gateway story-push` interface remains available in
@@ -122,6 +122,7 @@ part of either Rust push execution path.
 
 | Command | Does |
 |---|---|
+| `story assignment <operation>` | Claim, resume, inspect, reconcile, heartbeat, or release local execution ownership. Native Rust; see [assignments.md](references/assignments.md) |
 | `story plan --snapshot` | Capture a complete version-1 request with current source identity and hashes. Native Rust; read-only |
 | `story plan --from request.json [--output docs/planning/name.json]` | Generate a local JSON proposal; explicit output also writes Markdown, with reviewed hashes required for both replacements. Native Rust |
 | `story new --title T [--statement S] [--ac A]... [--type story\|spike\|bug\|chore]` | Create a draft with the next id. In a git repo the id is above every id on all local and remote-tracking branches; `git fetch` first so other branches' ids are seen. Native Rust |
