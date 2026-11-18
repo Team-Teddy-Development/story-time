@@ -184,14 +184,16 @@ fn alive_and_unknown_owners_are_not_recovered_by_age() {
 }
 
 #[test]
-fn unknown_legacy_work_blocks_capacity_without_reset() {
+fn unknown_legacy_work_is_held_without_consuming_execution_capacity() {
     let r = Repo::new();
     r.story("ST-003", "in-progress", 3, "[]");
     let before = fs::read(r.0.join("backlog/ST-003.md")).unwrap();
     let out = r.next("run");
-    assert_eq!(out["reason"], "legacy_ownership_unknown");
+    assert_eq!(out["reason"], "claimed");
+    assert_eq!(out["claim"]["story_id"], "ST-002");
     assert_eq!(out["legacy_in_progress"], json!(["ST-003"]));
-    assert_eq!(out["after"]["claims"], json!([]));
+    assert_eq!(out["reserved_wip"], 1);
+    assert_eq!(r.next("other")["reason"], "capacity_full");
     assert_eq!(before, fs::read(r.0.join("backlog/ST-003.md")).unwrap());
 }
 
@@ -233,7 +235,11 @@ fn dependency_and_readiness_are_rechecked_before_selection_and_recovery() {
             .replace("## Acceptance Criteria", "## Removed criteria"),
     )
     .unwrap();
-    assert_eq!(r.next("none")["reason"], "no_eligible_story");
+    let preparation = r.next("none");
+    assert_eq!(preparation["reason"], "preparation_required");
+    assert_eq!(preparation["preparation"]["story_id"], "ST-002");
+    assert!(preparation["claim"].is_null());
+    assert_eq!(preparation["after"]["claims"], json!([]));
     r.story("ST-002", "ready", 9, "[]");
     let mut old = Owner::new();
     claim(&r, "old", &old.pid());
@@ -356,10 +362,11 @@ fn zombie_owner_and_reused_pid_are_verified_dead() {
 }
 
 #[test]
-fn linked_legacy_work_counts_toward_configured_capacity() {
+fn linked_legacy_ids_are_excluded_even_when_ready_in_current_worktree() {
     let r = Repo::new();
     let linked = linked(&r);
-    r.story("ST-003", "in-progress", 1, "[]");
+    r.story("ST-002", "in-progress", 9, "[]");
+    let before = fs::read(r.0.join("backlog/ST-002.md")).unwrap();
     let out = success(call(
         &linked,
         &[
@@ -370,16 +377,69 @@ fn linked_legacy_work_counts_toward_configured_capacity() {
             &std::process::id().to_string(),
         ],
     ));
-    assert_eq!(out["reason"], "legacy_ownership_unknown");
-    assert_eq!(out["legacy_in_progress"], json!(["ST-003"]));
-    fs::write(
-        r.0.join(".story-time/settings.json"),
-        json!({"team":{"wipLimit":2}}).to_string(),
-    )
-    .unwrap();
-    let out = r.next("worker");
     assert_eq!(out["reason"], "claimed");
-    assert_eq!(r.next("second")["reason"], "legacy_ownership_unknown");
+    assert_eq!(out["claim"]["story_id"], "ST-001");
+    assert_eq!(out["legacy_in_progress"], json!(["ST-002"]));
+    assert_eq!(r.next("second")["reason"], "capacity_full");
+    assert_eq!(before, fs::read(r.0.join("backlog/ST-002.md")).unwrap());
+}
+
+#[test]
+fn empty_ready_queue_nominates_one_ranked_preparation_without_claiming_it() {
+    let r = Repo::new();
+    r.story("ST-001", "refined", 1, "[]");
+    r.story("ST-002", "refined", 9, "[]");
+    r.story("ST-003", "draft", 99, "[ST-404]");
+    r.story("ST-004", "in-progress", 100, "[]");
+    let before = fs::read(r.0.join("backlog/ST-002.md")).unwrap();
+    let out = r.next("prepare");
+    assert_eq!(out["reason"], "preparation_required");
+    assert_eq!(out["preparation"]["story_id"], "ST-002");
+    assert_eq!(out["preparation"]["status"], "refined");
+    assert!(out["claim"].is_null());
+    assert_eq!(out["after"]["claims"], json!([]));
+    assert_eq!(out["reserved_wip"], 0);
+    assert!(out["next_action"].as_str().unwrap().contains("ST-002"));
+    assert_eq!(before, fs::read(r.0.join("backlog/ST-002.md")).unwrap());
+}
+
+#[test]
+fn preparation_excludes_legacy_ids_across_linked_worktrees() {
+    let r = Repo::new();
+    r.story("ST-001", "refined", 1, "[]");
+    r.story("ST-002", "refined", 9, "[]");
+    let linked = linked(&r);
+    r.story("ST-002", "in-progress", 9, "[]");
+    let out = success(call(
+        &linked,
+        &[
+            "next",
+            "--owner",
+            "prepare",
+            "--pid",
+            &std::process::id().to_string(),
+        ],
+    ));
+    assert_eq!(out["reason"], "preparation_required");
+    assert_eq!(out["preparation"]["story_id"], "ST-001");
+    assert_eq!(out["legacy_in_progress"], json!(["ST-002"]));
+    assert!(out["claim"].is_null());
+}
+
+#[test]
+fn unavailable_preparation_reports_named_wait_without_changing_work() {
+    let r = Repo::new();
+    r.story("ST-001", "refined", 1, "[ST-404]");
+    r.story("ST-002", "ready", 9, "[ST-404]");
+    let out = r.next("wait");
+    assert_eq!(out["reason"], "no_eligible_story");
+    assert!(out["preparation"].is_null());
+    assert!(out["claim"].is_null());
+    assert_eq!(out["after"]["claims"], json!([]));
+    assert!(out["next_action"]
+        .as_str()
+        .unwrap()
+        .contains("dependencies"));
 }
 
 #[test]
