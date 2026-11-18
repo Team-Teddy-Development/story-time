@@ -15,7 +15,7 @@ use std::{
     process::Command,
 };
 
-const HELP: &str = "Usage: story assignment next --owner RUN --pid PID [--story ID]\n       story assignment status|reconcile\n       story assignment heartbeat|release --token TOKEN\n\nLocal Linux ownership. All results are JSON. Claims reserve configured WIP\nwithout changing story status. Recovery must resume the recorded worktree.\nLedger: <git-common-dir>/story-assignment/ledger.json\n";
+const HELP: &str = "Usage: story assignment next --owner RUN --pid PID [--story ID [--fresh-only]]\n       story assignment status|reconcile\n       story assignment heartbeat|release --token TOKEN\n\nLocal Linux ownership. All results are JSON. Claims reserve configured WIP\nwithout changing story status. Recovery must resume the recorded worktree.\nLedger: <git-common-dir>/story-assignment/ledger.json\n";
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
@@ -313,6 +313,7 @@ fn reply(
         match reason {
             "recovery_required" => "Run assignment next in claim.worktree on claim.branch; preserve and inspect existing work before resuming.",
             "recovery_ineligible" => "Inspect recorded work and restore readiness and completed dependencies before claiming; do not reset story status.",
+            "reservation_exists" => "Leave the reservation unchanged; use the explicit recovery workflow if authorized.",
             "capacity_full" => "Wait for a recorded owner to release or reconcile a verified terminated owner.",
             "story_unavailable" => "Inspect the requested story's readiness, dependencies and ownership. No other story was selected.",
             "story_mismatch" => "Reconcile the existing assignment before requesting a different story. No different story was reserved.",
@@ -348,7 +349,7 @@ pub fn run(args: &[String]) -> Result<(String, u8), Failure> {
     }
     for name in flags.names() {
         let allowed = matches!(name.as_str(), "config" | "json")
-            || (op == "next" && matches!(name.as_str(), "owner" | "pid" | "story"))
+            || (op == "next" && matches!(name.as_str(), "owner" | "pid" | "story" | "fresh-only"))
             || (matches!(op, "heartbeat" | "release") && name == "token");
         if !allowed {
             return Err(format!("Unsupported flag --{name} for assignment {op}.").into());
@@ -373,6 +374,10 @@ pub fn run(args: &[String]) -> Result<(String, u8), Failure> {
         None
     };
     let requested_story = flags.value("story");
+    let fresh_only = flags.has("fresh-only");
+    if fresh_only && requested_story.is_none() {
+        return Err("assignment next --fresh-only requires --story.".into());
+    }
     if requested_story.is_some_and(|id| id.trim().is_empty()) {
         return Err("--story must not be empty.".into());
     }
@@ -414,7 +419,7 @@ pub fn run(args: &[String]) -> Result<(String, u8), Failure> {
     } else {
         Vec::new()
     };
-    let changes = if matches!(op, "next" | "reconcile") {
+    let changes = if !fresh_only && matches!(op, "next" | "reconcile") {
         reconcile(&mut ledger)
     } else {
         Vec::new()
@@ -465,7 +470,14 @@ pub fn run(args: &[String]) -> Result<(String, u8), Failure> {
             reason = "released";
         }
     } else if let Some((owner, process)) = new_owner {
-        if let Some(c) = ledger
+        if fresh_only
+            && ledger
+                .claims
+                .iter()
+                .any(|c| c.owner == owner || requested_story == Some(c.story_id.as_str()))
+        {
+            reason = "reservation_exists";
+        } else if let Some(c) = ledger
             .claims
             .iter()
             .find(|c| c.owner == owner && matches!(c.ownership, Ownership::Active { .. }))
@@ -490,7 +502,7 @@ pub fn run(args: &[String]) -> Result<(String, u8), Failure> {
         } else if let Some(i) = ledger
             .claims
             .iter()
-            .position(|c| matches!(c.ownership, Ownership::Recoverable))
+            .position(|c| !fresh_only && matches!(c.ownership, Ownership::Recoverable))
         {
             if requested_story.is_some_and(|id| id != ledger.claims[i].story_id) {
                 reason = "story_mismatch";
@@ -560,7 +572,7 @@ pub fn run(args: &[String]) -> Result<(String, u8), Failure> {
             "status"
         };
     }
-    if op != "status" {
+    if op != "status" && (!fresh_only || reason == "claimed") {
         persist(&path, &ledger)?;
     }
     Ok((

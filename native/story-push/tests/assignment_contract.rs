@@ -128,6 +128,48 @@ fn stale(r: &Repo, op: &str, token: &str) {
 }
 
 #[test]
+fn fresh_only_preserves_live_dead_and_recoverable_claims() {
+    let r = Repo::new();
+    let mut prior = Owner::new();
+    let next = |owner: &str, pid: &str| {
+        success(r.call(&[
+            "next",
+            "--owner",
+            owner,
+            "--pid",
+            pid,
+            "--story",
+            "ST-001",
+            "--fresh-only",
+        ]))
+    };
+    assert_eq!(next("prior", &prior.pid())["reason"], "claimed");
+    let refused = |owner: &str, pid: &str| {
+        let before = fs::read(ledger_path(&r)).unwrap();
+        let reply = next(owner, pid);
+        assert_eq!(reply["reason"], "reservation_exists");
+        assert_eq!(reply["before"], reply["after"]);
+        assert_eq!(reply["changes"], json!([]));
+        assert!(reply["claim"].is_null());
+        assert_eq!(fs::read(ledger_path(&r)).unwrap(), before);
+    };
+    refused("prior", &prior.pid());
+    let replacement = std::process::id().to_string();
+    refused("replacement", &replacement);
+    prior.terminate();
+    refused("replacement", &replacement);
+    assert_eq!(
+        success(r.call(&["reconcile"]))["after"]["claims"][0]["state"],
+        "recoverable"
+    );
+    refused("replacement", &replacement);
+    assert_eq!(
+        claim(&r, "replacement", &replacement)["reason"],
+        "recovered"
+    );
+}
+
+#[test]
 fn dead_owner_recovery_fences_tokens_and_preserves_work() {
     let r = Repo::new();
     let mut old = Owner::new();
