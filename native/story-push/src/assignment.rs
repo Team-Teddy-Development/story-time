@@ -303,23 +303,30 @@ fn reply(
     claim: Option<&Claim>,
     legacy: &[String],
     changes: &[Value],
+    preparation: Option<&Js>,
 ) -> String {
     let owners: Vec<_> = after.claims.iter().map(|c| json!({"story_id":c.story_id,"liveness":liveness(&c.process),"state":c.ownership,"worktree":c.worktree})).collect();
-    format!(
-        "{}\n",
-        json!({"reason":reason,"before":before,"after":after,"claim":claim,"legacy_in_progress":legacy,"owners":owners,"changes":changes,"next_action":match reason {
+    let next_action = if let Some(story) = preparation {
+        let id = story.get("id").string();
+        format!("Prepare {id} under the coordinator's existing preparation ownership; inspect existing work and PRs before editing. Run story show {id} and story lint {id} --json. Resolve readiness and repository admission; request assignment again before implementation. No execution claim or sprint forecast is granted. Unknown sprint velocity does not block preparation.")
+    } else {
+        match reason {
             "recovery_required" => "Run assignment next in claim.worktree on claim.branch; preserve and inspect existing work before resuming.",
             "recovery_ineligible" => "Inspect recorded work and restore readiness and completed dependencies before claiming; do not reset story status.",
             "legacy_ownership_unknown" => "Inspect the listed legacy in-progress stories; establish ownership explicitly without automatic release.",
             "capacity_full" => "Wait for a recorded owner to release or reconcile a verified terminated owner.",
             "owner_conflict" => "Use a distinct run owner; the recorded owner has another live or uncertain process identity.",
-            "no_eligible_story" => "Run story rank --json and story lint --json; satisfy readiness and complete dependencies before selection.",
+            "no_eligible_story" => "Wait for completed dependencies or missing WSJF/readiness inputs. Inspect story rank --include-refined --json and story lint --json; do not claim or reset blocked work.",
             "stale_token" => "Discard this token. Read assignment status to locate the current recorded owner.",
             "owner_not_alive" => "Run assignment reconcile; do not send a heartbeat on behalf of a terminated or unverified process.",
             "status" | "reconciled" => "Inspect owners and legacy_in_progress; run assignment next with a verified live local owner PID.",
             "released" => "The token is invalid. Run assignment next for another story when capacity is free.",
             _ => "Use the current token for heartbeat or release; story acceptance remains independent."
-        }})
+        }.to_owned()
+    };
+    format!(
+        "{}\n",
+        json!({"reason":reason,"before":before,"after":after,"claim":claim,"legacy_in_progress":legacy,"owners":owners,"changes":changes,"reserved_wip":after.claims.len(),"preparation":preparation.map(|s| json!({"story_id":s.get("id").string(),"status":s.get("status").string()})),"legacy_next_action":if legacy.is_empty() { None } else { Some("These IDs lack verified execution ownership. Quarantine them individually; do not take them over or reset their statuses. Bare statuses do not reserve execution WIP.") },"next_action":next_action})
     )
 }
 
@@ -409,6 +416,7 @@ pub fn run(args: &[String]) -> Result<(String, u8), Failure> {
     };
     let legacy = legacy_ids(&root, &ledger)?;
     let mut selected = None;
+    let mut preparation = None;
     let reason;
     if let Some(token) = provided_token {
         let Some(i) = ledger
@@ -417,7 +425,15 @@ pub fn run(args: &[String]) -> Result<(String, u8), Failure> {
             .position(|c| matches!(&c.ownership, Ownership::Active {token:t} if t == token))
         else {
             return Ok((
-                reply("stale_token", &before, &ledger, None, &legacy, &changes),
+                reply(
+                    "stale_token",
+                    &before,
+                    &ledger,
+                    None,
+                    &legacy,
+                    &changes,
+                    None,
+                ),
                 1,
             ));
         };
@@ -431,6 +447,7 @@ pub fn run(args: &[String]) -> Result<(String, u8), Failure> {
                         Some(&ledger.claims[i]),
                         &legacy,
                         &changes,
+                        None,
                     ),
                     1,
                 ));
@@ -486,23 +503,17 @@ pub fn run(args: &[String]) -> Result<(String, u8), Failure> {
                 selected = Some(c.clone());
                 reason = "recovered";
             }
-        } else if ledger.claims.len() + legacy.len()
-            >= settings["team"]["wipLimit"].as_u64().unwrap_or(1) as usize
+        } else if ledger.claims.len() >= settings["team"]["wipLimit"].as_u64().unwrap_or(1) as usize
         {
-            reason = if legacy.is_empty() {
-                "capacity_full"
-            } else {
-                "legacy_ownership_unknown"
-            };
+            reason = "capacity_full";
         } else {
+            let available = |story: &&Js| {
+                let id = story.get("id").string();
+                !legacy.contains(&id) && !ledger.claims.iter().any(|c| c.story_id == id)
+            };
             let next = eligible(&stories, &root, &["ready"])?
                 .into_iter()
-                .find(|s| {
-                    !ledger
-                        .claims
-                        .iter()
-                        .any(|c| c.story_id == s.get("id").string())
-                });
+                .find(available);
             if let Some(story) = next {
                 let claim = Claim {
                     story_id: story.get("id").string(),
@@ -518,7 +529,14 @@ pub fn run(args: &[String]) -> Result<(String, u8), Failure> {
                 ledger.claims.push(claim);
                 reason = "claimed";
             } else {
-                reason = "no_eligible_story";
+                preparation = rank::ordered_candidates(&stories, &["ready", "refined", "draft"])?
+                    .into_iter()
+                    .find(available);
+                reason = if preparation.is_some() {
+                    "preparation_required"
+                } else {
+                    "no_eligible_story"
+                };
             }
         }
     } else {
@@ -539,6 +557,7 @@ pub fn run(args: &[String]) -> Result<(String, u8), Failure> {
             selected.as_ref(),
             &legacy,
             &changes,
+            preparation,
         ),
         0,
     ))
