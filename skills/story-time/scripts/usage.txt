@@ -10,7 +10,8 @@ Commands:
   show   <id>                              Print a story file
   lint   [id...]                           INVEST / Definition of Ready check (exit 1 on errors)
   rank   [--limit N] [--include-refined]   WSJF-ranked ready stories, with exclusions
-  assignment next --owner RUN --pid PID    Native: claim or recover local Linux agent work
+  assignment next --owner RUN --pid PID [--story ID]
+                                           Native: claim ranked or explicitly requested local Linux agent work
   assignment status|reconcile              Inspect owners or recover verified terminated owners
   assignment heartbeat|release --token T   Refresh or release a current ownership token
   set    <id> key=value... [--note N] [--force]
