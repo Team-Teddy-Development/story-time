@@ -127,6 +127,195 @@ fn stale(r: &Repo, op: &str, token: &str) {
     assert_eq!(fs::read(ledger_path(r)).unwrap(), bytes);
 }
 
+fn exact_recover(path: &Path, prior: &Value, owner: &str) -> Output {
+    call(
+        path,
+        &[
+            "recover",
+            "--story",
+            prior["story_id"].as_str().unwrap(),
+            "--previous-owner",
+            prior["owner"].as_str().unwrap(),
+            "--previous-process",
+            &prior["process"].to_string(),
+            "--owner",
+            owner,
+            "--pid",
+            &std::process::id().to_string(),
+        ],
+    )
+}
+
+fn committed_repo() -> Repo {
+    let r = Repo::new();
+    r.git(&["add", "."]);
+    r.git(&[
+        "-c",
+        "user.name=Fixture",
+        "-c",
+        "user.email=fixture@example.invalid",
+        "-c",
+        "core.hooksPath=/dev/null",
+        "commit",
+        "-qm",
+        "fixture",
+    ]);
+    r
+}
+
+fn refused_recovery(out: Output) {
+    assert_eq!(out.status.code(), Some(1));
+    let data: Value = serde_json::from_slice(&out.stdout).expect("typed recovery refusal");
+    assert_eq!(data["reason"], "recovery_mismatch");
+    assert!(data["claim"].is_null());
+}
+
+#[test]
+fn exact_recover_rotates_once_under_contention() {
+    let r = committed_repo();
+    let mut old = Owner::new();
+    let old_claim = claim(&r, "old", &old.pid())["claim"].clone();
+    old.terminate();
+    let prior = success(r.call(&["reconcile"]))["after"]["claims"][0].clone();
+    let barrier = std::sync::Barrier::new(2);
+    let (one, two) = std::thread::scope(|scope| {
+        let first = scope.spawn(|| {
+            barrier.wait();
+            exact_recover(&r.0, &prior, "replacement-a")
+        });
+        barrier.wait();
+        let second = exact_recover(&r.0, &prior, "replacement-b");
+        (first.join().unwrap(), second)
+    });
+    let (winner, loser) = if one.status.success() {
+        (one, two)
+    } else {
+        (two, one)
+    };
+    let data = success(winner);
+    refused_recovery(loser);
+    assert_eq!(data["reason"], "recovered");
+    assert_eq!(data["reserved_wip"], 1);
+    assert_ne!(data["claim"]["token"], old_claim["token"]);
+    for field in ["story_id", "worktree", "branch", "head"] {
+        assert_eq!(data["claim"][field], prior[field]);
+    }
+    assert_eq!(ledger(&r)["claims"][0], data["claim"]);
+    stale(&r, "release", old_claim["token"].as_str().unwrap());
+}
+
+#[test]
+fn exact_recover_refuses_changed_or_missing_predecessor_without_writes() {
+    let r = committed_repo();
+    let mut old = Owner::new();
+    let initial = claim(&r, "old", &old.pid())["claim"].clone();
+    let bytes = || fs::read(ledger_path(&r)).unwrap();
+    let before = bytes();
+    refused_recovery(exact_recover(&r.0, &initial, "replacement"));
+    assert_eq!(bytes(), before);
+    old.terminate();
+    refused_recovery(exact_recover(&r.0, &initial, "replacement"));
+    assert_eq!(bytes(), before);
+    let prior = success(r.call(&["reconcile"]))["after"]["claims"][0].clone();
+    let before = bytes();
+    for (field, other) in [("owner", json!("different")), ("story_id", json!("ST-001"))] {
+        let mut changed = prior.clone();
+        changed[field] = other;
+        refused_recovery(exact_recover(&r.0, &changed, "replacement"));
+        assert_eq!(bytes(), before);
+    }
+    let mut changed = prior.clone();
+    changed["process"]["starttime"] = json!(prior["process"]["starttime"].as_u64().unwrap() + 1);
+    refused_recovery(exact_recover(&r.0, &changed, "replacement"));
+    assert_eq!(bytes(), before);
+    let different = r.0.join("../").join(format!(
+        "{}-linked",
+        r.0.file_name().unwrap().to_str().unwrap()
+    ));
+    r.git(&[
+        "worktree",
+        "add",
+        "-qb",
+        "other",
+        different.to_str().unwrap(),
+    ]);
+    refused_recovery(exact_recover(&different, &prior, "replacement"));
+    r.git(&["worktree", "remove", different.to_str().unwrap()]);
+    assert_eq!(bytes(), before);
+    let branch = prior["branch"]
+        .as_str()
+        .unwrap()
+        .strip_prefix("refs/heads/")
+        .unwrap();
+    r.git(&["switch", "-qc", "other-branch"]);
+    refused_recovery(exact_recover(&r.0, &prior, "replacement"));
+    r.git(&["switch", "-q", branch]);
+    assert_eq!(bytes(), before);
+    let manual = r.next("manual");
+    assert_eq!(manual["reason"], "recovered");
+    success(r.call(&[
+        "release",
+        "--token",
+        manual["claim"]["token"].as_str().unwrap(),
+    ]));
+    let before = bytes();
+    refused_recovery(exact_recover(&r.0, &prior, "replacement"));
+    assert_eq!(bytes(), before);
+    assert_eq!(ledger(&r)["claims"], json!([]));
+}
+
+#[test]
+fn exact_recover_preserves_unrelated_dead_claim_and_rechecks_eligibility() {
+    let r = committed_repo();
+    fs::write(
+        r.0.join(".story-time/settings.json"),
+        r#"{"team":{"wipLimit":2}}"#,
+    )
+    .unwrap();
+    let mut old = Owner::new();
+    claim(&r, "old", &old.pid());
+    old.terminate();
+    let prior = success(r.call(&["reconcile"]))["after"]["claims"][0].clone();
+    let mut unrelated = Owner::new();
+    let other = success(r.call(&[
+        "next",
+        "--owner",
+        "unrelated",
+        "--pid",
+        &unrelated.pid(),
+        "--story",
+        "ST-001",
+        "--fresh-only",
+    ]))["claim"]
+        .clone();
+    unrelated.terminate();
+    let before = fs::read(ledger_path(&r)).unwrap();
+    let other_token = other["token"].as_str().unwrap();
+    let conflict = exact_recover(&r.0, &prior, "unrelated");
+    assert_eq!(conflict.status.code(), Some(1));
+    let refusal: Value = serde_json::from_slice(&conflict.stdout).unwrap();
+    assert_eq!(
+        refusal,
+        json!({"reason": "owner_conflict", "claim": null, "reserved_wip": 2})
+    );
+    r.story("ST-002", "ready", 9, "[ST-001]");
+    let ineligible = exact_recover(&r.0, &prior, "replacement");
+    assert_eq!(ineligible.status.code(), Some(1));
+    let refusal: Value = serde_json::from_slice(&ineligible.stdout).unwrap();
+    assert_eq!(
+        refusal,
+        json!({"reason": "recovery_ineligible", "claim": null, "reserved_wip": 2})
+    );
+    assert_eq!(fs::read(ledger_path(&r)).unwrap(), before);
+    r.story("ST-002", "ready", 9, "[]");
+    let response = exact_recover(&r.0, &prior, "replacement");
+    assert!(!String::from_utf8_lossy(&response.stdout).contains(other_token));
+    let result = success(response);
+    assert_eq!(result["reason"], "recovered");
+    assert_eq!(result["reserved_wip"], 2);
+    assert_eq!(ledger(&r)["claims"][1], other);
+}
+
 #[test]
 fn fresh_only_preserves_live_dead_and_recoverable_claims() {
     let r = Repo::new();

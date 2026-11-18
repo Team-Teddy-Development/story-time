@@ -35,6 +35,19 @@ out of public logs. The CLI always emits structured JSON for successful
 operations and expected ownership refusals. Invalid input or corrupt state fails
 closed. Exit zero alone does not mean a story was assigned. Check `reason`.
 
+## Exact supervised recovery
+
+From the recorded worktree and branch, use:
+
+```bash
+story assignment recover --story ID --previous-owner OLD_RUN \
+  --previous-process "$OLD_PROCESS_JSON" --owner NEW_RUN --pid NEW_PID
+```
+
+`OLD_PROCESS_JSON` is the `process` object from the inspected recoverable claim, not the complete assignment response. Keep that response private. The command checks the prior run, process, story, worktree, and branch under the native lock. It transfers only a recoverable claim with a verified terminated predecessor. It does not reconcile other claims or admit a new one.
+
+Start only on `recovered` and a verified replacement claim. The success result contains the new bearer token; keep it in the supervisor's private records. A mismatch returns `recovery_mismatch` with exit 1 and no claim. Do not fall back to `next`.
+
 ## Ownership invariants
 
 A repository-wide ledger lives at `<git-common-dir>/story-assignment/ledger.json`.
