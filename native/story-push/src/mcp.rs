@@ -1483,6 +1483,93 @@ fn acceptance_gaps(story: &Js) -> Vec<(&'static str, String)> {
     gaps
 }
 
+fn story_accept(server: &Server, args: &Map<String, Value>) -> Result<Value, ToolError> {
+    let (repo, _lock) = server.lock(args)?;
+    accept_in(&repo, args)
+}
+
+fn accept_in(repo: &Repo, args: &Map<String, Value>) -> Result<Value, ToolError> {
+    let id = args["id"].as_str().unwrap_or_default();
+    let expected = args["expected_sha256"].as_str().unwrap_or_default();
+    let (current, bytes) = repo.story(id)?;
+    let before = sha(&bytes);
+    if before != expected {
+        return Err(conflict(id, expected, &before));
+    }
+    if current.get("status").string() != "in-progress" {
+        return Err(fail(
+            "lifecycle_refused",
+            "Only an in-progress story can be accepted.",
+        ));
+    }
+    let sections = current.get("sections");
+    let heading = if matches!(sections.get("Acceptance Criteria"), Js::Undefined) {
+        "Exit Criteria"
+    } else {
+        "Acceptance Criteria"
+    };
+    let count = lint::criteria(&current).len();
+    let ticked = lint::tick_criteria(&sections.get(heading).string())
+        .filter(|_| count > 0)
+        .ok_or_else(|| fail("lifecycle_refused", "Every criterion must have a checkbox."))?;
+    let entries = args["evidence"].as_array().expect("validated evidence");
+    let mut attached = vec![None; count];
+    for entry in entries {
+        let number = entry["criterion"].as_u64().expect("validated criterion");
+        let text = lenient_story::trim(entry["evidence"].as_str().expect("validated text"));
+        let slot = usize::try_from(number - 1)
+            .ok()
+            .and_then(|index| attached.get_mut(index));
+        match slot {
+            Some(slot) if slot.is_none() => *slot = Some(text),
+            _ => {
+                return Err(invalid(
+                    "/evidence",
+                    "Criterion numbers must be unique and name existing criteria.".into(),
+                ))
+            }
+        }
+    }
+    let attached = attached
+        .into_iter()
+        .collect::<Option<Vec<_>>>()
+        .ok_or_else(|| {
+            invalid(
+                "/evidence",
+                "Supply one evidence entry for each criterion.".into(),
+            )
+        })?;
+    let mut evidence = match sections.get("Evidence") {
+        Js::Undefined => String::new(),
+        existing => existing.string(),
+    };
+    for (i, entry) in attached.iter().enumerate() {
+        if !evidence.is_empty() {
+            evidence.push('\n');
+        }
+        evidence.push_str(&format!("- Criterion {}: {entry}", i + 1));
+    }
+    let mut sections = sections.props().to_vec();
+    Js::set(&mut sections, heading, Js::Str(ticked));
+    Js::set(&mut sections, "Evidence", Js::Str(evidence));
+    let mut next = current.props().to_vec();
+    Js::set(&mut next, "sections", Js::Obj(sections));
+    Js::set(&mut next, "status", Js::Str("done".into()));
+    let line = "accepted with evidence for every criterion";
+    let date = chrono::Utc::now().format("%Y-%m-%d").to_string();
+    let next = lenient_story::append_changelog(&Js::Obj(next), line, &date);
+    let after = repo.save(&next)?;
+    Ok(repo.written(
+        "story_accept",
+        "updated",
+        &next,
+        &before,
+        &after,
+        vec!["status".into(), heading.into(), "Evidence".into()],
+        Some(line.into()),
+    ))
+}
+
 fn story_note(server: &Server, args: &Map<String, Value>) -> Result<Value, ToolError> {
     let (repo, _lock) = server.lock(args)?;
     note_in(&repo, args)
@@ -1600,6 +1687,7 @@ enum Kind {
     NonEmpty(usize),
     Sha256,
     Changes,
+    EvidenceEntries,
 }
 impl Kind {
     fn schema(&self) -> Value {
@@ -1615,6 +1703,13 @@ impl Kind {
             }
             Kind::NonEmpty(max) => json!({"type": "string", "minLength": 1, "maxLength": max}),
             Kind::Sha256 => json!({"type": "string", "pattern": "^[0-9a-f]{64}$"}),
+            Kind::EvidenceEntries => json!({
+                "type": "array", "minItems": 1, "maxItems": 100,
+                "items": object(&["criterion", "evidence"], json!({
+                    "criterion": {"type": "integer", "minimum": 1, "maximum": 100},
+                    "evidence": {"type": "string", "minLength": 1, "maxLength": 2000}
+                }))
+            }),
             Kind::Changes => json!({
                 "type": "object",
                 "minProperties": 1,
@@ -1646,6 +1741,22 @@ impl Kind {
             (Kind::NonEmpty(max), Value::String(s)) => (1..=*max).contains(&s.chars().count()),
             (Kind::Sha256, Value::String(s)) => {
                 s.len() == 64 && s.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'))
+            }
+            (Kind::EvidenceEntries, Value::Array(entries)) => {
+                (1..=100).contains(&entries.len())
+                    && entries.iter().all(|entry| {
+                        entry.as_object().is_some_and(|fields| fields.len() == 2)
+                            && entry["criterion"]
+                                .as_u64()
+                                .is_some_and(|n| (1..=100).contains(&n))
+                            && entry["evidence"].as_str().is_some_and(|s| {
+                                !lenient_story::trim(s).is_empty()
+                                    && s.chars().count() <= 2000
+                                    && !s.chars().any(|c| {
+                                        c.is_control() || lenient_story::line_terminator(c)
+                                    })
+                            })
+                    })
             }
             (Kind::Changes, Value::Object(changes)) => {
                 (1..=20).contains(&changes.len())
@@ -1708,7 +1819,7 @@ struct Tool {
     run: fn(&Server, &Map<String, Value>) -> Result<Value, ToolError>,
 }
 
-const TOOLS: [Tool; 7] = [
+const TOOLS: [Tool; 8] = [
     Tool {
         name: "story_config",
         hints: READ,
@@ -1802,6 +1913,23 @@ const TOOLS: [Tool; 7] = [
         required: &["id", "expected_sha256", "set"],
         output: write_schema,
         run: story_update,
+    },
+    Tool {
+        name: "story_accept",
+        hints: Hints {
+            read_only: false,
+            destructive: true,
+            idempotent: false,
+            open_world: false,
+        },
+        description: "Record one evidence entry for each existing criterion and accept an in-progress story. A hosted write proposes a reviewed pull request; it does not change the tracker.",
+        fields: &[
+            REPOSITORY, ID, EXPECTED,
+            Field { name: "evidence", kind: Kind::EvidenceEntries },
+        ],
+        required: &["id", "expected_sha256", "evidence"],
+        output: write_schema,
+        run: story_accept,
     },
     Tool {
         name: "story_note",

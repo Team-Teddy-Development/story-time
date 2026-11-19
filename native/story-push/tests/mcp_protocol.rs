@@ -1030,6 +1030,10 @@ fn without_write_no_write_tool_is_listed_and_a_write_call_is_an_unknown_tool() {
             json!({"id": "ST-001", "expected_sha256": sha, "note": "hello"}),
         ),
         ("story_create", json!({"title": "A new story"})),
+        (
+            "story_accept",
+            json!({"id": "ST-001", "expected_sha256": "0".repeat(64), "evidence": [{"criterion": 1, "evidence": "Verified"}]}),
+        ),
     ] {
         let response = server.modern("tools/call", json!({"name": name, "arguments": arguments}));
         assert_eq!(response["error"]["code"], -32602, "{response}");
@@ -1045,7 +1049,7 @@ fn without_write_no_write_tool_is_listed_and_a_write_call_is_an_unknown_tool() {
         names,
         [
             READ_TOOLS.as_slice(),
-            &["story_update", "story_note", "story_create"]
+            &["story_update", "story_accept", "story_note", "story_create"]
         ]
         .concat()
     );
@@ -1306,6 +1310,36 @@ fn story_update_refuses_done_until_every_criterion_is_ticked_and_evidence_is_rec
         assert_eq!(content["audit"]["changelog"], "set status=done — Accepted");
         assert!(fixture.read("backlog/ST-009.md").contains("status: done\n"));
     }
+}
+
+#[test]
+fn story_accept_records_evidence_and_preserves_criterion_wording() {
+    let fixture = Fixture::new().with_stories(1);
+    let first = "Given one, when run, then it passes";
+    let second = "Given two, when run, then it passes";
+    fixture.write(
+        "backlog/ST-009.md",
+        &accepting("story", &format!("- [ ] {first}\n- [ ] {second}"), None),
+    );
+    let before = sha256(&fixture, "ST-009");
+    let mut server = fixture.writer();
+    let result = server.tool(
+        "story_accept",
+        json!({"id": "ST-009", "expected_sha256": before, "evidence": [
+            {"criterion": 1, "evidence": "First integration test passed."},
+            {"criterion": 2, "evidence": "Second integration test passed."}
+        ]}),
+    );
+    let content = structured(&result);
+    assert_eq!(content["story"]["status"], "done");
+    assert_eq!(content["sha256_before"], before);
+    assert_eq!(content["sha256_after"], sha256(&fixture, "ST-009"));
+    let saved = fixture.read("backlog/ST-009.md");
+    assert!(saved.contains(&format!("- [x] {first}\n- [x] {second}")));
+    assert!(saved.contains("## Evidence\n"));
+    assert!(saved.contains("First integration test passed."));
+    assert!(saved.contains("Second integration test passed."));
+    server.finish();
 }
 
 #[test]
