@@ -777,6 +777,46 @@ impl Gateway {
     }
 }
 
+pub(crate) fn gitea_request(
+    client: &Client,
+    token: &str,
+    method: Method,
+    url: String,
+    body: Option<Value>,
+) -> Result<(StatusCode, Value), String> {
+    let mut authorization = reqwest::header::HeaderValue::from_str(&format!("token {token}"))
+        .map_err(|_| "Invalid Gitea credential.".to_string())?;
+    authorization.set_sensitive(true);
+    let mut request = client
+        .request(method.clone(), url)
+        .header(reqwest::header::AUTHORIZATION, authorization)
+        .header(reqwest::header::ACCEPT, "application/json");
+    if let Some(body) = body {
+        request = request.json(&body);
+    }
+    let response = request
+        .send()
+        .map_err(|_| format!("Gitea {method} request failed; check endpoint and connectivity."))?;
+    let status = response.status();
+    if !status.is_success() {
+        return Ok((status, Value::Null));
+    }
+    let mut bytes = Vec::new();
+    response
+        .take(8 * 1024 * 1024 + 1)
+        .read_to_end(&mut bytes)
+        .map_err(|_| "Could not read Gitea response.".to_string())?;
+    if bytes.len() > 8 * 1024 * 1024 {
+        return Err("Gitea response exceeds size limit.".into());
+    }
+    let value = if bytes.is_empty() {
+        Value::Null
+    } else {
+        serde_json::from_slice(&bytes).map_err(|_| "Gitea returned invalid JSON.".to_string())?
+    };
+    Ok((status, value))
+}
+
 struct Gitea {
     base: String,
     owner: String,
@@ -821,40 +861,7 @@ impl Gitea {
         url: String,
         body: Option<Value>,
     ) -> Result<(StatusCode, Value), String> {
-        let mut authorization =
-            reqwest::header::HeaderValue::from_str(&format!("token {}", self.token))
-                .map_err(|_| "Invalid Gitea credential.".to_string())?;
-        authorization.set_sensitive(true);
-        let mut request = self
-            .client
-            .request(method.clone(), url)
-            .header(reqwest::header::AUTHORIZATION, authorization)
-            .header(reqwest::header::ACCEPT, "application/json");
-        if let Some(body) = body {
-            request = request.json(&body);
-        }
-        let response = request.send().map_err(|_| {
-            format!("Gitea {method} request failed; check endpoint and connectivity.")
-        })?;
-        let status = response.status();
-        if !status.is_success() {
-            return Ok((status, Value::Null));
-        }
-        let mut bytes = Vec::new();
-        response
-            .take(8 * 1024 * 1024 + 1)
-            .read_to_end(&mut bytes)
-            .map_err(|_| "Could not read Gitea response.".to_string())?;
-        if bytes.len() > 8 * 1024 * 1024 {
-            return Err("Gitea response exceeds size limit.".into());
-        }
-        let value = if bytes.is_empty() {
-            Value::Null
-        } else {
-            serde_json::from_slice(&bytes)
-                .map_err(|_| "Gitea returned invalid JSON.".to_string())?
-        };
-        Ok((status, value))
+        gitea_request(&self.client, &self.token, method, url, body)
     }
 
     fn api(&self, method: Method, path: &str, body: Option<Value>) -> Result<Value, String> {
