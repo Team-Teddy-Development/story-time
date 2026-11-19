@@ -6,8 +6,9 @@
 
 use super::{
     forge::{self, GitHub},
-    forge_auth::{self, App},
-    registry::{branch_ok, Registry, RegistryRepo},
+    forge_auth::{self, App, Gitea},
+    registry::{branch_ok, Forge, Registry, RegistryRepo},
+    retry,
 };
 use crate::Failure;
 use serde_json::{json, Value};
@@ -24,7 +25,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-pub(super) const USAGE: &str = "[--registry FILE [--data DIR] [--github-app-id-file FILE --github-app-key-file FILE] [--github-api-url URL]]";
+pub(super) const USAGE: &str = "[--registry FILE [--data DIR] [--github-app-id-file FILE --github-app-key-file FILE] [--github-api-url URL] [--gitea-token-file FILE]]";
 const DEFAULT_DATA: &str = "/data";
 const DEFAULT_API: &str = "https://api.github.com";
 const NETWORK_TIMEOUT: Duration = Duration::from_secs(120);
@@ -41,6 +42,9 @@ pub(super) struct Workspace {
     registry: Registry,
     data: PathBuf,
     app: Option<App>,
+    /// The bot token that reads a Gitea repository. Without it a Gitea repository is read
+    /// without a credential.
+    gitea: Option<Gitea>,
     forge: Option<GitHub>,
     secrets: Secrets,
     slots: Vec<Mutex<Slot>>,
@@ -154,7 +158,8 @@ pub(super) fn launch(
             | "--data"
             | "--github-app-id-file"
             | "--github-app-key-file"
-            | "--github-api-url" => {
+            | "--github-api-url"
+            | "--gitea-token-file" => {
                 let value = args
                     .next()
                     .filter(|value| !value.is_empty())
@@ -205,9 +210,22 @@ pub(super) fn launch(
         Some(_) => Some(GitHub::new(api).map_err(|e| refuse(format!("{e}.")))?),
         None => None,
     };
+    let gitea = match flags.get("gitea-token-file") {
+        None => None,
+        Some(file) => Some(
+            Gitea::new(&read("gitea-token-file", file)?)
+                .map_err(|e| refuse(format!("--gitea-token-file {file}: {e}.")))?,
+        ),
+    };
     let data = flags.get("data").map_or(DEFAULT_DATA, |s| s);
-    let workspace = Workspace::open(registry, Path::new(data), app, forge, secrets.clone())
-        .map_err(|e| refuse(format!("--data {data}: {e}.")))?;
+    let workspace = Workspace::open(
+        registry,
+        Path::new(data),
+        (app, gitea),
+        forge,
+        secrets.clone(),
+    )
+    .map_err(|e| refuse(format!("--data {data}: {e}.")))?;
     Ok((rest, Some(workspace)))
 }
 
@@ -228,7 +246,7 @@ impl Workspace {
     fn open(
         registry: Registry,
         data: &Path,
-        app: Option<App>,
+        (app, gitea): (Option<App>, Option<Gitea>),
         forge: Option<GitHub>,
         secrets: Secrets,
     ) -> Result<Self, String> {
@@ -237,6 +255,12 @@ impl Workspace {
                 .map(|()| path)
                 .map_err(|e| format!("could not create the data directory ({})", e.kind()))
         };
+        if let Some(gitea) = &gitea {
+            secrets
+                .write()
+                .unwrap_or_else(|e| e.into_inner())
+                .extend(gitea.secrets());
+        }
         made(data.to_owned())?;
         let data = data
             .canonicalize()
@@ -258,6 +282,7 @@ impl Workspace {
             registry,
             data,
             app,
+            gitea,
             forge,
             secrets,
             next: AtomicU64::new(0),
@@ -309,11 +334,20 @@ impl Workspace {
         input: Option<&[u8]>,
         timeout: Duration,
     ) -> Result<String, String> {
-        let ran = self.run(repo, args, environment, input, timeout)?;
-        if ran.ok {
-            Ok(String::from_utf8_lossy(&ran.stdout).into_owned())
-        } else {
-            Err(self.failed(args, &ran))
+        // A name that did not resolve reached no server, so the command can run again.
+        let ran = retry::again(
+            retry::GIT_PAUSE,
+            |failed: &Ran| retry::name_did_not_resolve(&String::from_utf8_lossy(&failed.stderr)),
+            || match self.run(repo, args, environment, input, timeout) {
+                Ok(ran) if ran.ok => Ok(Ok(ran)),
+                Ok(ran) => Err(ran),
+                Err(not_run) => Ok(Err(not_run)),
+            },
+        );
+        match ran {
+            Ok(Ok(ran)) => Ok(String::from_utf8_lossy(&ran.stdout).into_owned()),
+            Ok(Err(not_run)) => Err(not_run),
+            Err(ran) => Err(self.failed(args, &ran)),
         }
     }
 
@@ -429,9 +463,12 @@ impl Workspace {
     /// Fetches `repo`, after making its bare clone when there is none.
     fn fetch(&self, repo: &RegistryRepo, slot: &mut Slot) -> Result<(), String> {
         let bare = self.bare(repo);
-        let access = match &self.app {
-            Some(app) => app.git_environment(&repo.clone)?,
-            None => Default::default(),
+        let access = match (repo.forge, &self.app, &self.gitea) {
+            (Forge::GitHub, Some(app), _) => app.git_environment(&repo.clone)?,
+            (Forge::Gitea, _, Some(gitea)) => {
+                gitea.git_environment(&repo.clone, repo.allow_http)?
+            }
+            _ => Default::default(),
         };
         if access.secrets != slot.secrets {
             let mut secrets = self.secrets.write().unwrap_or_else(|e| e.into_inner());
@@ -506,11 +543,16 @@ impl Workspace {
         }
     }
 
-    /// Fetches every repository once, so that the first read does not wait for a clone.
-    pub(super) fn warm(&self) {
-        for index in 0..self.slots.len() {
-            let mut slot = self.slots[index].lock().unwrap_or_else(|e| e.into_inner());
-            self.refresh(index, &mut slot);
+    /// Fetches every repository at start, so that the first read does not wait for a clone,
+    /// and again each TTL, so that a failed fetch does not wait for a read to be tried again.
+    pub(super) fn keep_fetched(&self) -> ! {
+        let ttl = Duration::from_secs(self.registry.fetch_ttl_seconds);
+        loop {
+            for index in 0..self.slots.len() {
+                let mut slot = self.slots[index].lock().unwrap_or_else(|e| e.into_inner());
+                self.refresh(index, &mut slot);
+            }
+            std::thread::sleep(ttl);
         }
     }
 
@@ -645,6 +687,15 @@ impl Workspace {
         self.registry.repos.iter().position(|repo| repo.key == key)
     }
 
+    /// The forge that holds the repository `key`.
+    pub(super) fn forge_of(&self, key: &str) -> Option<Forge> {
+        self.registry
+            .repos
+            .iter()
+            .find(|repo| repo.key == key)
+            .map(|repo| repo.forge)
+    }
+
     /// Starts a write of `key`: takes its write lock and fetches it, whatever the TTL. A write
     /// needs the current heads, so a failed fetch refuses the write.
     pub(super) fn write(&self, key: &str) -> Result<Writing<'_>, Refusal> {
@@ -716,6 +767,10 @@ impl Workspace {
     /// answer, the last answer for this head stands.
     pub(super) fn proposal(&self, key: &str, branch: &str) -> Option<(String, String)> {
         let index = self.index(key)?;
+        // The GitHub App has no installation on a Gitea repository.
+        if self.registry.repos[index].forge == Forge::Gitea {
+            return None;
+        }
         let head = self.head(&self.registry.repos[index], branch)?;
         let ttl = Duration::from_secs(self.registry.fetch_ttl_seconds);
         let at = (index, branch.to_owned());
@@ -776,6 +831,7 @@ impl Workspace {
                     "key": repo.key,
                     "org": repo.org,
                     "prefixes": repo.prefixes,
+                    "forge": repo.forge.name(),
                     "sha": status.sha,
                     "fetched_at": status.fetched_at,
                     "state": if status.state.is_empty() { "cloning" } else { status.state },

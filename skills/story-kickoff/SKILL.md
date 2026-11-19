@@ -16,10 +16,30 @@ before implementation. Return stale planning inputs to **sprint-planning** skill
 
 ## 1. Confirm the story
 
-Run `story show <id>`. It should be `in-progress` (set by the **story-pick**
-skill) or `ready`. If it is `ready`, set it: `story set <id>
-status=in-progress --note "kickoff"`. If it isn't ready, stop and use the
-**story-ready** skill.
+Read the story through the configured Story Time interface. It must be ready
+or an in-progress story you are authorized to resume. A status value alone
+is not execution ownership.
+
+For a local repository that uses native assignments, manual kickoff and the
+coordinator use the same repository reservation. For a named story, use:
+
+```bash
+story assignment next --owner <same-or-new-run-id> --pid <agent-process-id> --story <id>
+```
+
+Use the persistent agent PID and reuse the run ID supplied by story-pick or
+the coordinator when resuming its reservation. Keep tokens private. Proceed
+only on `claimed` or `resumed` and a matching `claim.story_id`. On `recovered`,
+inspect the recorded work and establish safe resumption before continuing.
+If capacity is full, the request is denied, the owner is uncertain, or the
+CLI cannot check the reservation, stop without changing the story or starting
+work. Do not retry without `--story` or use a status-only update as a fallback.
+
+After confirming ownership, mark a ready story in progress through the
+configured Story Time interface. For repositories that do not use native
+assignments, the manual story-pick workflow remains available, but it cannot
+share capacity with this coordinator. Keep coordinator dispatch disabled in
+those repositories.
 
 ## 2. Map criteria to tests
 
@@ -68,7 +88,8 @@ Seams: PasswordResetService (domain), ResetTokenRepository (new port + in-memory
 - [ ] contract: ResetTokenRepository (in-memory, postgres)
 ```
 
-Then `story set <id> status=in-progress --note "test plan written"`.
+Record the test-plan note through the configured Story Time interface. Do not
+use a status change here to start work without the admission from step 1.
 
 ## 5. Hand off
 

@@ -166,6 +166,30 @@ impl Fixture {
         .unwrap();
         path
     }
+    /// The registry with a third repository `teddy` in its own org. It declares the prefix VC,
+    /// which `core` of the org `fixture` also declares.
+    fn registry_of_two_orgs(&self) -> PathBuf {
+        let up = self.upstream("teddy");
+        fs::create_dir_all(&up).unwrap();
+        self.git(&up, &["init", "-q", "-b", "main"]);
+        self.write("teddy", ".story-time/settings.json", &settings("VC"));
+        self.write(
+            "teddy",
+            "backlog/VC-109.md",
+            &story("VC-109", "Teddy roster", "depends_on: []\n"),
+        );
+        // VE-046 is in `web` of the other org only.
+        self.write(
+            "teddy",
+            "backlog/VC-300.md",
+            &story("VC-300", "Teddy page", "depends_on: [VE-046]\n"),
+        );
+        self.commit("teddy", "first");
+        self.registry(&format!(
+            "\n[[repo]]\nkey = \"teddy\"\norg = \"teddy\"\nclone = \"{}\"\nforge = \"github\"\nprefixes = [\"VC\"]\n",
+            self.file_url("teddy")
+        ))
+    }
     fn command(&self) -> Command {
         let mut command = Command::new(env!("CARGO_BIN_EXE_story"));
         command
@@ -192,8 +216,15 @@ impl Fixture {
         .collect()
     }
     fn serve(&self, registry: &Path, extra: &[&str]) -> Http {
-        let mut child = self
-            .command()
+        self.serve_on(registry, extra, None)
+    }
+    /// `path` replaces the PATH of the server, so that a test can give it another `git`.
+    fn serve_on(&self, registry: &Path, extra: &[&str], path: Option<&std::ffi::OsStr>) -> Http {
+        let mut command = self.command();
+        if let Some(path) = path {
+            command.env("PATH", path);
+        }
+        let mut child = command
             .args(self.hosted_args(registry))
             .args(extra)
             .stdin(Stdio::null())
@@ -273,8 +304,11 @@ impl Http {
     }
     /// The structured content of one tool call, whether it succeeded or not.
     fn call(&self, name: &str, arguments: Value) -> Value {
+        self.call_as(READER, name, arguments)
+    }
+    fn call_as(&self, token: &str, name: &str, arguments: Value) -> Value {
         self.rpc(
-            READER,
+            token,
             "tools/call",
             json!({"name": name, "arguments": arguments}),
         )["structuredContent"]
@@ -477,18 +511,188 @@ fn a_repository_that_cannot_be_reached_is_unavailable_and_the_rest_keep_working(
     assert_eq!(lint["error"]["details"]["repository"], "gone");
 }
 
+/// ST-147: a `git` that fails the first `fails` fetches as a resolver failure does, and counts
+/// each fetch in the file that this returns with the PATH for the server.
+fn git_with_dns_failures(
+    fixture: &Fixture,
+    name: &str,
+    fails: u32,
+) -> (std::ffi::OsString, PathBuf) {
+    use std::os::unix::fs::PermissionsExt;
+    let found = Command::new("sh")
+        .args(["-c", "command -v git"])
+        .output()
+        .unwrap();
+    let real = String::from_utf8(found.stdout).unwrap().trim().to_owned();
+    let bin = fixture.base.join(name);
+    fs::create_dir_all(&bin).unwrap();
+    let count = bin.join("fetches");
+    let script = format!(
+        "#!/bin/sh\ncase \" $* \" in *\" fetch \"*)\n  n=$(cat '{count}' 2>/dev/null || echo 0); n=$((n+1)); echo $n > '{count}'\n  if [ $n -le {fails} ]; then\n    echo \"fatal: unable to access 'https://github.com/o/r.git/': Could not resolve host: github.com\" >&2\n    exit 128\n  fi;;\nesac\nexec '{real}' \"$@\"\n",
+        count = count.display()
+    );
+    fs::write(bin.join("git"), script).unwrap();
+    fs::set_permissions(bin.join("git"), fs::Permissions::from_mode(0o755)).unwrap();
+    let mut path = bin.into_os_string();
+    path.push(":");
+    path.push(std::env::var_os("PATH").unwrap_or_default());
+    (path, count)
+}
+
 #[test]
-fn a_registry_that_names_gitea_or_repeats_a_prefix_is_refused_at_start() {
+fn a_fetch_is_tried_again_when_the_forge_name_does_not_resolve() {
+    let fetches = |count: &Path| -> u32 {
+        fs::read_to_string(count)
+            .map(|text| text.trim().parse().unwrap())
+            .unwrap_or(0)
+    };
+    let one = "org = \"fixture\"\nfetch_ttl_seconds = 600\n\n[[repo]]\nkey = \"core\"\nclone = \"{}\"\nforge = \"github\"\nprefixes = [\"VC\", \"ST\"]\n";
+
+    // Two failures, then the fetch works: the client sees no failure.
+    let fixture = Fixture::new();
+    let registry = fixture.base.join("one.toml");
+    fs::write(&registry, one.replace("{}", &fixture.file_url("core"))).unwrap();
+    let (path, count) = git_with_dns_failures(&fixture, "flaky", 2);
+    let server = fixture.serve_on(&registry, &[], Some(&path));
+    let shown = server.ok("story_show", json!({"repository": "core", "id": "VC-109"}));
+    assert_eq!(shown["sha"], fixture.head("core", "main").as_str());
+    assert_eq!(fetches(&count), 3, "2 failures and the fetch that worked");
+    drop(server);
+
+    // The name never resolves: each fetch that the server starts is tried 4 times.
+    let fixture = Fixture::new();
+    let registry = fixture.base.join("one.toml");
+    fs::write(&registry, one.replace("{}", &fixture.file_url("core"))).unwrap();
+    let (path, count) = git_with_dns_failures(&fixture, "down", u32::MAX);
+    let server = fixture.serve_on(&registry, &[], Some(&path));
+    let shown = server.call("story_show", json!({"repository": "core", "id": "VC-109"}));
+    assert_eq!(shown["error"]["code"], "repository_unavailable", "{shown}");
+    assert!(
+        shown["error"]["details"]["reason"]
+            .as_str()
+            .is_some_and(|reason| reason.contains("Could not resolve host")),
+        "{shown}"
+    );
+    let tried = fetches(&count);
+    assert!(
+        tried >= 4 && tried % 4 == 0,
+        "{tried} tries: 4 for each fetch"
+    );
+}
+
+/// ST-156 (VM-034): a `git` that fails each fetch with the resolver text while the file
+/// `down` exists in its directory, which this returns with the PATH for the server.
+fn git_down_while_flagged(fixture: &Fixture) -> (std::ffi::OsString, PathBuf) {
+    use std::os::unix::fs::PermissionsExt;
+    let found = Command::new("sh")
+        .args(["-c", "command -v git"])
+        .output()
+        .unwrap();
+    let real = String::from_utf8(found.stdout).unwrap().trim().to_owned();
+    let bin = fixture.base.join("switch");
+    fs::create_dir_all(&bin).unwrap();
+    let down = bin.join("down");
+    let script = format!(
+        "#!/bin/sh\ncase \" $* \" in *\" fetch \"*)\n  if [ -e '{down}' ]; then\n    echo \"fatal: unable to access 'https://github.com/o/r.git/': Could not resolve host: github.com\" >&2\n    exit 128\n  fi;;\nesac\nexec '{real}' \"$@\"\n",
+        down = down.display()
+    );
+    fs::write(bin.join("git"), script).unwrap();
+    fs::set_permissions(bin.join("git"), fs::Permissions::from_mode(0o755)).unwrap();
+    let mut path = bin.into_os_string();
+    path.push(":");
+    path.push(std::env::var_os("PATH").unwrap_or_default());
+    (path, down)
+}
+
+#[test]
+fn a_failed_fetch_shows_its_error_beside_ready_until_the_background_fetch_works() {
+    let fixture = Fixture::new();
+    let (path, down) = git_down_while_flagged(&fixture);
+    let server = fixture.serve_on(&fixture.registry(""), &[], Some(&path));
+    let core = |server: &Http| {
+        server.ok("story_repos", json!({}))["repositories"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|repo| repo["key"] == "core")
+            .unwrap()
+            .clone()
+    };
+    // story_repos does not fetch, so each change below is the work of the background fetch.
+    let until = |server: &Http, what: &str, done: &dyn Fn(&Value) -> bool| -> Value {
+        let deadline = std::time::Instant::now() + Duration::from_secs(4 * TTL + 60);
+        loop {
+            let entry = core(server);
+            if done(&entry) {
+                return entry;
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "core never {what}: {entry}"
+            );
+            std::thread::sleep(Duration::from_millis(200));
+        }
+    };
+
+    let good = until(&server, "became ready", &|e| e["state"] == "ready");
+    assert_eq!(good["sha"], fixture.head("core", "main").as_str());
+    assert!(good["last_error"].is_null(), "{good}");
+
+    fs::write(&down, "").unwrap();
+    let failed = until(&server, "showed a failed fetch", &|e| {
+        !e["last_error"].is_null()
+    });
+    assert_eq!(failed["state"], "ready", "the state enum does not change");
+    assert_eq!(
+        failed["sha"], good["sha"],
+        "the last good fetch still serves reads"
+    );
+    assert!(
+        failed["last_error"]
+            .as_str()
+            .is_some_and(|e| e.contains("Could not resolve host")),
+        "{failed}"
+    );
+
+    fixture.write(
+        "core",
+        "backlog/VC-110.md",
+        &story("VC-110", "Roster export", "depends_on: []\n"),
+    );
+    let moved = fixture.commit("core", "second");
+    fs::remove_file(&down).unwrap();
+    let back = until(&server, "fetched the new commit", &|e| {
+        e["sha"] == moved.as_str()
+    });
+    assert_eq!(back["state"], "ready");
+    assert!(back["last_error"].is_null(), "{back}");
+}
+
+#[test]
+fn a_registry_with_an_unknown_forge_plain_http_or_a_repeated_prefix_is_refused_at_start() {
     let fixture = Fixture::new();
     let args = |registry: &Path| fixture.hosted_args(registry);
 
-    let gitea = fixture.registry(
-        "\n[[repo]]\nkey = \"ops\"\nclone = \"https://gitea.example/t/ops.git\"\nforge = \"gitea\"\nprefixes = [\"OP\"]\n",
+    let unknown = fixture.registry(
+        "\n[[repo]]\nkey = \"ops\"\nclone = \"https://gitea.example/t/ops.git\"\nforge = \"forgejo\"\nprefixes = [\"OP\"]\n",
     );
-    let (code, stderr) = fixture.refused(&args(&gitea));
+    let (code, stderr) = fixture.refused(&args(&unknown));
     assert_eq!(code, Some(2), "{stderr}");
     assert!(
-        stderr.contains("ops") && stderr.contains("gitea"),
+        stderr.contains("ops")
+            && stderr.contains("forgejo")
+            && stderr.contains("github")
+            && stderr.contains("gitea"),
+        "{stderr}"
+    );
+
+    let plain_http = fixture.registry(
+        "\n[[repo]]\nkey = \"ops\"\nclone = \"http://192.168.1.56:30003/t/ops.git\"\nforge = \"gitea\"\nprefixes = [\"OP\"]\n",
+    );
+    let (code, stderr) = fixture.refused(&args(&plain_http));
+    assert_eq!(code, Some(2), "{stderr}");
+    assert!(
+        stderr.contains("ops") && stderr.contains("allow_http"),
         "{stderr}"
     );
 
@@ -632,26 +836,7 @@ fn findings_of(lint: &Value, id: &str) -> Vec<(String, String)> {
 #[test]
 fn two_orgs_keep_their_stories_and_links_apart() {
     let fixture = Fixture::new();
-    let up = fixture.upstream("teddy");
-    fs::create_dir_all(&up).unwrap();
-    fixture.git(&up, &["init", "-q", "-b", "main"]);
-    fixture.write("teddy", ".story-time/settings.json", &settings("VC"));
-    fixture.write(
-        "teddy",
-        "backlog/VC-109.md",
-        &story("VC-109", "Teddy roster", "depends_on: []\n"),
-    );
-    // VE-046 is in `web` of the other org only.
-    fixture.write(
-        "teddy",
-        "backlog/VC-300.md",
-        &story("VC-300", "Teddy page", "depends_on: [VE-046]\n"),
-    );
-    fixture.commit("teddy", "first");
-    let registry = fixture.registry(&format!(
-        "\n[[repo]]\nkey = \"teddy\"\norg = \"teddy\"\nclone = \"{}\"\nforge = \"github\"\nprefixes = [\"VC\"]\n",
-        fixture.file_url("teddy")
-    ));
+    let registry = fixture.registry_of_two_orgs();
     let server = fixture.serve(&registry, &[]);
 
     // Each repository has the story of its own org under the shared id.
@@ -696,6 +881,102 @@ fn two_orgs_keep_their_stories_and_links_apart() {
     );
 }
 
+const SCOPED: &str = "scoped-token-0123456789abcdef";
+
+impl Fixture {
+    /// Adds the client `scoped`, which the clients file limits to `orgs`.
+    fn limit_a_client(&self, orgs: &str) {
+        let path = self.base.join("clients.toml");
+        let mut clients = fs::read_to_string(&path).unwrap();
+        clients.push_str(&format!(
+            "\n[[client]]\nid = \"scoped\"\ntoken_sha256 = \"{}\"\nscopes = [\"read\"]\norgs = {orgs}\n",
+            sha256(SCOPED.as_bytes())
+        ));
+        fs::write(path, clients).unwrap();
+    }
+}
+
+fn keys(listed: &Value) -> Vec<&str> {
+    listed["repositories"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|repo| repo["key"].as_str().unwrap())
+        .collect()
+}
+
+/// ST-142: `core` and `web` are in the org `fixture`, and `teddy` is in the org `teddy`.
+#[test]
+fn a_client_limited_to_an_org_uses_no_repository_of_another_org() {
+    let fixture = Fixture::new();
+    let registry = fixture.registry_of_two_orgs();
+    fixture.limit_a_client("[\"fixture\"]");
+    let server = fixture.serve(&registry, &[]);
+
+    // A repository of another org gets the answer of a repository that the server does not have.
+    let unknown = server.call_as(
+        SCOPED,
+        "story_show",
+        json!({"repository": "nope", "id": "VC-109"}),
+    );
+    assert_eq!(unknown["error"]["code"], "repository_not_allowed");
+    for (tool, arguments) in [
+        ("story_show", json!({"repository": "teddy", "id": "VC-109"})),
+        ("story_list", json!({"repository": "teddy"})),
+        ("story_lint", json!({"repository": "teddy"})),
+        ("story_config", json!({"repository": "teddy"})),
+    ] {
+        let refused = server.call_as(SCOPED, tool, arguments);
+        assert_eq!(refused["error"], unknown["error"], "{tool}: {refused}");
+    }
+    let audit = server.stderr();
+    let line = audit
+        .lines()
+        .filter_map(|line| serde_json::from_str::<Value>(line).ok())
+        .find(|line| line["tool"] == "story_list")
+        .unwrap_or_else(|| panic!("no audit line of story_list: {audit}"));
+    assert_eq!(line["client_id"], "scoped");
+    assert_eq!(line["outcome"], "error");
+    assert_eq!(line["error_code"], "repository_not_allowed");
+
+    // Its own org is open to it, and the lists hold that org only.
+    let shown = server.call_as(
+        SCOPED,
+        "story_show",
+        json!({"repository": "core", "id": "VC-109"}),
+    );
+    assert_eq!(title(&shown), "Roster API");
+    let repos = server.call_as(SCOPED, "story_repos", json!({}));
+    assert_eq!(keys(&repos), ["core", "web"]);
+    let config = server.call_as(SCOPED, "story_config", json!({}));
+    assert_eq!(keys(&config), ["core", "web"]);
+
+    // A client with no `orgs` key uses each repository.
+    let theirs = server.ok("story_show", json!({"repository": "teddy", "id": "VC-109"}));
+    assert_eq!(title(&theirs), "Teddy roster");
+    assert_eq!(
+        keys(&server.ok("story_repos", json!({}))),
+        ["core", "web", "teddy"]
+    );
+    assert_eq!(
+        keys(&server.ok("story_config", json!({}))),
+        ["core", "web", "teddy"]
+    );
+}
+
+#[test]
+fn a_client_org_that_the_registry_does_not_hold_stops_the_start() {
+    let fixture = Fixture::new();
+    let registry = fixture.registry_of_two_orgs();
+    fixture.limit_a_client("[\"fixture\", \"nope\"]");
+    let (code, stderr) = fixture.refused(&fixture.hosted_args(&registry));
+    assert_eq!(code, Some(2), "{stderr}");
+    assert!(
+        stderr.contains("client scoped") && stderr.contains("org nope"),
+        "{stderr}"
+    );
+}
+
 /// A stub of GitHub: the App API under `/api`, and one private repository under `/git` that it
 /// serves as static files (git's dumb HTTP protocol) to a request with the installation token.
 struct Stub {
@@ -711,6 +992,11 @@ impl Stub {
     /// time, and the thread pool of `tiny_http` 0.12 can leave one of them in its queue until
     /// another connection closes (ST-143). No pool, no queue.
     fn start(files: PathBuf) -> Self {
+        Self::start_for(files, INSTALLATION_TOKEN)
+    }
+
+    /// The same stub, with a repository that takes the token `token` as the basic password.
+    fn start_for(files: PathBuf, token: &str) -> Self {
         let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
         let address = listener.local_addr().unwrap();
         let url = format!("http://{address}");
@@ -718,7 +1004,7 @@ impl Stub {
         let stopped = Arc::new(std::sync::atomic::AtomicBool::new(false));
         let basic = format!(
             "basic {}",
-            base64(format!("x-access-token:{INSTALLATION_TOKEN}").as_bytes())
+            base64(format!("x-access-token:{token}").as_bytes())
         );
         let (log, stop) = (seen.clone(), stopped.clone());
         std::thread::spawn(move || {
@@ -979,4 +1265,324 @@ fn a_private_repository_is_fetched_with_an_installation_token_that_no_output_sho
         .filter(|s| s.1.ends_with("/access_tokens"))
         .count();
     assert_eq!(tokens, 1);
+}
+
+/// A registry of one repository `core` on the Gitea clone URL `clone`.
+fn gitea_registry(fixture: &Fixture, clone: &str) -> PathBuf {
+    let registry = fixture.base.join("registry.toml");
+    fs::write(
+        &registry,
+        format!(
+            "org = \"fixture\"\nfetch_ttl_seconds = {TTL}\n\n[[repo]]\nkey = \"core\"\nclone = \"{clone}\"\nforge = \"gitea\"\ndefault_branch = \"main\"\nprefixes = [\"VC\", \"ST\"]\n"
+        ),
+    )
+    .unwrap();
+    registry
+}
+
+#[test]
+fn a_gitea_repository_is_read_like_a_github_repository() {
+    let fixture = Fixture::new();
+    let registry = gitea_registry(&fixture, &fixture.file_url("core"));
+    let server = fixture.serve(&registry, &[]);
+    let head = fixture.head("core", "main");
+
+    let listed = server.ok("story_list", json!({"repository": "core"}));
+    let repos = server.ok("story_repos", json!({}));
+    let entry = &repos["repositories"][0];
+    assert_eq!(entry["key"], "core", "{repos}");
+    assert_eq!(entry["state"], "ready", "{repos}");
+    assert_eq!(entry["forge"], "gitea", "{repos}");
+    assert_eq!(entry["sha"], head.as_str(), "{repos}");
+    assert!(entry["fetched_at"].is_string(), "{repos}");
+
+    let ids: Vec<&str> = listed["stories"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|story| story["id"].as_str().unwrap())
+        .collect();
+    assert_eq!(ids, ["ST-001", "VC-109"], "{listed}");
+    let shown = server.ok("story_show", json!({"repository": "core", "id": "VC-109"}));
+    assert_eq!(title(&shown), "Roster API");
+    assert_eq!(shown["sha"], head.as_str());
+    let linted = server.ok("story_lint", json!({"repository": "core"}));
+    assert_eq!(linted["sha"], head.as_str(), "{linted}");
+    let config = server.ok("story_config", json!({}));
+    assert_eq!(config["repositories"][0]["status"], "ok", "{config}");
+    assert_eq!(config["repositories"][0]["prefix"], "VC", "{config}");
+
+    // A GitHub entry keeps its forge in the same report.
+    let mixed = fixture.registry("");
+    let server = fixture.serve(&mixed, &[]);
+    server.ok("story_list", json!({"repository": "core"}));
+    let repos = server.ok("story_repos", json!({}));
+    for entry in repos["repositories"].as_array().unwrap() {
+        assert_eq!(entry["forge"], "github", "{repos}");
+    }
+}
+
+const GITEA_TOKEN: &str = "gta_StubGiteaBotToken0123456789abcdef";
+
+fn private_gitea(fixture: &Fixture) -> (Stub, PathBuf) {
+    let files = fixture.base.join("stub-git");
+    let bare = files.join("o/core.git");
+    fs::create_dir_all(bare.parent().unwrap()).unwrap();
+    fixture.git(
+        &fixture.base,
+        &[
+            "clone",
+            "-q",
+            "--bare",
+            fixture.upstream("core").to_str().unwrap(),
+            bare.to_str().unwrap(),
+        ],
+    );
+    fixture.git(&bare, &["update-server-info"]);
+    let stub = Stub::start_for(files, GITEA_TOKEN);
+    let registry = gitea_registry(fixture, &format!("{}/git/o/core.git", stub.url));
+    (stub, registry)
+}
+
+#[test]
+fn a_private_gitea_repository_is_fetched_with_the_bot_token_that_no_output_shows() {
+    let fixture = Fixture::new();
+    let (stub, registry) = private_gitea(&fixture);
+    let token_file = fixture.base.join("gitea-token");
+    fs::write(&token_file, format!("{GITEA_TOKEN}\n")).unwrap();
+    let server = fixture.serve(
+        &registry,
+        &["--gitea-token-file", token_file.to_str().unwrap()],
+    );
+
+    let shown = server.ok("story_show", json!({"repository": "core", "id": "VC-109"}));
+    assert_eq!(shown["sha"], fixture.head("core", "main").as_str());
+    let repos = server.ok("story_repos", json!({}));
+    assert_eq!(repos["repositories"][0]["state"], "ready", "{repos}");
+    assert_eq!(repos["repositories"][0]["forge"], "gitea", "{repos}");
+
+    let basic = base64(format!("x-access-token:{GITEA_TOKEN}").as_bytes());
+    let seen = stub.seen.lock().unwrap().clone();
+    assert!(
+        seen.iter().all(|call| !call.1.starts_with("/api/")),
+        "no forge API request: {seen:?}"
+    );
+    let git_calls: Vec<_> = seen.iter().filter(|s| s.1.starts_with("/git/")).collect();
+    assert!(!git_calls.is_empty());
+    for (_, path, authorization) in &git_calls {
+        assert!(
+            authorization.eq_ignore_ascii_case(&format!("basic {basic}")),
+            "{path}"
+        );
+    }
+    for text in [shown.to_string(), repos.to_string(), server.stderr()] {
+        assert!(!text.contains(GITEA_TOKEN), "{text}");
+        assert!(!text.contains(&basic), "{text}");
+    }
+
+    // A token inside a story file is redacted from the result as well.
+    fixture.write(
+        "core",
+        "backlog/VC-109.md",
+        &story(
+            "VC-109",
+            &format!("Leaks {GITEA_TOKEN}"),
+            "depends_on: []\n",
+        ),
+    );
+    fixture.commit("core", "leak");
+    let bare = fixture.base.join("stub-git/o/core.git");
+    fixture.git(
+        &bare,
+        &[
+            "fetch",
+            "-q",
+            fixture.upstream("core").to_str().unwrap(),
+            "main:main",
+        ],
+    );
+    fixture.git(&bare, &["update-server-info"]);
+    std::thread::sleep(Duration::from_millis(TTL * 1000 + 300));
+    let leaked = server.ok("story_show", json!({"repository": "core", "id": "VC-109"}));
+    assert!(title(&leaked).contains("Leaks"), "{leaked}");
+    assert!(!leaked.to_string().contains(GITEA_TOKEN), "{leaked}");
+    assert!(leaked["redactions"].as_u64().unwrap() >= 1, "{leaked}");
+}
+
+#[test]
+fn a_private_gitea_repository_is_unavailable_to_a_server_without_the_token() {
+    let fixture = Fixture::new();
+    let (stub, registry) = private_gitea(&fixture);
+    let server = fixture.serve(&registry, &[]);
+    let refused = server.call("story_show", json!({"repository": "core", "id": "VC-109"}));
+    let repos = server.ok("story_repos", json!({}));
+    assert_eq!(repos["repositories"][0]["state"], "unavailable", "{repos}");
+    assert_eq!(repos["repositories"][0]["forge"], "gitea", "{repos}");
+    assert_eq!(
+        refused["error"]["code"], "repository_unavailable",
+        "{refused}"
+    );
+    let basic = base64(format!("x-access-token:{GITEA_TOKEN}").as_bytes());
+    for text in [repos.to_string(), refused.to_string(), server.stderr()] {
+        assert!(!text.contains(GITEA_TOKEN), "{text}");
+        assert!(!text.contains(&basic), "{text}");
+    }
+    assert!(stub
+        .seen
+        .lock()
+        .unwrap()
+        .iter()
+        .all(|call| call.2.is_empty() || !call.1.starts_with("/api/")));
+}
+
+#[test]
+fn writes_and_comments_on_a_gitea_repository_are_refused_before_any_forge_call() {
+    let fixture = Fixture::new();
+    // `core` is the Gitea repository and has the branch `story-time/VC-109`. `web` is GitHub.
+    let registry = fixture.registry("");
+    let text = fs::read_to_string(&registry).unwrap().replacen(
+        "forge = \"github\"",
+        "forge = \"gitea\"",
+        1,
+    );
+    fs::write(&registry, text).unwrap();
+    fs::write(
+        fixture.base.join("clients.toml"),
+        format!(
+            "[[client]]\nid = \"writer\"\ntoken_sha256 = \"{}\"\nscopes = [\"read\", \"write\", \"comment\"]\n",
+            sha256(WRITER.as_bytes())
+        ),
+    )
+    .unwrap();
+    let stub = Stub::start(fixture.base.join("stub-git"));
+    let key = fixture.base.join("app-key.pem");
+    let generated = Command::new("openssl")
+        .args(["genrsa", "-out", key.to_str().unwrap(), "2048"])
+        .output()
+        .expect("openssl makes the throwaway App key");
+    assert!(generated.status.success());
+    let id = fixture.base.join("app-id");
+    fs::write(&id, "12345\n").unwrap();
+    let api = format!("{}/api", stub.url);
+    let server = fixture.serve(
+        &registry,
+        &[
+            "--github-app-id-file",
+            id.to_str().unwrap(),
+            "--github-app-key-file",
+            key.to_str().unwrap(),
+            "--github-api-url",
+            &api,
+        ],
+    );
+    let names: Vec<String> = server
+        .tools(WRITER)
+        .iter()
+        .map(|tool| tool["name"].as_str().unwrap().to_owned())
+        .collect();
+    assert!(names.contains(&"story_update".to_owned()), "{names:?}");
+    let branches = fixture.git(&fixture.upstream("core"), &["branch", "--list"]);
+
+    let shown = server.call_as(
+        WRITER,
+        "story_show",
+        json!({"repository": "core", "id": "VC-109"}),
+    );
+    assert!(shown["proposed"].is_null(), "{shown}");
+    let calls = [
+        (
+            "story_update",
+            json!({"repository": "core", "id": "VC-109", "expected_sha256": shown["sha256"], "set": {"title": "Renamed"}}),
+        ),
+        (
+            "story_note",
+            json!({"repository": "core", "id": "VC-109", "expected_sha256": shown["sha256"], "note": "A note"}),
+        ),
+        (
+            "story_create",
+            json!({"repository": "core", "title": "A new story"}),
+        ),
+        (
+            "story_comments",
+            json!({"repository": "core", "id": "VC-109"}),
+        ),
+        (
+            "story_resolve_comment",
+            json!({"repository": "core", "id": "VC-109", "comment_id": 1, "note": "Done"}),
+        ),
+    ];
+    for (name, arguments) in calls {
+        let refused = server.call_as(WRITER, name, arguments);
+        assert_eq!(
+            refused["error"]["code"], "forge_not_supported",
+            "{name}: {refused}"
+        );
+        assert_eq!(refused["error"]["retryable"], false, "{name}: {refused}");
+        let message = refused["error"]["message"].as_str().unwrap();
+        assert!(
+            message.contains("Gitea") && message.contains("not supported"),
+            "{message}"
+        );
+    }
+    assert!(
+        stub.seen.lock().unwrap().is_empty(),
+        "no request reached the forge: {:?}",
+        stub.seen.lock().unwrap()
+    );
+    assert_eq!(
+        fixture.git(&fixture.upstream("core"), &["branch", "--list"]),
+        branches
+    );
+    assert_eq!(
+        fixture.head("core", "story-time/VC-109"),
+        fixture.git(
+            &fixture.upstream("core"),
+            &["rev-parse", "story-time/VC-109"]
+        )
+    );
+}
+
+#[test]
+fn a_gitea_token_file_that_is_missing_empty_or_without_a_registry_stops_the_start() {
+    let fixture = Fixture::new();
+    let registry = gitea_registry(&fixture, &fixture.file_url("core"));
+    let base = fixture.hosted_args(&registry);
+    let with = |path: &Path| {
+        let mut args = base.clone();
+        args.extend(["--gitea-token-file".to_owned(), path.display().to_string()]);
+        args
+    };
+
+    let (code, stderr) = fixture.refused(&with(&fixture.base.join("absent")));
+    assert_eq!(code, Some(2), "{stderr}");
+    assert!(stderr.contains("--gitea-token-file"), "{stderr}");
+
+    let empty = fixture.base.join("empty-token");
+    fs::write(&empty, " \n").unwrap();
+    let (code, stderr) = fixture.refused(&with(&empty));
+    assert_eq!(code, Some(2), "{stderr}");
+    assert!(stderr.contains("--gitea-token-file"), "{stderr}");
+
+    let spaced = fixture.base.join("spaced-token");
+    fs::write(&spaced, "gta_two words\n").unwrap();
+    let (code, stderr) = fixture.refused(&with(&spaced));
+    assert_eq!(code, Some(2), "{stderr}");
+    assert!(
+        stderr.contains("--gitea-token-file") && !stderr.contains("gta_two"),
+        "{stderr}"
+    );
+
+    let fine = fixture.base.join("fine-token");
+    fs::write(&fine, "gta_fine\n").unwrap();
+    let (code, stderr) = fixture.refused(&[
+        "--http".to_owned(),
+        "127.0.0.1:0".to_owned(),
+        "--gitea-token-file".to_owned(),
+        fine.display().to_string(),
+    ]);
+    assert_eq!(code, Some(2), "{stderr}");
+    assert!(
+        stderr.contains("--gitea-token-file") && stderr.contains("--registry"),
+        "{stderr}"
+    );
 }

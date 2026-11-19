@@ -19,6 +19,8 @@ fn story_help_lists_the_native_plan_and_adopt_commands() {
         "adopt  preview",
         "issues --state open",
         "metrics --from",
+        "check-pr [--body-file",
+        "sync-merge [--all]",
     ] {
         let line = help
             .lines()

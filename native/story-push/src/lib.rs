@@ -1,5 +1,7 @@
 pub mod adoption;
 mod adoption_apply;
+pub mod assignment;
+mod check_pr;
 pub mod config;
 pub mod export;
 pub mod gateway;
@@ -27,7 +29,9 @@ pub mod show;
 pub mod skill_install;
 pub mod split;
 pub mod stats;
+mod stories_line;
 pub mod story;
+mod sync_merge;
 pub mod table;
 mod toml_subset;
 
@@ -65,9 +69,12 @@ pub const NATIVE_COMMANDS: &[(&str, Native)] = &[
     ("note", |args| note::run(args).map(|out| (out, 0))),
     ("new", |args| new_story::run(args).map(|out| (out, 0))),
     ("rank", |args| rank::run(args).map(|out| (out, 0))),
+    ("assignment", assignment::run),
     ("judge", judge::run),
     ("set", |args| set::run(args).map(|out| (out, 0))),
     ("split", |args| split::run(args).map(|out| (out, 0))),
+    ("check-pr", check_pr::run),
+    ("sync-merge", sync_merge::run),
     ("help", |args| help::run(args).map(|out| (out, 0))),
 ];
 

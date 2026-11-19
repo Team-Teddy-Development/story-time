@@ -5,21 +5,27 @@ on:
 permissions:
   contents: read
   issues: read
+  pull-requests: read
 jobs:
   story-link:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
       - uses: dtolnay/rust-toolchain@stable
-      - name: Test and build the story mandate checker
-        run: |
-          rustc --edition=2021 --test scripts/story-policy.rs -o /tmp/story-policy-tests
-          /tmp/story-policy-tests
-          rustc --edition=2021 scripts/story-policy.rs -o /tmp/story-policy
-      - name: Validate declared stories
+      - id: cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.story-root/bin/story
+          key: story-${{ hashFiles('native/story-push/**', 'skills/story-time/scripts/usage.txt') }}
+      - if: steps.cache.outputs.cache-hit != 'true'
+        run: cargo install --locked --path native/story-push --bin story --root ~/.story-root
+      - name: Check declared stories
         env:
           PR_BODY: ${{ github.event.pull_request.body }}
           IS_INCIDENT: ${{ contains(github.event.pull_request.labels.*.name, 'incident') }}
-          GH_TOKEN: ${{ github.token }}
+          STORY_ACCEPTANCE: ${{ vars.STORY_ACCEPTANCE }}
           REPO: ${{ github.repository }}
-        run: /tmp/story-policy story-link
+          GH_TOKEN: ${{ github.token }}
+        run: ~/.story-root/bin/story check-pr

@@ -46,11 +46,11 @@ impl GitHub {
     }
 
     fn send(&self, access: &Access, request: RequestBuilder, step: &str) -> Result<Value, String> {
-        let response = request
+        let request = request
             .bearer_auth(&access.token)
             .header("Accept", "application/vnd.github+json")
-            .header("X-GitHub-Api-Version", "2022-11-28")
-            .send()
+            .header("X-GitHub-Api-Version", "2022-11-28");
+        let response = super::retry::send(request)
             .map_err(|_| format!("GitHub did not answer the {step} request"))?;
         let status = response.status();
         if !status.is_success() {
@@ -137,8 +137,7 @@ impl GitHub {
         if let Some(known) = &known {
             request = request.header("If-None-Match", &known.etag);
         }
-        let response = request
-            .send()
+        let response = super::retry::send(request)
             .map_err(|_| format!("GitHub did not answer the {step} request"))?;
         let status = response.status();
         if let (304, Some(known)) = (status.as_u16(), known) {

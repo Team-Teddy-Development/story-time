@@ -29,6 +29,7 @@ mod graph;
 mod http;
 mod propose;
 mod registry;
+mod retry;
 mod workspace;
 use caller::{Caller, Scope};
 use workspace::{Refusal, Workspace};
@@ -83,9 +84,17 @@ pub fn run(args: &[String]) -> Result<(String, u8), Failure> {
     let (args, workspace) = workspace::launch(&args, &redactor.live)?;
     let workspace = workspace.map(Arc::new);
     let (args, http) = http::launch(&args)?;
+    if let Some(http) = &http {
+        let repos = workspace.as_ref().map(|workspace| workspace.repos());
+        let held: Vec<&str> = repos
+            .iter()
+            .flat_map(|repos| repos.iter().map(|repo| repo.org.as_str()))
+            .collect();
+        http.check_orgs(&held)?;
+    }
     let (roots, write) = roots(&args, workspace.is_some())?;
     if let Some(workspace) = workspace.clone() {
-        std::thread::spawn(move || workspace.warm());
+        std::thread::spawn(move || workspace.keep_fetched());
     }
     let server = Server {
         roots,
@@ -406,14 +415,24 @@ impl Server {
             .filter(move |t| !self.hosted || caller.has(t.scope()))
     }
 
-    /// Refuses a hosted call that the caller's scopes or prefixes do not cover. The target
-    /// prefix is that of the story id, or the repository's own prefix for a call with no id.
+    /// Refuses a hosted call that the caller's orgs, scopes, or prefixes do not cover. The
+    /// target prefix is that of the story id, or the repository's own prefix for a call with no
+    /// id. A repository of an org that the caller cannot use gets the answer of an unknown
+    /// repository, so the answer does not show that the server has it.
     fn permit(
         &self,
         caller: &Caller,
         tool: &Tool,
         args: &Map<String, Value>,
     ) -> Result<(), ToolError> {
+        if let Some(org) = self.key(args).ok().and_then(|key| self.org_of(&key)) {
+            if !caller.uses(&org) {
+                return Err(fail(
+                    "repository_not_allowed",
+                    "That repository is not allowlisted.",
+                ));
+            }
+        }
         let scope = tool.scope();
         let prefix = match args.get("id").and_then(Value::as_str) {
             _ if !self.hosted || scope == Scope::Read => None,
@@ -441,6 +460,7 @@ impl Server {
         let run = |args: &Map<String, Value>| {
             self.permit(caller, tool, args)
                 .and_then(|()| tool.run(self, caller, args))
+                .map(|content| self.visible(caller, content))
         };
         let started = Instant::now();
         let empty = Map::new();
@@ -472,6 +492,28 @@ impl Server {
             "structuredContent": content,
             "isError": is_error,
         }))
+    }
+
+    /// `content` without the entries of a `repositories` list that are of an org the caller
+    /// cannot use. `story_repos`, and `story_config` with no repository, list each repository.
+    fn visible(&self, caller: &Caller, mut content: Value) -> Value {
+        if let Some(listed) = content
+            .get_mut("repositories")
+            .and_then(Value::as_array_mut)
+        {
+            listed.retain(|entry| {
+                let org = entry["key"].as_str().and_then(|key| self.org_of(key));
+                org.is_none_or(|org| caller.uses(&org))
+            });
+        }
+        content
+    }
+
+    /// The org of the repository `key` in the registry. Local roots have no org.
+    fn org_of(&self, key: &str) -> Option<String> {
+        let repos = self.workspace.as_ref()?.repos();
+        let repo = repos.iter().find(|repo| repo.key == key)?;
+        Some(repo.org.clone())
     }
 
     /// One value-free JSON line on stderr per tool call: allowlisted keys and valid ids only.
@@ -1890,6 +1932,12 @@ impl Tool {
         matches!(self.name, "story_list" | "story_show" | "story_lint")
     }
 
+    /// Whether this tool calls the forge: it proposes a change or reads or writes comments.
+    fn uses_forge(&self) -> bool {
+        propose::handles(self.name)
+            || matches!(self.name, "story_comments" | "story_resolve_comment")
+    }
+
     /// The scope a hosted client needs for this tool.
     fn scope(&self) -> Scope {
         if self.name == "story_resolve_comment" {
@@ -1977,6 +2025,17 @@ impl Tool {
                 &format!("/{missing}"),
                 format!("/{missing} is required."),
             ));
+        }
+        if let Some(workspace) = &server.workspace {
+            let on_gitea = server
+                .key(args)
+                .is_ok_and(|key| workspace.forge_of(&key) == Some(registry::Forge::Gitea));
+            if self.uses_forge() && on_gitea {
+                return Err(fail(
+                    "forge_not_supported",
+                    "Writes and comments on a Gitea repository are not supported yet.",
+                ));
+            }
         }
         match &server.workspace {
             Some(workspace) if propose::handles(self.name) => {
@@ -2160,6 +2219,7 @@ fn repos_schema() -> Value {
             "key",
             "org",
             "prefixes",
+            "forge",
             "sha",
             "fetched_at",
             "state",
@@ -2169,6 +2229,7 @@ fn repos_schema() -> Value {
             "key": {"type": "string"},
             "org": {"type": "string"},
             "prefixes": texts(),
+            "forge": {"enum": ["github", "gitea"]},
             "sha": nullable_text,
             "fetched_at": nullable_text,
             "state": {"enum": ["ready", "cloning", "unavailable"]},
