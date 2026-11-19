@@ -5,6 +5,7 @@
 //! directory that holds the story files of the base commit.
 
 use super::{
+    accept_in,
     caller::Caller,
     create_in, fail, io_error, note_in, refused, registry, update_in,
     workspace::{Pushed, Workspace, Writing},
@@ -16,7 +17,10 @@ use std::path::Path;
 
 /// Whether a registry server proposes the change of this tool.
 pub(super) fn handles(tool: &str) -> bool {
-    matches!(tool, "story_update" | "story_note" | "story_create")
+    matches!(
+        tool,
+        "story_update" | "story_note" | "story_create" | "story_accept"
+    )
 }
 
 /// The branch that holds the proposed changes of story `id`.
@@ -155,6 +159,7 @@ pub(super) fn run(
         let written = match tool {
             "story_update" => update_in(server, &repo, args),
             "story_note" => note_in(&repo, args),
+            "story_accept" => accept_in(&repo, args),
             _ => {
                 let prefix = repo.settings["prefix"].as_str().unwrap_or("ST");
                 create_in(&repo, args, floor(&writing, &backlog, prefix)?)
@@ -184,6 +189,7 @@ pub(super) fn run(
         let subject = match tool {
             "story_update" => "update the story",
             "story_note" => "add a note",
+            "story_accept" => "record acceptance",
             _ => "create the story",
         };
         let message = format!("story({id}): {subject}\n\nRequested-by: {client}\n");
