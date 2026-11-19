@@ -29,6 +29,15 @@ struct Neo4j {
 }
 impl Neo4j {
     fn start() -> Option<Self> {
+        Self::start_with(&format!("NEO4J_AUTH=neo4j/{PASSWORD}"))
+    }
+
+    /// A Neo4j that asks for no credentials, as the sidecar of the hosted server runs.
+    fn open() -> Option<Self> {
+        Self::start_with("NEO4J_AUTH=none")
+    }
+
+    fn start_with(auth: &str) -> Option<Self> {
         if docker(&["info", "--format", "{{.ServerVersion}}"]).is_none() {
             eprintln!("SKIP: docker is unavailable, so the Neo4j graph tests cannot run.");
             return None;
@@ -38,7 +47,6 @@ impl Neo4j {
             std::process::id(),
             NEXT.fetch_add(1, Ordering::Relaxed)
         );
-        let auth = format!("NEO4J_AUTH=neo4j/{PASSWORD}");
         docker(&[
             "run",
             "-d",
@@ -49,7 +57,7 @@ impl Neo4j {
             "-p",
             "127.0.0.1::7474",
             "-e",
-            &auth,
+            auth,
             "-e",
             "NEO4J_server_memory_heap_max__size=256m",
             "-e",
@@ -712,4 +720,650 @@ fn graph_launch_refuses_an_unset_password_variable_without_echoing_values() {
     assert_eq!(output.status.code(), Some(2));
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(stderr.contains(PASSWORD_ENV), "{stderr}");
+}
+
+/// Three registered repositories behind `story mcp --http --registry --graph` (ST-132). The
+/// upstream repositories are local git repositories. The server has no Neo4j credentials.
+struct Org {
+    base: PathBuf,
+    child: Child,
+    url: String,
+    stderr: std::sync::Arc<std::sync::Mutex<Vec<String>>>,
+}
+const ORG_TOKEN: &str = "org-graph-token-0123456789abcdef";
+
+impl Org {
+    fn git(base: &Path, dir: &Path, args: &[&str]) -> String {
+        let output = Command::new("git")
+            .args(["-c", "user.name=Fixture", "-c", "commit.gpgsign=false"])
+            .args(["-c", "user.email=fixture@example.invalid"])
+            .args(args)
+            .current_dir(dir)
+            .env("HOME", base)
+            .env("GIT_CONFIG_NOSYSTEM", "1")
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "git {args:?}: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        String::from_utf8(output.stdout).unwrap().trim().to_owned()
+    }
+
+    fn write(&self, repo: &str, id: &str, text: &str) {
+        let dir = self.base.join("up").join(repo).join("backlog");
+        fs::create_dir_all(&dir).unwrap();
+        fs::write(dir.join(format!("{id}.md")), text).unwrap();
+    }
+
+    /// Commits everything in `repo` and returns the new head.
+    fn commit(&self, repo: &str) -> String {
+        let dir = self.base.join("up").join(repo);
+        Self::git(&self.base, &dir, &["add", "-A"]);
+        Self::git(&self.base, &dir, &["commit", "-q", "-m", "stories"]);
+        Self::git(&self.base, &dir, &["rev-parse", "HEAD"])
+    }
+
+    fn start(neo4j: &Neo4j, stories: &[(&str, &str, &str)]) -> Self {
+        let repos = [
+            ("core", "VC", "", ""),
+            ("other", "OT", "", ""),
+            ("web", "VE", "", ""),
+        ];
+        Self::start_with(neo4j, &repos, stories)
+    }
+
+    /// `repos` gives each repository its key, its prefix, its org, and its GitHub tracker
+    /// target. An empty org leaves the repository in the top-level org `fixture`. An empty
+    /// target gives it the files tracker.
+    fn start_with(
+        neo4j: &Neo4j,
+        repos: &[(&str, &str, &str, &str)],
+        stories: &[(&str, &str, &str)],
+    ) -> Self {
+        let base = std::env::temp_dir().join(format!(
+            "story-mcp-graph-org-{}-{}",
+            std::process::id(),
+            NEXT.fetch_add(1, Ordering::Relaxed)
+        ));
+        fs::create_dir_all(&base).unwrap();
+        let base = base.canonicalize().unwrap();
+        let mut registry = String::from("org = \"fixture\"\nfetch_ttl_seconds = 1\n");
+        for (repo, prefix, org, target) in repos.iter().copied() {
+            let dir = base.join("up").join(repo);
+            fs::create_dir_all(dir.join(".story-time")).unwrap();
+            Self::git(&base, &dir, &["init", "-q", "-b", "main"]);
+            let settings = match target {
+                "" => format!(r#"{{"tracker": "files", "prefix": "{prefix}"}}"#),
+                target => format!(
+                    r#"{{"tracker": "github", "sync": "ask", "prefix": "{prefix}", "github": {{"repo": "{target}"}}}}"#
+                ),
+            };
+            fs::write(dir.join(".story-time/settings.json"), settings).unwrap();
+            registry.push_str(&format!(
+                "[[repo]]\nkey = \"{repo}\"\nclone = \"file://{}\"\nforge = \"github\"\nprefixes = [\"{prefix}\"]\n",
+                dir.display()
+            ));
+            if !org.is_empty() {
+                registry.push_str(&format!("org = \"{org}\"\n"));
+            }
+        }
+        fs::write(base.join("registry.toml"), registry).unwrap();
+        fs::write(
+            base.join("clients.toml"),
+            format!(
+                "[[client]]\nid = \"reader\"\ntoken_sha256 = \"{}\"\nscopes = [\"read\", \"write\"]\n",
+                sha256(ORG_TOKEN.as_bytes())
+            ),
+        )
+        .unwrap();
+        let mut org = Self {
+            child: Command::new("true").spawn().unwrap(),
+            url: String::new(),
+            stderr: Default::default(),
+            base,
+        };
+        for (repo, id, text) in stories {
+            org.write(repo, id, text);
+        }
+        for (repo, _, _, _) in repos {
+            org.commit(repo);
+        }
+        let path = |name: &str| org.base.join(name).to_str().unwrap().to_owned();
+        let mut child = Command::new(env!("CARGO_BIN_EXE_story"))
+            .args([
+                "mcp",
+                "--http",
+                "127.0.0.1:0",
+                "--registry",
+                &path("registry.toml"),
+            ])
+            .args(["--data", &path("data"), "--clients", &path("clients.toml")])
+            .args(["--graph", "--neo4j-url", &neo4j.url])
+            .env_clear()
+            .env("PATH", std::env::var_os("PATH").unwrap_or_default())
+            .env("HOME", &org.base)
+            .current_dir(&org.base)
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::piped())
+            .spawn()
+            .unwrap();
+        let lines = BufReader::new(child.stderr.take().unwrap());
+        let (found, address) = std::sync::mpsc::channel();
+        let sink = org.stderr.clone();
+        std::thread::spawn(move || {
+            for line in lines.lines().map_while(Result::ok) {
+                if let Some(address) = line.strip_prefix("listening on ") {
+                    let _ = found.send(address.to_owned());
+                }
+                sink.lock().unwrap().push(line);
+            }
+        });
+        let _ = org.child.wait();
+        org.child = child;
+        let address = address
+            .recv_timeout(Duration::from_secs(20))
+            .unwrap_or_else(|_| panic!("no listening line: {:?}", org.stderr.lock().unwrap()));
+        org.url = format!("http://{address}");
+        org
+    }
+
+    fn rpc(&self, method: &str, mut params: Value) -> Value {
+        params["_meta"] = json!({
+            "io.modelcontextprotocol/protocolVersion": "2026-07-28",
+            "io.modelcontextprotocol/clientCapabilities": {}
+        });
+        let reply: Value = reqwest::blocking::Client::builder()
+            .timeout(Duration::from_secs(60))
+            .build()
+            .unwrap()
+            .post(format!("{}/mcp", self.url))
+            .bearer_auth(ORG_TOKEN)
+            .json(&json!({"jsonrpc": "2.0", "id": 1, "method": method, "params": params}))
+            .send()
+            .unwrap()
+            .json()
+            .unwrap();
+        assert!(reply.get("error").is_none(), "{reply}");
+        reply["result"].clone()
+    }
+
+    fn call(&self, name: &str, arguments: Value) -> Value {
+        self.rpc("tools/call", json!({"name": name, "arguments": arguments}))["structuredContent"]
+            .clone()
+    }
+
+    fn ok(&self, name: &str, arguments: Value) -> Value {
+        let content = self.call(name, arguments);
+        assert!(content.get("error").is_none(), "{name}: {content}");
+        content
+    }
+}
+impl Drop for Org {
+    fn drop(&mut self) {
+        let _ = self.child.kill();
+        let _ = self.child.wait();
+        let _ = fs::remove_dir_all(&self.base);
+    }
+}
+
+/// The `repository/id` of each Story node of a graph, sorted.
+fn org_stories(graph: &Value) -> Vec<String> {
+    let mut found: Vec<String> = graph["nodes"]
+        .as_array()
+        .unwrap_or_else(|| panic!("{graph}"))
+        .iter()
+        .filter(|n| n["label"] == "Story")
+        .map(|n| {
+            format!(
+                "{}/{}",
+                n["repository"].as_str().unwrap_or("?"),
+                n["id"].as_str().unwrap()
+            )
+        })
+        .collect();
+    found.sort();
+    found
+}
+
+#[test]
+fn a_registry_server_answers_directed_queries_across_repositories_without_credentials() {
+    let Some(neo4j) = Neo4j::open() else { return };
+    let org = Org::start(
+        &neo4j,
+        &[
+            ("core", "VC-108", &story("VC-108", "Schema", "done", "")),
+            (
+                "core",
+                "VC-109",
+                &story(
+                    "VC-109",
+                    "Roster API",
+                    "ready",
+                    "depends_on: [VC-108]\nrelates_to: [XX-001]\n",
+                ),
+            ),
+            (
+                "core",
+                "VC-110",
+                &story("VC-110", "Roster cache", "draft", ""),
+            ),
+            (
+                "web",
+                "VE-046",
+                &story(
+                    "VE-046",
+                    "Roster page",
+                    "ready",
+                    "depends_on: [VC-109]\nrelates_to: [VC-110]\n",
+                ),
+            ),
+            (
+                "web",
+                "VE-047",
+                &story(
+                    "VE-047",
+                    "Roster filters",
+                    "draft",
+                    "depends_on: [VE-046]\n",
+                ),
+            ),
+            // Two repositories hold XX-001 and no repository declares XX, so a link to it from
+            // a third repository is ambiguous.
+            (
+                "web",
+                "XX-001",
+                &story("XX-001", "Stray in web", "draft", ""),
+            ),
+            (
+                "other",
+                "XX-001",
+                &story("XX-001", "Stray in other", "draft", ""),
+            ),
+        ],
+    );
+
+    // Dependents of VC-109: the stories of `web` that wait on it, to depth 2. Its own
+    // dependency VC-108 is not a dependent.
+    let dependents = org.ok(
+        "story_graph",
+        json!({"repository": "core", "id": "VC-109", "direction": "dependents", "depth": 2}),
+    );
+    assert_eq!(
+        org_stories(&dependents),
+        ["core/VC-109", "web/VE-046", "web/VE-047"],
+        "{dependents}"
+    );
+    assert!(
+        edges(&dependents).contains(&"Story:web/VE-046 DEPENDS_ON Story:core/VC-109".into()),
+        "{:?}",
+        edges(&dependents)
+    );
+    let one = org.ok(
+        "story_graph",
+        json!({"repository": "core", "id": "VC-109", "direction": "dependents"}),
+    );
+    assert_eq!(org_stories(&one), ["core/VC-109", "web/VE-046"], "depth 1");
+
+    // Dependencies of VE-046: VC-109 and, at depth 2, VC-108. Its dependent VE-047 is not
+    // one. VC-110 is a RELATES_TO neighbor, which is returned at depth 1 only.
+    let dependencies = org.ok(
+        "story_graph",
+        json!({"repository": "web", "id": "VE-046", "direction": "dependencies", "depth": 2}),
+    );
+    assert_eq!(
+        org_stories(&dependencies),
+        ["core/VC-108", "core/VC-109", "core/VC-110", "web/VE-046"],
+        "{dependencies}"
+    );
+    let found = edges(&dependencies);
+    for edge in [
+        "Story:web/VE-046 DEPENDS_ON Story:core/VC-109",
+        "Story:core/VC-109 DEPENDS_ON Story:core/VC-108",
+        "Story:web/VE-046 RELATES_TO Story:core/VC-110",
+    ] {
+        assert!(found.contains(&edge.to_owned()), "{edge}: {found:?}");
+    }
+
+    // The default direction follows links both ways.
+    let both = org.ok("story_graph", json!({"repository": "web", "id": "VE-046"}));
+    assert_eq!(
+        org_stories(&both),
+        ["core/VC-109", "core/VC-110", "web/VE-046", "web/VE-047"],
+        "{both}"
+    );
+
+    // Every result names the commits the graph was synced from, and the links the sync
+    // skipped because their target is ambiguous.
+    let head = |repo: &str| {
+        Org::git(
+            &org.base,
+            &org.base.join("up").join(repo),
+            &["rev-parse", "HEAD"],
+        )
+    };
+    let synced = json!([
+        {"repository": "core", "sha": head("core")},
+        {"repository": "other", "sha": head("other")},
+        {"repository": "web", "sha": head("web")},
+    ]);
+    for graph in [&dependents, &dependencies, &both] {
+        assert_eq!(graph["sync"]["repositories"], synced, "{graph}");
+        assert_eq!(graph["sync"]["skipped_ambiguous"], 1, "{graph}");
+    }
+    let stored = neo4j
+        .cypher(
+            "MATCH (a:Story {id: 'VC-109'})-[:RELATES_TO]->(b) RETURN count(b)",
+            json!({}),
+        )
+        .unwrap();
+    assert_eq!(stored[0][0], 0, "the ambiguous link has no edge");
+    let repositories = neo4j
+        .cypher(
+            "MATCH (r:StoryRepository) RETURN r.key, r.sha ORDER BY r.key",
+            json!({}),
+        )
+        .unwrap();
+    assert_eq!(
+        json!(repositories),
+        json!([
+            ["core", head("core")],
+            ["other", head("other")],
+            ["web", head("web")]
+        ])
+    );
+
+    // A new commit reaches the graph after the fetch TTL, with no sync call.
+    org.write(
+        "web",
+        "VE-048",
+        &story("VE-048", "Roster export", "draft", "depends_on: [VC-109]\n"),
+    );
+    let next = org.commit("web");
+    std::thread::sleep(Duration::from_millis(1300));
+    let after = org.ok(
+        "story_graph",
+        json!({"repository": "core", "id": "VC-109", "direction": "dependents"}),
+    );
+    assert_eq!(
+        org_stories(&after),
+        ["core/VC-109", "web/VE-046", "web/VE-048"],
+        "{after}"
+    );
+    assert_eq!(after["sync"]["repositories"][2]["sha"], next.as_str());
+
+    // The tool list: a direction, the RELATES_TO edge type, and no sync tool, because the
+    // server syncs by itself.
+    let tools = org.rpc("tools/list", json!({}))["tools"].clone();
+    let tool = |name: &str| tools.as_array().unwrap().iter().find(|t| t["name"] == name);
+    assert!(tool("story_graph_sync").is_none(), "{tools}");
+    let graph = tool("story_graph").unwrap();
+    assert_eq!(
+        graph["inputSchema"]["properties"]["direction"]["enum"],
+        json!(["both", "dependents", "dependencies"])
+    );
+    let output = &graph["outputSchema"]["properties"];
+    assert!(output["edges"]["items"]["properties"]["type"]["enum"]
+        .as_array()
+        .unwrap()
+        .contains(&json!("RELATES_TO")));
+    assert!(
+        output["sync"].is_object()
+            && output["nodes"]["items"]["properties"]["repository"].is_object()
+    );
+
+    // With Neo4j stopped, the graph is unavailable and lint, which does not use it, works.
+    neo4j.stop();
+    let down = org.call("story_graph", json!({"repository": "core", "id": "VC-109"}));
+    assert_eq!(down["error"]["code"], "graph_unavailable", "{down}");
+    assert_eq!(down["error"]["retryable"], true);
+    let lint = org.ok(
+        "story_lint",
+        json!({"repository": "web", "ids": ["VE-046"]}),
+    );
+    assert_eq!(lint["repository"], "web");
+    assert!(
+        !lint.to_string().contains("which does not exist"),
+        "the link to VC-109 resolves without Neo4j: {lint}"
+    );
+}
+
+/// The key of each repository in the `sync` part of a graph.
+fn synced_keys(graph: &Value) -> Vec<&str> {
+    graph["sync"]["repositories"]
+        .as_array()
+        .unwrap_or_else(|| panic!("{graph}"))
+        .iter()
+        .map(|repo| repo["repository"].as_str().unwrap())
+        .collect()
+}
+
+/// ST-141: `core` and `web` are one org. `teddy` is another org and declares VC as `core` does.
+#[test]
+fn a_graph_of_one_org_holds_nothing_of_another_org() {
+    let Some(neo4j) = Neo4j::open() else { return };
+    let org = Org::start_with(
+        &neo4j,
+        &[
+            ("core", "VC", "", ""),
+            ("web", "VE", "", ""),
+            ("teddy", "VC", "teddy", ""),
+        ],
+        &[
+            (
+                "core",
+                "VC-109",
+                &story("VC-109", "Roster API", "ready", ""),
+            ),
+            (
+                "web",
+                "VE-046",
+                &story("VE-046", "Roster page", "ready", "depends_on: [VC-109]\n"),
+            ),
+            (
+                "teddy",
+                "VC-109",
+                &story("VC-109", "Teddy roster", "ready", ""),
+            ),
+            // VE-046 is in the other org only, so this link gets a missing node in `teddy`.
+            (
+                "teddy",
+                "VC-300",
+                &story("VC-300", "Teddy page", "draft", "depends_on: [VE-046]\n"),
+            ),
+            (
+                "teddy",
+                "VC-301",
+                &story("VC-301", "Teddy filters", "draft", "depends_on: [VC-109]\n"),
+            ),
+        ],
+    );
+
+    // The dependents of VC-109 in `core` are in its own org. VC-301 of `teddy` waits on the
+    // VC-109 of `teddy`, and is not one of them.
+    let ours = org.ok(
+        "story_graph",
+        json!({"repository": "core", "id": "VC-109", "direction": "dependents", "depth": 2}),
+    );
+    assert_eq!(org_stories(&ours), ["core/VC-109", "web/VE-046"], "{ours}");
+    assert_eq!(synced_keys(&ours), ["core", "web"], "{ours}");
+    assert!(!ours.to_string().contains("teddy"), "{ours}");
+    assert!(!ours.to_string().contains("Teddy"), "{ours}");
+
+    let theirs = org.ok("story_graph", json!({"repository": "teddy"}));
+    assert_eq!(
+        org_stories(&theirs),
+        [
+            "teddy/VC-109",
+            "teddy/VC-300",
+            "teddy/VC-301",
+            "teddy/VE-046"
+        ],
+        "{theirs}"
+    );
+    assert_eq!(synced_keys(&theirs), ["teddy"], "{theirs}");
+    assert_eq!(
+        edges(&theirs),
+        [
+            "Story:teddy/VC-300 DEPENDS_ON Story:teddy/VE-046",
+            "Story:teddy/VC-301 DEPENDS_ON Story:teddy/VC-109",
+        ],
+        "{theirs}"
+    );
+    assert_eq!(node(&theirs, "Story:teddy/VE-046")["missing"], true);
+    for text in ["Roster API", "Roster page", "core", "web"] {
+        assert!(!theirs.to_string().contains(text), "{text}: {theirs}");
+    }
+
+    // A read of the first org after the second org was projected still holds only its own.
+    let again = org.ok("story_graph", json!({"repository": "web", "id": "VE-046"}));
+    assert_eq!(
+        org_stories(&again),
+        ["core/VC-109", "web/VE-046"],
+        "{again}"
+    );
+}
+
+/// ST-141: a node is keyed by the tracker target of its repository, so two orgs cannot both
+/// project one target.
+#[test]
+fn one_tracker_target_in_two_orgs_is_refused_for_the_second_org() {
+    let Some(neo4j) = Neo4j::open() else { return };
+    let org = Org::start_with(
+        &neo4j,
+        &[
+            ("core", "VC", "", "example/shared"),
+            ("teddy", "TD", "teddy", "example/shared"),
+        ],
+        &[
+            (
+                "core",
+                "VC-109",
+                &story("VC-109", "Roster API", "ready", ""),
+            ),
+            (
+                "teddy",
+                "TD-001",
+                &story("TD-001", "Teddy roster", "ready", ""),
+            ),
+        ],
+    );
+    let first = org.ok("story_graph", json!({"repository": "core"}));
+    assert_eq!(org_stories(&first), ["core/VC-109"], "{first}");
+    let second = org.call("story_graph", json!({"repository": "teddy"}));
+    assert_eq!(second["error"]["code"], "config_invalid", "{second}");
+    assert_eq!(
+        second["error"]["details"],
+        json!({"reason": "duplicate repository identity", "repository": "core"})
+    );
+    // The first org still reads its own stories, and none of the second org.
+    let again = org.ok("story_graph", json!({"repository": "core"}));
+    assert_eq!(org_stories(&again), ["core/VC-109"], "{again}");
+}
+
+#[test]
+fn a_local_sync_projects_relates_to_and_a_read_takes_a_direction() {
+    let Some(neo4j) = Neo4j::start() else { return };
+    let fixture = Fixture::new(&[GITHUB]);
+    fixture.write(0, "ST-001", &story("ST-001", "One", "ready", ""));
+    fixture.write(
+        0,
+        "ST-002",
+        &story(
+            "ST-002",
+            "Two",
+            "ready",
+            "depends_on: [ST-001]\nrelates_to: [ST-004]\n",
+        ),
+    );
+    fixture.write(
+        0,
+        "ST-003",
+        &story("ST-003", "Three", "draft", "depends_on: [ST-002]\n"),
+    );
+    fixture.write(0, "ST-004", &story("ST-004", "Four", "draft", ""));
+    let mut server = fixture.server(&neo4j, &[]);
+    let synced = server.ok("story_graph_sync", json!({}));
+    assert_eq!(synced["depends_on"], 2, "{synced}");
+    assert_eq!(synced["relates_to"], 1, "{synced}");
+    assert_eq!(synced["skipped_ambiguous"], 0, "{synced}");
+
+    let ids = |graph: &Value| -> Vec<String> {
+        let mut ids: Vec<String> = graph["nodes"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|n| n["id"].as_str().unwrap().to_owned())
+            .collect();
+        ids.sort();
+        ids
+    };
+    let dependents = server.ok(
+        "story_graph",
+        json!({"id": "ST-002", "direction": "dependents"}),
+    );
+    assert_eq!(
+        ids(&dependents),
+        ["ST-002", "ST-003", "ST-004"],
+        "{dependents}"
+    );
+    let dependencies = server.ok(
+        "story_graph",
+        json!({"id": "ST-002", "direction": "dependencies"}),
+    );
+    assert_eq!(ids(&dependencies), ["ST-001", "ST-002", "ST-004"]);
+    assert!(
+        edges(&dependencies).contains(&"Story:ST-002 RELATES_TO Story:ST-004".into()),
+        "{:?}",
+        edges(&dependencies)
+    );
+    assert!(
+        dependencies.get("sync").is_none(),
+        "a local read has no sync"
+    );
+    let refused = server.error("story_graph", json!({"id": "ST-002", "direction": "up"}));
+    assert_eq!(refused["code"], "invalid_argument");
+    server.finish();
+}
+
+#[test]
+fn graph_launch_takes_the_user_and_the_password_variable_together_or_neither() {
+    let fixture = Fixture::new(&[GITHUB]);
+    let root = fixture.roots[0].to_str().unwrap();
+    let run = |extra: &[&str]| {
+        let output = Command::new(env!("CARGO_BIN_EXE_story"))
+            .args([
+                "mcp",
+                "--root",
+                root,
+                "--graph",
+                "--neo4j-url",
+                "http://127.0.0.1:9",
+            ])
+            .args(extra)
+            .env_clear()
+            .env("PATH", "/nonexistent")
+            .env(PASSWORD_ENV, PASSWORD)
+            .stdin(Stdio::null())
+            .output()
+            .unwrap();
+        (
+            output.status.code(),
+            String::from_utf8_lossy(&output.stderr).into_owned(),
+        )
+    };
+    let (code, stderr) = run(&["--neo4j-user", "neo4j"]);
+    assert_eq!(code, Some(2), "{stderr}");
+    assert!(stderr.contains("--neo4j-password-env"), "{stderr}");
+    let (code, stderr) = run(&["--neo4j-password-env", PASSWORD_ENV]);
+    assert_eq!(code, Some(2), "{stderr}");
+    assert!(
+        stderr.contains("--neo4j-user") && !stderr.contains(PASSWORD),
+        "{stderr}"
+    );
+    // With neither, the server starts; with no input it ends at once and exits 0.
+    let (code, stderr) = run(&[]);
+    assert_eq!(code, Some(0), "{stderr}");
 }

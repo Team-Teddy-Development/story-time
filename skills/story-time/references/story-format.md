@@ -15,6 +15,7 @@ time_criticality: 5        # cost of waiting               (1 2 3 5 8 13 20)
 risk_reduction: 3          # risk reduction / enablement   (1 2 3 5 8 13 20)
 size: 3                    # relative effort               (1 2 3 5 8 13 20)
 depends_on: [ST-010]
+relates_to: [VC-109]      # optional: related stories that do not block this one
 state_machine: model/state/enrollment.toml   # optional, see below
 parent: ST-004             # set on children of a split
 children: []               # set on a split parent
@@ -50,6 +51,21 @@ missing.
 
 An open spike must be listed in at least one story's `depends_on`, or
 `story lint` reports `spike.unblocks` as an error.
+
+`depends_on` and `relates_to` can name a story of another repository of the
+same org by its bare id, such as `VC-109`. `story lint` sees one repository,
+so it reports such a link as the warning `independent.foreign_unresolved`.
+`story mcp` with a `--root` for each repository checks the link:
+
+- `independent.deps` is an error when no repository has the story.
+- `links.ambiguous` is an error when two repositories declare the prefix of
+  the id. Each repository declares the `prefix` in its settings.
+- `links.prose_mention` is a warning when the text names a story of another
+  repository that no link field lists.
+- `links.undeclared_prefix` is an error on a hosted server (`story mcp --http
+  --registry`) when the registry does not declare the prefix of the story for
+  its repository. The registry declares the prefixes there, not the settings.
+- A spike is unblocked when a story of any repository lists it.
 
 Spikes replace `## Story` / `## Acceptance Criteria` with `## Question` and
 `## Exit Criteria`, and need `timebox:` (e.g. `2d`) instead of `size`.

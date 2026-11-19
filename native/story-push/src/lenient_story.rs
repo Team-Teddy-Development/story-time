@@ -417,7 +417,7 @@ fn value(raw: &str) -> Result<Js, String> {
     Ok(Js::Str(raw.into()))
 }
 
-const KEY_ORDER: [&str; 18] = [
+const KEY_ORDER: [&str; 19] = [
     "id",
     "title",
     "status",
@@ -430,6 +430,7 @@ const KEY_ORDER: [&str; 18] = [
     "size",
     "timebox",
     "depends_on",
+    "relates_to",
     "parent",
     "children",
     "remote",

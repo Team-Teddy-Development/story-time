@@ -1,0 +1,67 @@
+name: story-sync
+on:
+  push:
+    branches: [main]
+  schedule:
+    - cron: '17 6 * * 1'
+  workflow_dispatch:
+    inputs:
+      all:
+        type: boolean
+        default: true
+concurrency:
+  group: story-sync
+  cancel-in-progress: false
+permissions: {}
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@stable
+      - id: cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.story-root/bin/story
+          key: story-${{ hashFiles('native/story-push/**', 'skills/story-time/scripts/usage.txt') }}
+      - if: steps.cache.outputs.cache-hit != 'true'
+        run: cargo install --locked --path native/story-push --bin story --root ~/.story-root
+      - uses: actions/upload-artifact@v4
+        with:
+          name: story-bin
+          path: ~/.story-root/bin/story
+  sync:
+    needs: build
+    # A schedule event carries no repository payload; it always runs on the default branch.
+    if: github.event_name != 'workflow_dispatch' || github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: write
+      pull-requests: read
+      actions: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/download-artifact@v4
+        with:
+          name: story-bin
+          path: ${{ runner.temp }}/story-bin
+      - run: chmod +x "$RUNNER_TEMP/story-bin/story"
+      - name: Sync merged stories
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ALL: ${{ github.event_name == 'schedule' || inputs.all == true }}
+        run: |
+          if [ "$ALL" = true ]; then
+            "$RUNNER_TEMP/story-bin/story" sync-merge --all --json
+          else
+            "$RUNNER_TEMP/story-bin/story" sync-merge --json
+          fi
+      - run: test -z "$(git status --porcelain)"

@@ -7,7 +7,9 @@
 use crate::{
     config::{self, Flags},
     lenient_story::{lines, trim, Js},
-    list, show, Failure,
+    list,
+    org_index::{prefix_of, OrgIndex, Resolved},
+    show, Failure,
 };
 use regex_lite::Regex;
 use std::{
@@ -39,11 +41,15 @@ pub(crate) struct Finding {
 }
 
 /// `ctx` in Node: the whole backlog, and the project root that `state_machine` paths are
-/// relative to. A rule that needs one skips when it is absent.
+/// relative to. A rule that needs one skips when it is absent. `org` holds the stories of every
+/// repository of the org; without it, a link to another repository cannot be checked.
 #[derive(Clone, Copy, Default)]
 pub(crate) struct Context<'a> {
     pub(crate) stories: Option<&'a [Js]>,
     pub(crate) root: Option<&'a Path>,
+    pub(crate) org: Option<&'a OrgIndex>,
+    /// The story prefixes that the registry of a hosted server declares for this repository.
+    pub(crate) declared: Option<&'a [String]>,
 }
 
 type Found = Result<Vec<(Severity, String)>, String>;
@@ -54,7 +60,7 @@ struct Rule {
     check: fn(&Js, &Context) -> Found,
 }
 
-const RULES: [Rule; 16] = [
+const RULES: [Rule; 20] = [
     rule("title.present", "N", title_present),
     rule("statement.format", "V", statement_format),
     rule("statement.benefit", "V", statement_benefit),
@@ -67,6 +73,14 @@ const RULES: [Rule; 16] = [
     rule("size.small", "S", size_small),
     rule("value.scored", "V", value_scored),
     rule("independent.deps", "I", independent_deps),
+    rule(
+        "independent.foreign_unresolved",
+        "I",
+        independent_foreign_unresolved,
+    ),
+    rule("links.ambiguous", "I", links_ambiguous),
+    rule("links.prose_mention", "I", links_prose_mention),
+    rule("links.undeclared_prefix", "I", links_undeclared_prefix),
     rule("spike.timebox", "E", spike_timebox),
     rule("spike.question", "T", spike_question),
     rule("spike.unblocks", "V", spike_unblocks),
@@ -364,18 +378,82 @@ fn value_scored(s: &Js, _: &Context) -> Found {
     ))
 }
 
+/// The string ids of a list field. Other elements are not links.
+fn linked<'a>(s: &'a Js, key: &str) -> Vec<&'a str> {
+    match s.get(key) {
+        Js::Arr(items) => items
+            .iter()
+            .filter_map(|item| match item {
+                Js::Str(id) => Some(id.as_str()),
+                _ => None,
+            })
+            .collect(),
+        _ => Vec::new(),
+    }
+}
+
+fn local<'a>(stories: &'a [Js], id: &str) -> Option<&'a Js> {
+    stories
+        .iter()
+        .rev()
+        .find(|x| matches!(x.get("id"), Js::Str(own) if own == id))
+}
+
+/// Whether `id` belongs to another repository: it has a prefix that neither the story nor any
+/// story of this backlog has.
+fn foreign(id: &str, s: &Js, stories: &[Js]) -> bool {
+    let Some(prefix) = prefix_of(id) else {
+        return false;
+    };
+    let owned =
+        |story: &Js| matches!(story.get("id"), Js::Str(own) if prefix_of(own) == Some(prefix));
+    !owned(s) && !stories.iter().any(owned)
+}
+
+/// The finding for a linked id that this backlog does not hold. With the org, the id resolves
+/// in another repository or is an error. Without it, an id of another repository is left to
+/// `independent.foreign_unresolved`. An ambiguous id is left to `links.ambiguous`.
+fn absent(
+    id: &str,
+    s: &Js,
+    stories: &[Js],
+    ctx: &Context,
+    verb: &str,
+    blocks: bool,
+) -> Option<(Severity, String)> {
+    let missing = || {
+        Some((
+            Severity::Error,
+            format!("{verb} {id}, which does not exist."),
+        ))
+    };
+    match ctx.org.map(|org| org.resolve(id)) {
+        Some(Resolved::Found(dep)) if blocks && !is_str(dep.get("status"), "done") => Some((
+            Severity::Warning,
+            format!(
+                "{verb} {id} ({}). Not independent until it is done.",
+                dep.get("status").string()
+            ),
+        )),
+        Some(Resolved::Found(_) | Resolved::Ambiguous(_)) => None,
+        Some(Resolved::Missing) => missing(),
+        None if foreign(id, s, stories) => None,
+        None => missing(),
+    }
+}
+
 fn independent_deps(s: &Js, ctx: &Context) -> Found {
     let Some(stories) = ctx.stories else {
         return none();
     };
-    let deps = match s.get("depends_on") {
-        Js::Arr(deps) if !deps.is_empty() => deps,
+    let deps: &[Js] = match s.get("depends_on") {
+        Js::Arr(deps) => deps,
         Js::Str(text) if !text.is_empty() => {
             return Err("s.depends_on.flatMap is not a function".into())
         }
-        _ => return none(),
+        _ => &[],
     };
-    Ok(deps
+    let mut found: Vec<(Severity, String)> = deps
         .iter()
         .filter_map(|id| {
             match stories
@@ -383,10 +461,13 @@ fn independent_deps(s: &Js, ctx: &Context) -> Found {
                 .rev()
                 .find(|x| same_value_zero(x.get("id"), id))
             {
-                None => Some((
-                    Severity::Error,
-                    format!("Depends on {}, which does not exist.", id.string()),
-                )),
+                None => match id {
+                    Js::Str(text) => absent(text, s, stories, ctx, "Depends on", true),
+                    _ => Some((
+                        Severity::Error,
+                        format!("Depends on {}, which does not exist.", id.string()),
+                    )),
+                },
                 Some(dep) if is_str(dep.get("status"), "done") => None,
                 Some(dep) => Some((
                     Severity::Warning,
@@ -398,7 +479,122 @@ fn independent_deps(s: &Js, ctx: &Context) -> Found {
                 )),
             }
         })
+        .collect();
+    // A related story is not a blocker: it must exist, and its status raises nothing.
+    found.extend(
+        linked(s, "relates_to")
+            .into_iter()
+            .filter(|id| local(stories, id).is_none())
+            .filter_map(|id| absent(id, s, stories, ctx, "Relates to", false)),
+    );
+    Ok(found)
+}
+
+/// Every id the story links, once each, in `depends_on` then `relates_to` order.
+fn links(s: &Js) -> Vec<&str> {
+    let mut ids = linked(s, "depends_on");
+    ids.extend(linked(s, "relates_to"));
+    let mut seen = Vec::new();
+    ids.retain(|id| {
+        let new = !seen.contains(id);
+        seen.push(*id);
+        new
+    });
+    ids
+}
+
+fn independent_foreign_unresolved(s: &Js, ctx: &Context) -> Found {
+    let (Some(stories), None) = (ctx.stories, ctx.org) else {
+        return none();
+    };
+    Ok(links(s)
+        .into_iter()
+        .filter(|id| local(stories, id).is_none() && foreign(id, s, stories))
+        .map(|id| {
+            (
+                Severity::Warning,
+                format!(
+                    "{id} is in another repository, so this lint cannot check it. Run `story mcp` with a --root for each repository to check it."
+                ),
+            )
+        })
         .collect())
+}
+
+fn links_ambiguous(s: &Js, ctx: &Context) -> Found {
+    let Some(org) = ctx.org else {
+        return none();
+    };
+    Ok(links(s)
+        .into_iter()
+        .filter_map(|id| match org.resolve(id) {
+            Resolved::Ambiguous(keys) => Some((
+                Severity::Error,
+                format!(
+                    "{id} is ambiguous: the repositories {} can each own it. One repository must declare each prefix.",
+                    keys.join(", ")
+                ),
+            )),
+            _ => None,
+        })
+        .collect())
+}
+
+static STORY_ID: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"\b[A-Z][A-Z0-9]*(?:-[A-Z][A-Z0-9]*)*-[0-9]+\b").unwrap());
+
+/// A story of another repository that the text names but no link field lists. The changelog
+/// is a record of past changes, so it is not searched.
+fn links_prose_mention(s: &Js, ctx: &Context) -> Found {
+    let (Some(org), Some(stories)) = (ctx.org, ctx.stories) else {
+        return none();
+    };
+    let linked = links(s);
+    let mut mentioned: Vec<&str> = Vec::new();
+    for (name, content) in s.get("sections").props() {
+        let Js::Str(text) = content else { continue };
+        if name == "Changelog" {
+            continue;
+        }
+        for found in STORY_ID.find_iter(text) {
+            let id = found.as_str();
+            let declared = prefix_of(id).is_some_and(|p| !org.owners(p).is_empty());
+            let elsewhere = declared && foreign(id, s, stories);
+            if elsewhere && !linked.contains(&id) && !mentioned.contains(&id) {
+                mentioned.push(id);
+            }
+        }
+    }
+    Ok(mentioned
+        .into_iter()
+        .map(|id| {
+            (
+                Severity::Warning,
+                format!(
+                    "The text names {id}, a story of another repository, with no link. Add it to depends_on or relates_to."
+                ),
+            )
+        })
+        .collect())
+}
+
+/// A hosted server resolves a link through the prefix that each repository declares in the
+/// registry. A story whose prefix its own repository does not declare cannot be the target of
+/// a link, so it is an error.
+fn links_undeclared_prefix(s: &Js, ctx: &Context) -> Found {
+    let (Some(declared), Js::Str(id)) = (ctx.declared, s.get("id")) else {
+        return Ok(Vec::new());
+    };
+    match prefix_of(id) {
+        Some(prefix) if !declared.iter().any(|d| d == prefix) => Ok(vec![(
+            Severity::Error,
+            format!(
+                "{id} has the prefix {prefix}, but the registry declares only {} for this repository. Add the prefix to the registry entry or give the story a declared prefix.",
+                declared.join(", ")
+            ),
+        )]),
+        _ => Ok(Vec::new()),
+    }
 }
 
 fn spike_timebox(s: &Js, _: &Context) -> Found {
@@ -432,6 +628,11 @@ fn spike_unblocks(s: &Js, ctx: &Context) -> Found {
             _ => return Err("x.depends_on?.includes is not a function".into()),
         };
         if listed {
+            return none();
+        }
+    }
+    if let (Some(org), Js::Str(id)) = (ctx.org, id) {
+        if org.has_dependent(id) {
             return none();
         }
     }
@@ -531,6 +732,8 @@ pub fn run(args: &[String]) -> Result<(String, u8), Failure> {
     let ctx = Context {
         stories: Some(&all),
         root: Some(&loaded.root),
+        org: None,
+        declared: None,
     };
     let mut results = Vec::new();
     for story in &targets {

@@ -9,6 +9,7 @@ use crate::{
     lint::{self, Context, Severity},
     list,
     new_story::TYPES,
+    org_index::OrgIndex,
     Failure,
 };
 use chrono::Utc;
@@ -24,7 +25,7 @@ const STATUSES: [&str; 7] = [
     "archived",
 ];
 const NUMERIC: [&str; 4] = ["value", "time_criticality", "risk_reduction", "size"];
-const LIST: [&str; 2] = ["depends_on", "children"];
+const LIST: [&str; 3] = ["depends_on", "relates_to", "children"];
 pub(crate) const IMMUTABLE: [&str; 4] = ["id", "created", "updated", "sections"];
 
 pub fn run(args: &[String]) -> Result<String, Failure> {
@@ -54,6 +55,7 @@ pub fn run(args: &[String]) -> Result<String, Failure> {
         flags.has("force"),
         &dir,
         &loaded.root,
+        None,
     )
     .map_err(|refusal| match refusal {
         Refusal::Immutable(key) => format!("Field \"{key}\" cannot be set directly."),
@@ -113,6 +115,7 @@ pub(crate) fn apply(
     force: bool,
     dir: &Path,
     root: &Path,
+    org: Option<&OrgIndex>,
 ) -> Result<Change, Refusal> {
     let mut next = current.props().to_vec();
     for (key, raw) in changes {
@@ -133,6 +136,8 @@ pub(crate) fn apply(
         let ctx = Context {
             stories: Some(&stories),
             root: Some(root),
+            org,
+            declared: None,
         };
         let errors: Vec<lint::Finding> = lint::lint_story(&next, &ctx)
             .map_err(Refusal::Other)?

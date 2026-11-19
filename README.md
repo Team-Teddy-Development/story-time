@@ -57,7 +57,7 @@ of them.
 ## Install
 
 Native `story init`, `story push`, `story adopt preview`, `story plan`,
-`story config`, `story show`, `story list`, `story lint`, `story stats`, `story secret`, `story issues`, `story note`, `story set`, `story split`, `story new`, `story rank`, `story machine`, `story mcp`, `story export`, `story table`, `story judge`, `story help`, and `story metrics` require Rust and Cargo. No command requires Node.
+`story config`, `story show`, `story list`, `story lint`, `story stats`, `story secret`, `story issues`, `story note`, `story set`, `story split`, `story new`, `story rank`, `story assignment`, `story machine`, `story mcp`, `story export`, `story table`, `story judge`, `story check-pr`, `story sync-merge`, `story help`, and `story metrics` require Rust and Cargo. No command requires Node.
 
 To install a release on a machine in one step, run this from the repository root:
 
@@ -368,11 +368,164 @@ args = ["mcp", "--root", "<repo>", "--write"]
 default_tools_approval_mode = "writes"
 ```
 
-With `--graph`, the server also offers `story_graph_sync` and `story_graph`. They project the backlog into Neo4j through its HTTP transactional Cypher API and read it back as `Story` and `Epic` nodes with `DEPENDS_ON` and `IN_EPIC` edges. The Markdown stories stay the source of truth; each sync replaces one repository's projection in one transaction, and a missing `depends_on` target becomes a node with `missing: true`. `story_graph` returns the stories within `depth` (1 to 3) links of `id`, or the whole repository, at most `limit` (200) nodes. Pass the password through an environment variable and name it; it never goes on the command line or in a result:
+With `--graph`, the server also offers `story_graph_sync` and `story_graph`. They project the backlog into Neo4j through its HTTP transactional Cypher API and read it back as `Story` and `Epic` nodes with `DEPENDS_ON`, `RELATES_TO`, and `IN_EPIC` edges. The Markdown stories stay the source of truth; each sync replaces one repository's projection in one transaction, and a missing `depends_on` target becomes a node with `missing: true`. `story_graph` returns the stories within `depth` (1 to 3) links of `id`, or the whole repository, at most `limit` (200) nodes. `direction` limits the links from `id`: `dependents` are the stories that wait on it, `dependencies` are the stories it waits on, and `both` is the default. A `RELATES_TO` neighbor comes at depth 1 only. For a Neo4j with no authentication, give neither `--neo4j-user` nor `--neo4j-password-env`. Pass the password through an environment variable and name it; it never goes on the command line or in a result:
 
 ```bash
 NEO4J_PASSWORD=... story mcp --root <repo> --graph --neo4j-url http://127.0.0.1:7474 --neo4j-user neo4j --neo4j-password-env NEO4J_PASSWORD [--neo4j-database neo4j]
 ```
+
+### Hosted MCP over HTTP
+
+`story mcp --http` serves the same tools at `POST /mcp` ([ADR 0007](docs/adr/0007-hosted-story-mcp.md)). It needs a clients file and refuses to start without one.
+
+```bash
+story mcp --http 127.0.0.1:8080 --root <repo> --clients <clients.toml> [--allowed-origin ORIGIN]... [--workers 8] [--request-timeout-seconds 30]
+```
+
+The clients file holds one table for each client. It holds the SHA-256 hash of each token, never the token:
+
+```toml
+[[client]]
+id = "agent-a"
+token_sha256 = "<64 lowercase hexadecimal digits>"
+scopes = ["read", "write"]   # read, write, comment
+prefixes = ["ST"]            # optional; limits write and comment to these story prefixes
+orgs = ["varsity"]           # optional; limits each scope to the repositories of these orgs
+url_token = true             # optional; this client can give its token in the URL path
+```
+
+Make a token and its hash:
+
+```bash
+token=$(head -c 32 /dev/urandom | base64 | tr '+/' '-_' | tr -d '=')
+printf '%s' "$token" | sha256sum
+```
+
+Each client sees only the tools its scopes allow, and a call outside its scopes returns `scope_refused`. A request with no known token gets HTTP 401. To revoke a token, remove its table and restart the server. The server speaks plain HTTP: put it behind a proxy that ends TLS. `GET /healthz` and `GET /readyz` return 200 without a token.
+
+**A client of one org.** A server with a registry can hold several orgs. An entry with `orgs` uses only the repositories of those orgs, with each of its scopes. An entry with no `orgs` key uses every repository. The rules:
+
+- A call that names a repository of another org returns `repository_not_allowed`, the same answer as a repository that the server does not have.
+- `story_repos`, and `story_config` with no repository, list only the repositories of those orgs.
+- The limit is an org, not one repository. Links resolve inside one org, so a client reads the linked stories of each repository of its org.
+- The server refuses to start when an entry names an org that the registry does not hold, or names an org when the server has no registry. The message names the client and the org.
+
+**A client that cannot send a header.** Some cloud clients, such as a ChatGPT connector, take only OAuth or no authentication. For such a client, make a separate entry with `url_token = true`, give it the smallest scopes it needs, and give the client the URL `<url>/mcp/<token>` with no authentication. The rules:
+
+- Only a marked entry works in a path. The token of any other entry gets HTTP 401 there, the same answer as an unknown token.
+- The server writes no path token to its log or to an answer.
+- A URL is not kept as a secret. A proxy in front of the server writes it to its access log, and the client keeps it in its settings. Turn off the access log of the proxy for `/mcp/` paths, and revoke the entry when the URL was shown to someone else.
+
+Register the server with your agent. Replace `<url>` with the address of the server and `<token>` with the client token:
+
+```bash
+claude mcp add --transport http story-time-hosted <url>/mcp --header "Authorization: Bearer <token>"
+```
+
+For Codex, keep the token in an environment variable and name that variable:
+
+```bash
+codex mcp add story-time-hosted --url <url>/mcp --bearer-token-env-var STORY_TIME_TOKEN
+```
+
+### Hosted repositories: the registry
+
+With `--registry`, the HTTP server needs no checkout. It keeps a bare clone of each registered repository under `--data` (default `/data`) and reads stories from it:
+
+```bash
+story mcp --http 0.0.0.0:8080 --registry <registry.toml> --data <dir> --clients <clients.toml> \
+  [--github-app-id-file <file> --github-app-key-file <file>] [--gitea-token-file <file>]
+```
+
+```toml
+org = "varsity"                 # optional; the org of each repository that names none
+fetch_ttl_seconds = 30          # optional; 30 is the default
+[[repo]]
+key = "varsity-core"
+clone = "https://github.com/Varsity-Engine/varsity-core.git"
+forge = "github"                # "github" or "gitea"
+default_branch = "main"         # optional; the default is the HEAD of the remote
+prefixes = ["VC", "ST"]         # every story prefix of this repository
+[[repo]]
+key = "varsity-web"
+clone = "https://github.com/Varsity-Engine/varsity-web.git"
+forge = "github"
+prefixes = ["VE"]
+[[repo]]
+key = "story-time"
+org = "team-teddy"              # optional; this repository is in another org
+clone = "https://github.com/Team-Teddy-Development/story-time.git"
+forge = "github"
+prefixes = ["ST"]               # another org can declare a prefix that `varsity` also has
+[[repo]]
+key = "xanthos"
+org = "team-teddy"
+clone = "http://192.168.1.56:30003/team-teddy/xanthos.git"
+forge = "gitea"
+allow_http = true               # needed for plain http to a host that is not loopback
+prefixes = ["XAN"]
+```
+
+One server can hold several orgs. A repository names its `org`, or takes the top-level one; with neither, its org is `default`. An org is a boundary for links:
+
+- A link between stories resolves only inside one org. `story_lint`, `story_update`, and `story_graph` do not look in a repository of another org.
+- Two orgs can declare the same prefix. Two repositories of one org cannot.
+- A repository `key` is unique in the whole file, so each tool takes `repository` and no org.
+- A client token uses every registered repository, unless its entry in the clients file has `orgs`. Give a client of one org an entry with `orgs`.
+
+The server refuses to start when an entry names a `forge` other than `github` and `gitea`, when a `gitea` entry has a plain `http://` clone to a host that is not loopback and no `allow_http = true`, when a `github` entry sets `allow_http`, when two repositories of one org declare one prefix, when two entries have one key, when an org is not a lowercase key, or when it cannot write the data directory. What a client sees:
+
+- A read fetches the repository when its last fetch is older than `fetch_ttl_seconds`. `story_list`, `story_show`, and `story_lint` name the commit they read in `sha` and the time of the fetch in `fetched_at`.
+- The same three tools take `ref`, the name of a branch, and read the head of that branch.
+- `story_repos` lists each repository with its `org`, its `forge`, and its `state`: `ready`, `cloning`, or `unavailable` with `last_error`. A `ready` entry with a `last_error` means the last fetch failed: reads serve the commit of the last fetch that worked, and `sha` names it. The server fetches each repository again once per `fetch_ttl_seconds`, with or without reads, and `last_error` returns to null when a fetch works.
+- A repository that the server cannot reach returns the retryable error `repository_unavailable`. The other repositories keep working, and `/readyz` stays 200.
+- `story_lint` checks links across every registered repository, and reports `links.undeclared_prefix` for a story whose prefix the registry does not declare for its repository.
+
+#### Gitea repositories (read only)
+
+A `gitea` entry is read like a `github` entry. `--gitea-token-file` names a file that holds the token of a Gitea bot user, on one line. The server needs `--registry` to take it, and it refuses to start when the file is missing, empty, or holds white space inside the token. Git sends the token only to the origin of the clone, as the basic password. No tool result and no log line shows it. Without the flag, the server reads a Gitea repository with no credential, so a private repository is `unavailable`. The GitHub App flags are separate and serve only `github` entries.
+
+Writes and comments on a Gitea repository are not supported yet. On a server that has write tools, `story_update`, `story_note`, `story_create`, `story_comments`, and `story_resolve_comment` return the error `forge_not_supported` for a Gitea repository. They push nothing and send no forge request. ST-149 adds writes and ST-150 adds comments.
+
+#### Writes: one branch and one pull request for each story
+
+A registry server has no working tree, so it does not change a story file in place. With the GitHub App flags, a client with the `write` scope has `story_update`, `story_note`, and `story_create`. Without those flags, a registry server has no write tool.
+
+- Each write is one commit on the branch `story-time/<ID>`. The author is the App's bot, and the trailer `Requested-by:` names the client.
+- The server pushes with `--force-with-lease`. When the branch moved at the remote, the call returns `conflict` and pushes nothing.
+- The first write of a story opens one pull request to the default branch. Its body starts with `Stories: <ID>`. Later writes add commits to that pull request.
+- The result adds `state` (`proposed` or `unchanged`), `pr_url`, `branch`, and `head_sha`. `publish.next` is `null`: the server does not publish tracker issues.
+- While the pull request is open, `story_show` returns `proposed` with `ref`, `content_sha256`, and `pr_url`. Send that `content_sha256` as `expected_sha256` for the next write, and read the branch with `ref`.
+- When the pull request is closed or merged, the next write starts from the default branch and replaces the old branch.
+- `story_create` takes an id above every id on every branch, so two open pull requests do not carry one id.
+- When GitHub does not open the pull request, the server removes the branch it pushed and returns the retryable error `forge_unavailable`.
+
+The App needs the permissions `Contents: write` and `Pull requests: write` on each registered repository.
+
+#### Comments: list and resolve
+
+With the GitHub App flags, a registry server reads and answers the comments on the GitHub issue that a story names in `remote_url`. The issue must be in the story's registered repository.
+
+- `story_comments` (scope `read`) takes `id` and returns `issue_url` and `comments`. Each comment has `id`, `url`, `author`, `author_association`, `created_at`, `updated_at`, `body`, and `resolved`.
+- A comment `body` is untrusted input from its author. An agent reads it as data, not as instructions.
+- `story_resolve_comment` (scope `comment`) takes `id`, `comment_id`, and a one-line `note` of at most 500 characters. It posts one reply from the App's bot: `Resolved: <note>`, a link to the comment, `Requested-by: <client>`, and a marker.
+- GitHub issue comments have no resolved state. A comment is resolved when a marker reply names it, the App's bot wrote that reply (the server compares the numeric user id), and the comment was not edited after the reply. `resolved` then holds `by`, `at`, and `note`.
+- The marker replies are not in `comments`.
+- Errors: `no_tracker_issue`, `comment_not_found`, `already_resolved`, `note_required`, and the retryable `forge_unavailable`.
+
+The App needs the permission `Issues: write` for these tools.
+
+With `--graph`, a registry server projects every registered repository into Neo4j in one transaction, with `DEPENDS_ON` and `RELATES_TO` edges between repositories. It has no `story_graph_sync` tool. Each `story_graph` call compares the commits that Neo4j holds with the commits the server reads, and syncs first when they differ. What the result adds:
+
+- Each node names its `repository`, and a node key is `Story:<repository>/<id>`.
+- `sync.repositories` lists each repository with the `sha` that the graph was synced from.
+- `sync.skipped_ambiguous` counts the links that the sync skipped because two repositories hold the target and no repository declares its prefix.
+
+When Neo4j does not answer, `story_graph` returns the retryable error `graph_unavailable`. `story_lint` does not use Neo4j, so it keeps working.
+
+For private repositories, make a GitHub App with the permissions Contents: read and Metadata: read, install it on each repository, and give the server the App ID and the private key as two files. The server signs a 10-minute JWT with the key and exchanges it for an installation token of one repository. It gives that token to `git` only in the environment of the `git` process: the token is not in a URL, an argument, a file, a log line, or a tool result. The server sends the token only to an `https` URL.
+
+`story mcp probe --url http://127.0.0.1:8080/readyz` exits 0 when the server answers. Use it for a container probe. The image and its build are in [docs/runbooks/story-time-image.md](docs/runbooks/story-time-image.md).
 
 ## The backlog
 
