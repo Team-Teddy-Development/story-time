@@ -357,7 +357,7 @@ fn clear_blocked_refuses_until_deps_done() {
     assert_eq!(content["status"], "updated");
     let labels = content["labels"].as_array().unwrap();
     assert!(!labels.iter().any(|l| l == "blocked"));
-    assert!(content["next_steps"].as_array().unwrap().len() >= 1);
+    assert!(!content["next_steps"].as_array().unwrap().is_empty());
 }
 
 #[test]
