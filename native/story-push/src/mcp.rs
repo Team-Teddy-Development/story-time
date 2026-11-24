@@ -2540,6 +2540,7 @@ fn write_schema() -> Value {
             "sha256_after": text,
             "audit": audit,
             "publish": publish,
+            "auto_cleared_blocked": texts(),
         }),
     ))
 }

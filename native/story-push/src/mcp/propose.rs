@@ -2,7 +2,8 @@
 //! not change a file in place. It makes one commit on the branch `story-time/<ID>`, pushes the
 //! branch only when the remote is where the server last saw it, and keeps one pull request to
 //! the default branch open for it. The story logic is that of the local write tools, run on a
-//! directory that holds the story files of the base commit.
+//! directory that holds the story files of the base commit; the commit holds every story file
+//! that the write changed there.
 
 use super::{
     accept_in, blocked,
@@ -13,7 +14,7 @@ use super::{
 };
 use crate::{lenient_story::Js, next_id, valid_id};
 use serde_json::{json, Map, Value};
-use std::path::Path;
+use std::{collections::BTreeMap, fs, io, path::Path};
 
 /// Whether a registry server proposes the change of this tool.
 pub(super) fn handles(tool: &str) -> bool {
@@ -24,8 +25,28 @@ pub(super) fn handles(tool: &str) -> bool {
             | "story_create"
             | "story_accept"
             | "story_mark_blocked"
-            | "story_clear_blocked" // story_propose_unblocks writes multiple files; local MCP only until multi-file propose lands.
+            | "story_propose_unblocks"
+            | "story_clear_blocked"
     )
+}
+
+/// The bytes of each story file in `dir`, by file name.
+fn story_files(dir: &Path) -> Result<BTreeMap<String, Vec<u8>>, ToolError> {
+    let mut files = BTreeMap::new();
+    let entries = match fs::read_dir(dir) {
+        Ok(entries) => entries,
+        Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(files),
+        Err(_) => return Err(io_error("list backlog")),
+    };
+    for entry in entries {
+        let name = entry.map_err(|_| io_error("list backlog"))?.file_name();
+        let Some(name) = name.to_str().filter(|n| crate::story_file_id(n).is_some()) else {
+            continue;
+        };
+        let bytes = fs::read(dir.join(name)).map_err(|_| io_error("read story file"))?;
+        files.insert(name.to_owned(), bytes);
+    }
+    Ok(files)
 }
 
 /// The branch that holds the proposed changes of story `id`.
@@ -161,16 +182,18 @@ pub(super) fn run(
             .unwrap_or(Path::new("backlog"))
             .to_string_lossy()
             .into_owned();
+        let prefix = repo.settings["prefix"].as_str().unwrap_or("ST");
+        let unchanged = story_files(&repo.dir)?;
         let written = match tool {
             "story_update" => update_in(server, &repo, args),
             "story_note" => note_in(&repo, args),
             "story_accept" => accept_in(&repo, args),
             "story_mark_blocked" => blocked::mark_in(&repo, args),
-            "story_clear_blocked" => blocked::clear_in(&repo, args),
-            _ => {
-                let prefix = repo.settings["prefix"].as_str().unwrap_or("ST");
-                create_in(&repo, args, floor(&writing, &backlog, prefix)?)
+            "story_propose_unblocks" => {
+                blocked::propose_in(&repo, args, floor(&writing, &backlog, prefix)?)
             }
+            "story_clear_blocked" => blocked::clear_in(&repo, args),
+            _ => create_in(&repo, args, floor(&writing, &backlog, prefix)?),
         };
         let mut result = written.map_err(|mut error| {
             if error.code == "conflict" {
@@ -191,20 +214,26 @@ pub(super) fn run(
             result["head_sha"] = json!(base.commit);
             return Ok(result);
         }
-        let (story, bytes) = repo.story(&id)?;
+        let (story, _) = repo.story(&id)?;
+        let changed: Vec<(String, Vec<u8>)> = story_files(&repo.dir)?
+            .into_iter()
+            .filter(|(name, bytes)| unchanged.get(name) != Some(bytes))
+            .map(|(name, bytes)| (format!("{backlog}/{name}"), bytes))
+            .collect();
         let client = caller.client_id.as_deref().unwrap_or("local");
         let subject = match tool {
             "story_update" => "update the story",
             "story_note" => "add a note",
             "story_accept" => "record acceptance",
             "story_mark_blocked" => "mark the story blocked",
+            "story_propose_unblocks" => "propose unblock stories",
             "story_clear_blocked" => "clear the blocked label",
             _ => "create the story",
         };
         let message = format!("story({id}): {subject}\n\nRequested-by: {client}\n");
         let path = format!("{backlog}/{id}.md");
         let commit = writing
-            .commit(&base.commit, &path, &bytes, &message, &writing.author())
+            .commit(&base.commit, &changed, &message, &writing.author())
             .map_err(|reason| git_error("make the commit", reason))?;
         let pushed = writing
             .push(&branch, &commit, base.lease.as_deref())
