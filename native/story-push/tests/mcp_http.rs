@@ -426,7 +426,7 @@ fn a_read_only_token_cannot_see_or_run_write_tools() {
 
     let reader_tools = server.tools(READER);
     assert!(reader_tools.contains(&"story_show".to_owned()));
-    for hidden in ["story_update", "story_note", "story_create"] {
+    for hidden in ["story_update", "story_accept", "story_note", "story_create"] {
         assert!(!reader_tools.contains(&hidden.to_owned()), "{hidden}");
     }
     let refused = server.call(READER, "story_update", update.clone());
@@ -444,8 +444,28 @@ fn a_read_only_token_cannot_see_or_run_write_tools() {
     assert_eq!(last["error_code"], "scope_refused");
     assert_eq!(last["client_id"], "reader");
 
+    let refused = server.call(
+        READER,
+        "story_accept",
+        json!({
+            "id": "ST-002", "expected_sha256": sha,
+            "evidence": [{"criterion": 1, "evidence": "Verified"}]
+        }),
+    );
+    assert_eq!(
+        refused["structuredContent"]["error"]["code"],
+        "scope_refused"
+    );
+    assert_eq!(fixture.snapshot(), before);
+
     let writer_tools = server.tools(WRITER);
-    for visible in ["story_show", "story_update", "story_note", "story_create"] {
+    for visible in [
+        "story_show",
+        "story_update",
+        "story_accept",
+        "story_note",
+        "story_create",
+    ] {
         assert!(writer_tools.contains(&visible.to_owned()), "{visible}");
     }
     let written = server.call(WRITER, "story_update", update);

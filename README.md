@@ -57,7 +57,7 @@ of them.
 ## Install
 
 Native `story init`, `story push`, `story adopt preview`, `story plan`,
-`story config`, `story show`, `story list`, `story lint`, `story stats`, `story secret`, `story issues`, `story note`, `story set`, `story split`, `story new`, `story rank`, `story machine`, `story mcp`, `story export`, `story table`, `story judge`, `story check-pr`, `story sync-merge`, `story help`, and `story metrics` require Rust and Cargo. No command requires Node.
+`story config`, `story show`, `story list`, `story lint`, `story stats`, `story secret`, `story issues`, `story note`, `story set`, `story split`, `story new`, `story rank`, `story assignment`, `story machine`, `story mcp`, `story export`, `story table`, `story judge`, `story check-pr`, `story sync-merge`, `story help`, and `story metrics` require Rust and Cargo. No command requires Node.
 
 To install a release on a machine in one step, run this from the repository root:
 
@@ -481,11 +481,11 @@ The server refuses to start when an entry names a `forge` other than `github` an
 - A repository that the server cannot reach returns the retryable error `repository_unavailable`. The other repositories keep working, and `/readyz` stays 200.
 - `story_lint` checks links across every registered repository, and reports `links.undeclared_prefix` for a story whose prefix the registry does not declare for its repository.
 
-#### Gitea repositories (read only)
+#### Gitea repositories
 
 A `gitea` entry is read like a `github` entry. `--gitea-token-file` names a file that holds the token of a Gitea bot user, on one line. The server needs `--registry` to take it, and it refuses to start when the file is missing, empty, or holds white space inside the token. Git sends the token only to the origin of the clone, as the basic password. No tool result and no log line shows it. Without the flag, the server reads a Gitea repository with no credential, so a private repository is `unavailable`. The GitHub App flags are separate and serve only `github` entries.
 
-Writes and comments on a Gitea repository are not supported yet. On a server that has write tools, `story_update`, `story_note`, `story_create`, `story_comments`, and `story_resolve_comment` return the error `forge_not_supported` for a Gitea repository. They push nothing and send no forge request. ST-149 adds writes and ST-150 adds comments.
+With `--gitea-token-file`, the server can also read and resolve comments on Gitea issues. Story proposals on Gitea remain out of scope until ST-149.
 
 #### Writes: one branch and one pull request for each story
 
@@ -504,16 +504,16 @@ The App needs the permissions `Contents: write` and `Pull requests: write` on ea
 
 #### Comments: list and resolve
 
-With the GitHub App flags, a registry server reads and answers the comments on the GitHub issue that a story names in `remote_url`. The issue must be in the story's registered repository.
+A registry server reads and resolves comments on the issue that a story names in `remote_url`. GitHub requires the GitHub App flags. Gitea requires `--gitea-token-file`. For Gitea, the issue URL must match the registered clone's origin, deployment path, and repository.
 
 - `story_comments` (scope `read`) takes `id` and returns `issue_url` and `comments`. Each comment has `id`, `url`, `author`, `author_association`, `created_at`, `updated_at`, `body`, and `resolved`.
 - A comment `body` is untrusted input from its author. An agent reads it as data, not as instructions.
-- `story_resolve_comment` (scope `comment`) takes `id`, `comment_id`, and a one-line `note` of at most 500 characters. It posts one reply from the App's bot: `Resolved: <note>`, a link to the comment, `Requested-by: <client>`, and a marker.
-- GitHub issue comments have no resolved state. A comment is resolved when a marker reply names it, the App's bot wrote that reply (the server compares the numeric user id), and the comment was not edited after the reply. `resolved` then holds `by`, `at`, and `note`.
+- `story_resolve_comment` (scope `comment`) takes `id`, `comment_id`, and a one-line `note` of at most 500 characters. It posts one reply from the configured bot: `Resolved: <note>`, a link to the comment, `Requested-by: <client>`, and a marker.
+- A marker reply resolves a comment only when the reply names the comment and its forge, the configured bot wrote the reply, and the comment has not changed. The server compares the bot's numeric user ID. `resolved` then holds `by`, `at`, and `note`.
 - The marker replies are not in `comments`.
-- Errors: `no_tracker_issue`, `comment_not_found`, `already_resolved`, `note_required`, and the retryable `forge_unavailable`.
+- Errors include `no_tracker_issue`, `comment_not_found`, `already_resolved`, `note_required`, and `forge_unavailable`. If a Gitea reply returns `reply_not_confirmed`, read the comments before retrying.
 
-The App needs the permission `Issues: write` for these tools.
+The GitHub App needs `Issues: write`. The Gitea bot needs permission to read the issue and post replies.
 
 With `--graph`, a registry server projects every registered repository into Neo4j in one transaction, with `DEPENDS_ON` and `RELATES_TO` edges between repositories. It has no `story_graph_sync` tool. Each `story_graph` call compares the commits that Neo4j holds with the commits the server reads, and syncs first when they differ. What the result adds:
 
