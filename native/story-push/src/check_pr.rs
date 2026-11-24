@@ -6,7 +6,7 @@ use crate::{config, gateway::Cli, lenient_story, story, Failure};
 use serde_json::{json, Value};
 use std::{collections::BTreeSet, fs, path::Path};
 
-const FLAGS: [&str; 4] = ["body-file", "json", "config", "dir"];
+const FLAGS: [&str; 5] = ["body-file", "json", "config", "dir", "link-for"];
 const STORY_LABELS: [&str; 4] = ["story", "spike", "bug", "chore"];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -323,6 +323,57 @@ fn evaluate(
     (refs, findings)
 }
 
+fn link_for(id: &str, flags: &config::Flags) -> Result<(String, u8), Failure> {
+    let ctx = crate::context(flags)?;
+    let prefix = ctx.config["prefix"].as_str().unwrap_or("ST");
+    if !crate::valid_id(id) || id.rsplit_once('-').map(|(p, _)| p) != Some(prefix) {
+        return Err("Expected a story ID with the configured repository prefix.".into());
+    }
+    if ctx.config["tracker"] != "github" || ctx.config["sync"] == "off" {
+        return Err(
+            "Verified PR links require a configured GitHub tracker with sync enabled.".into(),
+        );
+    }
+    let repo = ctx.config["github"]["repo"]
+        .as_str()
+        .ok_or("GitHub tracker has no configured repository.")?;
+    let story = crate::list::get(&ctx.dir, id)?.ok_or_else(|| format!("{id}: story not found."))?;
+    let story = story.to_value();
+    if story["id"] != id || !matches!(story["status"].as_str(), Some("ready" | "in-progress")) {
+        return Err(format!("{id}: expected a matching ready or in-progress story.").into());
+    }
+    let issue = card_from(&story, id)
+        .remote
+        .filter(|n| *n > 0)
+        .ok_or_else(|| format!("{id}: publish the story before linking its PR."))?;
+    let raw = Cli::gh(&ctx.root)
+        .run(
+            &["api".into(), format!("repos/{repo}/issues/{issue}")],
+            None,
+        )
+        .map_err(|_| format!("{id}: GitHub issue lookup failed; check tracker access."))?;
+    let remote: Value = serde_json::from_str(&raw)
+        .map_err(|_| format!("{id}: GitHub returned invalid issue data."))?;
+    let story_label = remote["labels"].as_array().is_some_and(|labels| {
+        labels.iter().any(|label| {
+            label["name"]
+                .as_str()
+                .is_some_and(|name| STORY_LABELS.contains(&name))
+        })
+    });
+    if remote["number"].as_u64() != Some(issue)
+        || remote.get("pull_request").is_some()
+        || remote["state"] != "open"
+        || !remote["title"]
+            .as_str()
+            .is_some_and(|title| title.starts_with(&format!("{id}: ")))
+        || !story_label
+    {
+        return Err(format!("{id}: issue #{issue} is not its open mirrored story issue.").into());
+    }
+    Ok((format!("Stories: {id} (#{issue})\n"), 0))
+}
+
 pub(crate) fn run(args: &[String]) -> Result<(String, u8), Failure> {
     let usage = |message: String| Failure { code: 2, message };
     let flags = config::Flags::parse(args)?;
@@ -331,6 +382,17 @@ pub(crate) fn run(args: &[String]) -> Result<(String, u8), Failure> {
     }
     if !flags.positional.is_empty() {
         return Err(usage("check-pr takes no positional arguments.".into()));
+    }
+    if let Some(id) = flags.value("link-for") {
+        if flags.has("body-file")
+            || flags.has("json")
+            || flags.values("link-for").is_some_and(|ids| ids.len() != 1)
+        {
+            return Err(usage(
+                "Use --link-for with one story ID and no body file or JSON flag.".into(),
+            ));
+        }
+        return link_for(id, &flags);
     }
     let mode = match std::env::var("STORY_ACCEPTANCE")
         .unwrap_or_default()

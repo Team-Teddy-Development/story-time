@@ -356,6 +356,14 @@ pub fn render_card(story: &Value, tracker: &str, config: &Value) -> Result<Value
             if truthy(story.get("epic")) {
                 labels.push(format!("epic:{}", display(&story["epic"])));
             }
+            if let Some(extra) = story.get("labels").and_then(|v| v.as_array()) {
+                for label in extra.iter().filter_map(Value::as_str) {
+                    let label = label.trim();
+                    if !label.is_empty() && !labels.iter().any(|l| l == label) {
+                        labels.push(label.to_owned());
+                    }
+                }
+            }
             let body = format!("{}\n\n{}", markdown_body(story), footer(story));
             let text = format!(
                 "**Title:** {title}\n**Labels:** {}\n\n{body}",

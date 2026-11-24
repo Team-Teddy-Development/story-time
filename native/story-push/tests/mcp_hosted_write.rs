@@ -389,6 +389,160 @@ fn text(value: &Value) -> &str {
 }
 
 #[test]
+fn acceptance_proposes_only_after_all_evidence_matches_the_current_card() {
+    let fixture = Fixture::new();
+    fixture.write(
+        "VC-108",
+        &story("VC-108", "Schema", "remote: 12\n").replace("status: draft", "status: in-progress"),
+    );
+    let main = fixture.commit("Start VC-108");
+    let server = fixture.serve();
+    let before = server.show("VC-108");
+    let expected = &before["sha256"];
+    let proof = json!([{"criterion": 1, "evidence": "Verified integration output."}]);
+    for (id, sha, evidence, code) in [
+        ("VC-108", json!("0".repeat(64)), proof.clone(), "conflict"),
+        ("VC-108", expected.clone(), json!([]), "invalid_argument"),
+        (
+            "VC-108",
+            expected.clone(),
+            json!([
+                {"criterion": 1, "evidence": "One"}, {"criterion": 1, "evidence": "Duplicate"}
+            ]),
+            "invalid_argument",
+        ),
+        (
+            "VC-109",
+            server.show("VC-109")["sha256"].clone(),
+            proof.clone(),
+            "lifecycle_refused",
+        ),
+    ] {
+        let result = server.call(
+            WRITER,
+            "story_accept",
+            json!({
+                "id": id, "expected_sha256": sha, "evidence": evidence
+            }),
+        );
+        assert_eq!(result["error"]["code"], code, "{result}");
+        assert!(fixture.stub.pulls().is_empty());
+        assert!(fixture.head(&format!("story-time/{id}")).is_none());
+        assert_eq!(fixture.head("main").as_deref(), Some(main.as_str()));
+    }
+    let proposed = server.ok(
+        WRITER,
+        "story_accept",
+        json!({
+            "id": "VC-108", "expected_sha256": expected, "evidence": proof
+        }),
+    );
+    assert_eq!(proposed["state"], "proposed");
+    assert_eq!(proposed["story"]["status"], "done");
+    assert_eq!(fixture.head("main").as_deref(), Some(main.as_str()));
+    assert_eq!(
+        server.show("VC-108")["frontmatter"]["status"],
+        "in-progress"
+    );
+    let file = fixture.file("story-time/VC-108", "VC-108");
+    assert!(file.contains("- [x] Given an invoice, when I export, then a CSV row is written."));
+    assert!(file.contains("## Evidence\n- Criterion 1: Verified integration output."));
+    let pulls = fixture.stub.pulls();
+    assert_eq!(pulls.len(), 1);
+    assert_eq!(pulls[0].body.lines().next(), Some("Stories: VC-108 (#12)"));
+}
+
+#[test]
+fn proposing_unblocks_is_one_commit_of_the_parent_and_each_new_child() {
+    let fixture = Fixture::new();
+    fixture.write(
+        "VC-109",
+        &story("VC-109", "Roster API", "labels: [blocked]\n")
+            .replace("status: draft", "status: ready"),
+    );
+    let main = fixture.commit("Block VC-109");
+    let server = fixture.serve();
+    let parent = server.show("VC-109");
+    let proposed = server.ok(
+        WRITER,
+        "story_propose_unblocks",
+        json!({
+            "id": "VC-109", "expected_sha256": parent["sha256"],
+            "unblocks": [
+                {"title": "Mint the staging token", "acceptance_criteria": ["Given a token, when VC-109 deploys, then it reaches staging."]},
+                {"title": "Seed the roster fixture", "acceptance_criteria": ["Given the fixture, when VC-109 runs, then rows load."]}
+            ]
+        }),
+    );
+    assert_eq!(proposed["state"], "proposed", "{proposed}");
+    assert_eq!(proposed["branch"], "story-time/VC-109");
+    let children: Vec<&str> = proposed["created"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|c| text(&c["id"]))
+        .collect();
+    assert_eq!(children, ["VC-110", "VC-111"]);
+    assert_eq!(fixture.head("main").as_deref(), Some(main.as_str()));
+    assert_eq!(
+        fixture.git(&["rev-list", "--count", "main..story-time/VC-109"]),
+        "1"
+    );
+    assert_eq!(
+        fixture.git(&["diff", "--name-only", "main", "story-time/VC-109"]),
+        "backlog/VC-109.md\nbacklog/VC-110.md\nbacklog/VC-111.md"
+    );
+    let parent = fixture.file("story-time/VC-109", "VC-109");
+    assert!(parent.contains("depends_on: [VC-110, VC-111]"), "{parent}");
+    for child in children {
+        let file = fixture.file("story-time/VC-109", child);
+        assert!(file.contains("relates_to: [VC-109]"), "{file}");
+    }
+    assert_eq!(fixture.stub.pulls().len(), 1);
+}
+
+#[test]
+fn accepting_the_last_unblock_story_commits_the_cleared_parent_with_it() {
+    let fixture = Fixture::new();
+    fixture.write(
+        "VC-108",
+        &story("VC-108", "Schema", "remote: 12\nrelates_to: [VC-109]\n")
+            .replace("status: draft", "status: in-progress"),
+    );
+    fixture.write(
+        "VC-109",
+        &story("VC-109", "Roster API", "labels: [blocked]\n")
+            .replace("status: draft", "status: ready")
+            .replace("depends_on: []", "depends_on: [VC-108]"),
+    );
+    fixture.commit("Block VC-109 on VC-108");
+    let server = fixture.serve();
+    let accepted = server.ok(
+        WRITER,
+        "story_accept",
+        json!({
+            "id": "VC-108", "expected_sha256": server.show("VC-108")["sha256"],
+            "evidence": [{"criterion": 1, "evidence": "Verified the export."}]
+        }),
+    );
+    assert_eq!(
+        accepted["auto_cleared_blocked"],
+        json!(["VC-109"]),
+        "{accepted}"
+    );
+    assert_eq!(
+        fixture.git(&["diff", "--name-only", "main", "story-time/VC-108"]),
+        "backlog/VC-108.md\nbacklog/VC-109.md"
+    );
+    let parent = fixture.file("story-time/VC-108", "VC-109");
+    assert!(!parent.contains("labels:"), "{parent}");
+    assert_eq!(
+        server.show("VC-109")["frontmatter"]["labels"],
+        json!(["blocked"])
+    );
+}
+
+#[test]
 fn a_write_is_one_commit_on_the_story_branch_and_one_pull_request() {
     let fixture = Fixture::new();
     let server = fixture.serve();
