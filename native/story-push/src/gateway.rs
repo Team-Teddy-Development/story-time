@@ -1108,7 +1108,7 @@ fn closing(story: &Value) -> Option<&'static str> {
     }
 }
 fn managed(name: &str, gitea: bool) -> bool {
-    ["story", "spike", "bug", "chore"].contains(&name)
+    ["story", "spike", "bug", "chore", "blocked"].contains(&name)
         || (gitea && name == "not-planned")
         || ["size:", "value:", "epic:"]
             .iter()

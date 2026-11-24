@@ -5,7 +5,7 @@
 //! directory that holds the story files of the base commit.
 
 use super::{
-    accept_in,
+    accept_in, blocked,
     caller::Caller,
     create_in, fail, io_error, note_in, refused, registry, update_in,
     workspace::{Pushed, Workspace, Writing},
@@ -19,7 +19,13 @@ use std::path::Path;
 pub(super) fn handles(tool: &str) -> bool {
     matches!(
         tool,
-        "story_update" | "story_note" | "story_create" | "story_accept"
+        "story_update"
+            | "story_note"
+            | "story_create"
+            | "story_accept"
+            | "story_mark_blocked"
+            | "story_clear_blocked"
+        // story_propose_unblocks writes multiple files; local MCP only until multi-file propose lands.
     )
 }
 
@@ -160,6 +166,8 @@ pub(super) fn run(
             "story_update" => update_in(server, &repo, args),
             "story_note" => note_in(&repo, args),
             "story_accept" => accept_in(&repo, args),
+            "story_mark_blocked" => blocked::mark_in(&repo, args),
+            "story_clear_blocked" => blocked::clear_in(&repo, args),
             _ => {
                 let prefix = repo.settings["prefix"].as_str().unwrap_or("ST");
                 create_in(&repo, args, floor(&writing, &backlog, prefix)?)
@@ -190,6 +198,8 @@ pub(super) fn run(
             "story_update" => "update the story",
             "story_note" => "add a note",
             "story_accept" => "record acceptance",
+            "story_mark_blocked" => "mark the story blocked",
+            "story_clear_blocked" => "clear the blocked label",
             _ => "create the story",
         };
         let message = format!("story({id}): {subject}\n\nRequested-by: {client}\n");

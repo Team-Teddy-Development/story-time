@@ -1049,7 +1049,15 @@ fn without_write_no_write_tool_is_listed_and_a_write_call_is_an_unknown_tool() {
         names,
         [
             READ_TOOLS.as_slice(),
-            &["story_update", "story_accept", "story_note", "story_create"]
+            &[
+                "story_update",
+                "story_accept",
+                "story_note",
+                "story_create",
+                "story_mark_blocked",
+                "story_propose_unblocks",
+                "story_clear_blocked",
+            ]
         ]
         .concat()
     );

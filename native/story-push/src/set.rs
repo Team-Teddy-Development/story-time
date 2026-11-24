@@ -25,7 +25,7 @@ const STATUSES: [&str; 7] = [
     "archived",
 ];
 const NUMERIC: [&str; 4] = ["value", "time_criticality", "risk_reduction", "size"];
-const LIST: [&str; 3] = ["depends_on", "relates_to", "children"];
+const LIST: [&str; 4] = ["depends_on", "relates_to", "children", "labels"];
 pub(crate) const IMMUTABLE: [&str; 4] = ["id", "created", "updated", "sections"];
 
 pub fn run(args: &[String]) -> Result<String, Failure> {
