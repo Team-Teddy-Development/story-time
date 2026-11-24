@@ -984,7 +984,16 @@ struct Stub {
     seen: Arc<Mutex<Vec<(String, String, String)>>>,
     address: std::net::SocketAddr,
     stopped: Arc<std::sync::atomic::AtomicBool>,
+    gitea: Arc<Mutex<GiteaComments>>,
 }
+
+#[derive(Default)]
+struct GiteaComments {
+    items: Vec<Value>,
+    redirect: Option<String>,
+    drop_post_response: bool,
+}
+
 const INSTALLATION_TOKEN: &str = "ghs_StubInstallationToken0123456789";
 
 impl Stub {
@@ -1006,17 +1015,25 @@ impl Stub {
             "basic {}",
             base64(format!("x-access-token:{token}").as_bytes())
         );
-        let (log, stop) = (seen.clone(), stopped.clone());
+        let gitea = Arc::new(Mutex::new(GiteaComments::default()));
+        let (log, stop, state) = (seen.clone(), stopped.clone(), gitea.clone());
+        let auth = format!("token {token}");
         std::thread::spawn(move || {
             for stream in listener.incoming() {
                 if stop.load(Ordering::Relaxed) {
                     break;
                 }
                 let Ok(stream) = stream else { continue };
-                let (log, files, basic) = (log.clone(), files.clone(), basic.clone());
+                let (log, files, basic, state, auth) = (
+                    log.clone(),
+                    files.clone(),
+                    basic.clone(),
+                    state.clone(),
+                    auth.clone(),
+                );
                 std::thread::spawn(move || {
                     // An I/O error here is the client closing its connection.
-                    let _ = Self::serve(stream, &log, &files, &basic);
+                    let _ = Self::serve(stream, &log, &files, &basic, &state, &auth);
                 });
             }
         });
@@ -1025,6 +1042,7 @@ impl Stub {
             seen,
             address,
             stopped,
+            gitea,
         }
     }
 
@@ -1034,6 +1052,8 @@ impl Stub {
         log: &Mutex<Vec<(String, String, String)>>,
         files: &Path,
         basic: &str,
+        gitea: &Mutex<GiteaComments>,
+        token_auth: &str,
     ) -> std::io::Result<()> {
         use std::io::{Read, Write};
         let mut reader = BufReader::new(stream.try_clone()?);
@@ -1066,8 +1086,49 @@ impl Stub {
             reader.read_exact(&mut body)?;
             log.lock()
                 .unwrap()
-                .push((method, path.clone(), authorization.clone()));
-            let (status, body): (u16, Vec<u8>) = if path == "/api/repos/o/core/installation" {
+                .push((method.clone(), path.clone(), authorization.clone()));
+            let (status, body): (u16, Vec<u8>) = if path.starts_with("/git/api/v1/") {
+                let mut gitea = gitea.lock().unwrap();
+                if authorization != token_auth {
+                    (401, Vec::new())
+                } else if let Some(location) = &gitea.redirect {
+                    write!(
+                        stream,
+                        "HTTP/1.1 307 Stub\r\nLocation: {location}\r\nContent-Length: 0\r\n\r\n"
+                    )?;
+                    stream.flush()?;
+                    continue;
+                } else if path == "/git/api/v1/user" && method == "GET" {
+                    (200, br#"{"id":7,"login":"story-bot"}"#.to_vec())
+                } else if path == GITEA_ISSUE && method == "GET" {
+                    let page = target
+                        .split_once('?')
+                        .unwrap()
+                        .1
+                        .split('&')
+                        .find_map(|field| field.strip_prefix("page="))
+                        .and_then(|value| value.parse::<usize>().ok())
+                        .filter(|page| *page > 0)
+                        .unwrap();
+                    let items: Vec<_> = gitea.items.iter().skip(page - 1).take(1).collect();
+                    (200, serde_json::to_vec(&items).unwrap())
+                } else if path == GITEA_ISSUE && method == "POST" {
+                    let payload: Value = serde_json::from_slice(&body).unwrap();
+                    let item = gitea_comment(
+                        200 + gitea.items.len() as u64,
+                        7,
+                        "story-bot",
+                        &payload["body"],
+                    );
+                    gitea.items.push(item.clone());
+                    if gitea.drop_post_response {
+                        return Ok(());
+                    }
+                    (201, serde_json::to_vec(&item).unwrap())
+                } else {
+                    (404, Vec::new())
+                }
+            } else if path == "/api/repos/o/core/installation" {
                 (200, br#"{"id": 7}"#.to_vec())
             } else if path == "/api/app/installations/7/access_tokens" {
                 let expires = (chrono::Utc::now() + chrono::Duration::hours(1)).to_rfc3339();
@@ -1323,11 +1384,24 @@ fn a_gitea_repository_is_read_like_a_github_repository() {
 }
 
 const GITEA_TOKEN: &str = "gta_StubGiteaBotToken0123456789abcdef";
+const GITEA_ISSUE: &str = "/git/api/v1/repos/o/core/issues/12/comments";
+const COMMENT_TIME: &str = "2026-11-10T09:00:00Z";
+
+fn gitea_comment(id: u64, user: u64, login: &str, body: &Value) -> Value {
+    json!({"id": id, "user": {"id": user, "login": login}, "body": body,
+           "created_at": COMMENT_TIME, "updated_at": COMMENT_TIME})
+}
 
 fn private_gitea(fixture: &Fixture) -> (Stub, PathBuf) {
+    private_gitea_with(fixture, |_| {})
+}
+
+fn private_gitea_with(fixture: &Fixture, setup: impl FnOnce(&str)) -> (Stub, PathBuf) {
     let files = fixture.base.join("stub-git");
     let bare = files.join("o/core.git");
     fs::create_dir_all(bare.parent().unwrap()).unwrap();
+    let stub = Stub::start_for(files, GITEA_TOKEN);
+    setup(&stub.url);
     fixture.git(
         &fixture.base,
         &[
@@ -1339,9 +1413,223 @@ fn private_gitea(fixture: &Fixture) -> (Stub, PathBuf) {
         ],
     );
     fixture.git(&bare, &["update-server-info"]);
-    let stub = Stub::start_for(files, GITEA_TOKEN);
     let registry = gitea_registry(fixture, &format!("{}/git/o/core.git", stub.url));
     (stub, registry)
+}
+
+fn issue_story(fixture: &Fixture, id: &str, url: &str) {
+    fixture.write(
+        "core",
+        &format!("backlog/{id}.md"),
+        &story(
+            id,
+            "Roster API",
+            &format!("remote: 12\nremote_url: \"{url}\"\n"),
+        ),
+    );
+}
+
+fn comment_server(fixture: &Fixture, registry: &Path) -> Http {
+    fs::write(
+        fixture.base.join("clients.toml"),
+        format!(
+            "[[client]]\nid = \"reader\"\ntoken_sha256 = \"{}\"\nscopes = [\"read\"]\n\n[[client]]\nid = \"writer\"\ntoken_sha256 = \"{}\"\nscopes = [\"read\", \"comment\"]\n",
+            sha256(READER.as_bytes()), sha256(WRITER.as_bytes())
+        ),
+    ).unwrap();
+    let token = fixture.base.join("gitea-token");
+    fs::write(&token, GITEA_TOKEN).unwrap();
+    fixture.serve(
+        registry,
+        &[
+            "--gitea-token-file",
+            token.to_str().unwrap(),
+            "--workers",
+            "4",
+        ],
+    )
+}
+
+#[test]
+fn gitea_comments_list_and_resolve_once_under_the_deployment_prefix() {
+    let fixture = Fixture::new();
+    let (stub, registry) = private_gitea_with(&fixture, |origin| {
+        issue_story(
+            &fixture,
+            "VC-109",
+            &format!("{origin}/git/o/core/issues/12"),
+        );
+        fixture.commit("core", "Gitea issue");
+    });
+    stub.gitea.lock().unwrap().items = vec![
+        gitea_comment(101, 4, "maria", &json!("Please cover missing players.")),
+        gitea_comment(102, 8, "story-bot", &json!(format!("Resolved: copied\n\n<!-- story-time:v1:resolves=gitea:101:{COMMENT_TIME} -->"))),
+        gitea_comment(103, 7, "story-bot", &json!(format!("Resolved: wrong forge\n\n<!-- story-time:v1:resolves=github:101:{COMMENT_TIME} -->"))),
+    ];
+    let server = comment_server(&fixture, &registry);
+    let args = json!({"repository": "core", "id": "VC-109"});
+    let issue = format!("{}/git/o/core/issues/12", stub.url);
+    let list = || server.ok("story_comments", args.clone());
+    let first = list();
+    assert_eq!(first["issue_url"], issue);
+    assert_eq!(first["comments"].as_array().unwrap().len(), 3);
+    assert_eq!(
+        first["comments"][0],
+        json!({
+            "id": 101, "url": format!("{issue}#issuecomment-101"),
+            "author": "maria", "author_association": "UNKNOWN",
+            "created_at": COMMENT_TIME, "updated_at": COMMENT_TIME,
+            "body": "Please cover missing players.", "resolved": null,
+        })
+    );
+    let resolve = json!({"repository": "core", "id": "VC-109", "comment_id": 101, "note": "Added the missing case"});
+    let refused = server.call("story_resolve_comment", resolve.clone());
+    assert_eq!(refused["error"]["code"], "scope_refused", "{refused}");
+    assert_eq!(stub.gitea.lock().unwrap().items.len(), 3);
+    let send = || server.call_as(WRITER, "story_resolve_comment", resolve.clone());
+    let mut replies = std::thread::scope(|scope| {
+        let first = scope.spawn(send);
+        let second = scope.spawn(send);
+        [first.join().unwrap(), second.join().unwrap()]
+    });
+    replies.sort_by_key(|reply| reply.get("error").is_some());
+    assert_eq!(
+        replies[0]["reply_url"],
+        format!("{issue}#issuecomment-203"),
+        "{replies:?}"
+    );
+    assert_eq!(
+        replies[1]["error"]["code"], "already_resolved",
+        "{replies:?}"
+    );
+    assert_eq!(send()["error"]["code"], "already_resolved");
+    assert_eq!(
+        list()["comments"][0]["resolved"],
+        json!({"by": "story-bot", "at": COMMENT_TIME, "note": "Added the missing case"})
+    );
+    let state = stub.gitea.lock().unwrap();
+    assert_eq!(state.items.len(), 4);
+    assert_eq!(state.items[3]["body"], format!("Resolved: Added the missing case\n\nIn reply to {issue}#issuecomment-101\nRequested-by: writer\n\n<!-- story-time:v1:resolves=gitea:101:{COMMENT_TIME} -->"));
+    assert_eq!(
+        stub.seen
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|(method, path, _)| method == "POST" && path == GITEA_ISSUE)
+            .count(),
+        1
+    );
+    assert!(stub
+        .seen
+        .lock()
+        .unwrap()
+        .iter()
+        .filter(|(_, path, _)| path.starts_with("/git/api/v1/"))
+        .all(|(_, _, auth)| auth == &format!("token {GITEA_TOKEN}")));
+    assert!(!first.to_string().contains(GITEA_TOKEN));
+    assert!(!server.stderr().contains(GITEA_TOKEN));
+}
+
+#[test]
+fn gitea_comments_refuse_mismatched_issue_targets_before_api_auth() {
+    let fixture = Fixture::new();
+    let foreign = Stub::start(fixture.base.join("foreign"));
+    let (stub, registry) = private_gitea_with(&fixture, |origin| {
+        for (id, url) in [
+            ("VC-110", format!("{}/git/o/core/issues/12", foreign.url)),
+            ("VC-111", format!("{origin}/git/o/other/issues/12")),
+            ("VC-112", format!("{origin}/git/o/core/issues/0")),
+            (
+                "VC-113",
+                format!(
+                    "{}/git/o/core/issues/12",
+                    origin.replacen("http:", "https:", 1)
+                ),
+            ),
+            (
+                "VC-114",
+                format!(
+                    "{}/git/o/core/issues/12",
+                    origin.replace("127.0.0.1", "localhost")
+                ),
+            ),
+            ("VC-115", format!("{origin}/o/core/issues/12")),
+            ("VC-116", format!("{origin}/git-extra/o/core/issues/12")),
+        ] {
+            issue_story(&fixture, id, &url);
+        }
+        fixture.commit("core", "Invalid Gitea issue targets");
+    });
+    let server = comment_server(&fixture, &registry);
+    for id in [
+        "VC-110", "VC-111", "VC-112", "VC-113", "VC-114", "VC-115", "VC-116",
+    ] {
+        for (tool, args) in [
+            ("story_comments", json!({"id": id})),
+            (
+                "story_resolve_comment",
+                json!({"id": id, "comment_id": 101, "note": "Done"}),
+            ),
+        ] {
+            let result = server.call_as(WRITER, tool, args);
+            assert_eq!(
+                result["error"]["code"], "no_tracker_issue",
+                "{tool} {id}: {result}"
+            );
+        }
+    }
+    assert!(foreign.seen.lock().unwrap().is_empty());
+    assert!(stub
+        .seen
+        .lock()
+        .unwrap()
+        .iter()
+        .all(|(_, path, _)| !path.contains("/api/v1/")));
+}
+
+#[test]
+fn gitea_comments_do_not_follow_redirects_or_retry_uncertain_posts() {
+    let fixture = Fixture::new();
+    let foreign = Stub::start(fixture.base.join("foreign"));
+    let (stub, registry) = private_gitea_with(&fixture, |origin| {
+        issue_story(
+            &fixture,
+            "VC-109",
+            &format!("{origin}/git/o/core/issues/12"),
+        );
+        fixture.commit("core", "Gitea issue");
+    });
+    let server = comment_server(&fixture, &registry);
+    stub.gitea.lock().unwrap().redirect = Some(format!("{}/api/v1/user", foreign.url));
+    let refused = server.call("story_comments", json!({"id": "VC-109"}));
+    assert_eq!(refused["error"]["code"], "forge_unavailable", "{refused}");
+    assert!(foreign.seen.lock().unwrap().is_empty());
+    {
+        let mut state = stub.gitea.lock().unwrap();
+        state.redirect = None;
+        state.drop_post_response = true;
+        state.items = vec![gitea_comment(
+            101,
+            4,
+            "maria",
+            &json!("Please cover missing players."),
+        )];
+    }
+    let args = json!({"id": "VC-109", "comment_id": 101, "note": "Added the case"});
+    let failed = server.call_as(WRITER, "story_resolve_comment", args.clone());
+    assert_eq!(failed["error"]["code"], "reply_not_confirmed", "{failed}");
+    assert_eq!(failed["error"]["retryable"], false, "{failed}");
+    let again = server.call_as(WRITER, "story_resolve_comment", args);
+    assert_eq!(again["error"]["code"], "already_resolved", "{again}");
+    assert_eq!(
+        stub.seen
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|(m, p, _)| m == "POST" && p == GITEA_ISSUE)
+            .count(),
+        1
+    );
 }
 
 #[test]
@@ -1364,7 +1652,7 @@ fn a_private_gitea_repository_is_fetched_with_the_bot_token_that_no_output_shows
     let basic = base64(format!("x-access-token:{GITEA_TOKEN}").as_bytes());
     let seen = stub.seen.lock().unwrap().clone();
     assert!(
-        seen.iter().all(|call| !call.1.starts_with("/api/")),
+        seen.iter().all(|call| !call.1.contains("/api/")),
         "no forge API request: {seen:?}"
     );
     let git_calls: Vec<_> = seen.iter().filter(|s| s.1.starts_with("/git/")).collect();
@@ -1432,11 +1720,11 @@ fn a_private_gitea_repository_is_unavailable_to_a_server_without_the_token() {
         .lock()
         .unwrap()
         .iter()
-        .all(|call| call.2.is_empty() || !call.1.starts_with("/api/")));
+        .all(|call| call.2.is_empty() || !call.1.contains("/api/")));
 }
 
 #[test]
-fn writes_and_comments_on_a_gitea_repository_are_refused_before_any_forge_call() {
+fn proposals_on_a_gitea_repository_are_refused_before_any_forge_call() {
     let fixture = Fixture::new();
     // `core` is the Gitea repository and has the branch `story-time/VC-109`. `web` is GitHub.
     let registry = fixture.registry("");
@@ -1501,14 +1789,6 @@ fn writes_and_comments_on_a_gitea_repository_are_refused_before_any_forge_call()
         (
             "story_create",
             json!({"repository": "core", "title": "A new story"}),
-        ),
-        (
-            "story_comments",
-            json!({"repository": "core", "id": "VC-109"}),
-        ),
-        (
-            "story_resolve_comment",
-            json!({"repository": "core", "id": "VC-109", "comment_id": 1, "note": "Done"}),
         ),
     ];
     for (name, arguments) in calls {

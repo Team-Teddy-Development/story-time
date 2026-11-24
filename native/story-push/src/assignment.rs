@@ -15,7 +15,7 @@ use std::{
     process::Command,
 };
 
-const HELP: &str = "Usage: story assignment next --owner RUN --pid PID [--story ID [--fresh-only]]\n       story assignment status|reconcile\n       story assignment heartbeat|release --token TOKEN\n\nLocal Linux ownership. All results are JSON. Claims reserve configured WIP\nwithout changing story status. Recovery must resume the recorded worktree.\nLedger: <git-common-dir>/story-assignment/ledger.json\n";
+const HELP: &str = "Usage: story assignment next --owner RUN --pid PID [--story ID [--fresh-only]]\n       story assignment recover --story ID --previous-owner RUN --previous-process JSON --owner RUN --pid PID\n       story assignment status|reconcile\n       story assignment heartbeat|release --token TOKEN\n\nLocal Linux ownership. All results are JSON. Claims reserve configured WIP\nwithout changing story status. Recovery must resume the recorded worktree.\nLedger: <git-common-dir>/story-assignment/ledger.json\n";
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
@@ -44,6 +44,24 @@ struct Claim {
     head: Option<String>,
     #[serde(flatten)]
     ownership: Ownership,
+}
+
+impl Claim {
+    fn transfer(&mut self, owner: String, process: ProcessIdentity) -> Result<(), String> {
+        self.ownership = Ownership::Active { token: token()? };
+        self.owner = owner;
+        self.process = process;
+        self.heartbeat = now();
+        Ok(())
+    }
+}
+
+struct Recovery<'a> {
+    story: &'a str,
+    previous_owner: &'a str,
+    previous_process: ProcessIdentity,
+    owner: String,
+    process: ProcessIdentity,
 }
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -332,12 +350,74 @@ fn reply(
     )
 }
 
+impl Recovery<'_> {
+    fn run(
+        self,
+        root: &Path,
+        path: &Path,
+        mut ledger: Ledger,
+        stories: &[Js],
+    ) -> Result<(String, u8), Failure> {
+        let reserved = ledger.claims.len();
+        let result = |reason, claim, code| {
+            Ok((
+                format!(
+                    "{}\n",
+                    json!({"reason":reason,"claim":claim,"reserved_wip":reserved})
+                ),
+                code,
+            ))
+        };
+        let branch = current_branch(root)?;
+        let index = ledger.claims.iter().position(|c| {
+            c.story_id == self.story
+                && c.owner == self.previous_owner
+                && c.process == self.previous_process
+                && c.worktree == root
+                && c.branch == branch
+                && c.ownership == Ownership::Recoverable
+        });
+        let Some(index) = index.filter(|_| branch.starts_with("refs/heads/")) else {
+            return result("recovery_mismatch", None, 1);
+        };
+        if liveness(&ledger.claims[index].process) != Liveness::Dead {
+            return result("recovery_mismatch", None, 1);
+        }
+        if ledger.claims.iter().any(|c| c.owner == self.owner) {
+            return result("owner_conflict", None, 1);
+        }
+        if !eligible(stories, root, &["ready", "in-progress"])?
+            .iter()
+            .any(|s| s.get("id").string() == self.story)
+        {
+            return result("recovery_ineligible", None, 1);
+        }
+        if liveness(&self.process) != Liveness::Alive {
+            return result("owner_not_alive", None, 1);
+        }
+        let claim = &mut ledger.claims[index];
+        claim.transfer(self.owner, self.process)?;
+        let reply = result("recovered", Some(claim.clone()), 0);
+        persist(path, &ledger)?;
+        reply
+    }
+}
+
 pub fn run(args: &[String]) -> Result<(String, u8), Failure> {
     if args.is_empty() || args.iter().any(|a| matches!(a.as_str(), "--help" | "-h")) {
         return Ok((HELP.into(), 0));
     }
     let op = args[0].as_str();
-    if !["next", "status", "reconcile", "heartbeat", "release"].contains(&op) {
+    if ![
+        "next",
+        "recover",
+        "status",
+        "reconcile",
+        "heartbeat",
+        "release",
+    ]
+    .contains(&op)
+    {
         return Err(Failure {
             code: 2,
             message: HELP.into(),
@@ -349,7 +429,10 @@ pub fn run(args: &[String]) -> Result<(String, u8), Failure> {
     }
     for name in flags.names() {
         let allowed = matches!(name.as_str(), "config" | "json")
-            || (op == "next" && matches!(name.as_str(), "owner" | "pid" | "story" | "fresh-only"))
+            || (matches!(op, "next" | "recover")
+                && matches!(name.as_str(), "owner" | "pid" | "story"))
+            || (op == "next" && name == "fresh-only")
+            || (op == "recover" && matches!(name.as_str(), "previous-owner" | "previous-process"))
             || (matches!(op, "heartbeat" | "release") && name == "token");
         if !allowed {
             return Err(format!("Unsupported flag --{name} for assignment {op}.").into());
@@ -361,7 +444,7 @@ pub fn run(args: &[String]) -> Result<(String, u8), Failure> {
             .filter(|s| !s.trim().is_empty())
             .ok_or_else(|| format!("assignment {op} requires --{name}."))
     };
-    let new_owner = if op == "next" {
+    let mut new_owner = if matches!(op, "next" | "recover") {
         Some((
             required("owner")?.to_owned(),
             identity(
@@ -370,6 +453,19 @@ pub fn run(args: &[String]) -> Result<(String, u8), Failure> {
                     .map_err(|_| "--pid must be a positive integer.")?,
             )?,
         ))
+    } else {
+        None
+    };
+    let recovery = if op == "recover" {
+        let (owner, process) = new_owner.take().ok_or("missing replacement identity")?;
+        Some(Recovery {
+            story: required("story")?,
+            previous_owner: required("previous-owner")?,
+            previous_process: serde_json::from_str(required("previous-process")?)
+                .map_err(|_| "--previous-process must contain a native process identity object.")?,
+            owner,
+            process,
+        })
     } else {
         None
     };
@@ -412,8 +508,11 @@ pub fn run(args: &[String]) -> Result<(String, u8), Failure> {
         .map_err(|e| format!("Cannot lock assignment state: {e}"))?;
     let path = state_dir.join("ledger.json");
     let mut ledger = load(&path)?;
-    let before = ledger.clone();
     let dir = list::backlog_dir(None, &root, &settings)?;
+    if let Some(recovery) = recovery {
+        return recovery.run(&root, &path, ledger, &list::stories(&dir, None)?);
+    }
+    let before = ledger.clone();
     let stories = if op == "next" {
         list::stories(&dir, None)?
     } else {
@@ -519,10 +618,7 @@ pub fn run(args: &[String]) -> Result<(String, u8), Failure> {
                 selected = Some(ledger.claims[i].clone());
             } else {
                 let c = &mut ledger.claims[i];
-                c.owner = owner;
-                c.process = process;
-                c.heartbeat = now();
-                c.ownership = Ownership::Active { token: token()? };
+                c.transfer(owner, process)?;
                 selected = Some(c.clone());
                 reason = "recovered";
             }
