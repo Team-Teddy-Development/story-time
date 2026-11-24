@@ -301,9 +301,10 @@ impl App {
     }
 }
 
-/// The bot token of a Gitea server. Gitea takes a token as the basic password.
+/// The Gitea bot credential. Git uses it as a basic password, REST as a token.
 pub(super) struct Gitea {
     token: String,
+    client: Client,
 }
 
 impl Gitea {
@@ -313,9 +314,31 @@ impl Gitea {
         if token.is_empty() || token.contains(char::is_whitespace) {
             return Err("the token must be one word and not empty".into());
         }
+        let client = Client::builder()
+            .timeout(Duration::from_secs(20))
+            .user_agent("story-time-mcp")
+            .redirect(reqwest::redirect::Policy::none())
+            .retry(reqwest::retry::never())
+            .build()
+            .map_err(|_| "could not build the Gitea HTTP client")?;
         Ok(Self {
             token: token.to_owned(),
+            client,
         })
+    }
+
+    pub(super) fn api(
+        &self,
+        method: reqwest::Method,
+        url: String,
+        body: Option<Value>,
+    ) -> Result<Value, String> {
+        let (status, value) =
+            crate::gateway::gitea_request(&self.client, &self.token, method, url, body)?;
+        if !status.is_success() {
+            return Err(format!("Gitea answered with status {}", status.as_u16()));
+        }
+        Ok(value)
     }
 
     /// The token and its basic form, which no output may show.

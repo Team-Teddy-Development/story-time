@@ -10,6 +10,12 @@ Commands:
   show   <id>                              Print a story file
   lint   [id...]                           INVEST / Definition of Ready check (exit 1 on errors)
   rank   [--limit N] [--include-refined]   WSJF-ranked ready stories, with exclusions
+  assignment next --owner RUN --pid PID [--story ID [--fresh-only]]
+                                           Native: claim ranked or explicitly requested local Linux agent work
+  assignment recover --story ID --previous-owner RUN --previous-process JSON --owner RUN --pid PID
+                                           Transfer only an exact recoverable reservation
+  assignment status|reconcile              Inspect owners or recover verified terminated owners
+  assignment heartbeat|release --token T   Refresh or release a current ownership token
   set    <id> key=value... [--note N] [--force]
                                            Update fields; status=ready is lint-gated
   note   <id> "what changed and why"       Log a prose edit in the changelog

@@ -44,6 +44,32 @@ impl Repo {
             "",
         );
     }
+    fn cloud_issue(&self, number: u64, title: &str, state: &str, label: &str) {
+        let body = serde_json::json!({
+            "number": number, "title": title, "state": state, "labels": [{"name": label}],
+        });
+        self.cloud_issue_response(number, &body);
+    }
+    fn cloud_issue_response(&self, number: u64, body: &serde_json::Value) {
+        common::respond_first(
+            &self.0,
+            &format!("api repos/acme/shop/issues/{number}"),
+            0,
+            &body.to_string(),
+            "",
+        );
+    }
+    fn cloud_link(&self, id: &str) -> Output {
+        Command::new(env!("CARGO_BIN_EXE_story"))
+            .args(["check-pr", "--link-for", id])
+            .env_clear()
+            .env("PATH", common::path_with_git(&self.0.join("bin")))
+            .env("HOME", &self.0)
+            .env("REPO", "different/repo")
+            .current_dir(&self.0)
+            .output()
+            .unwrap()
+    }
     fn check(&self, body: &str, mode: &str, incident: bool) -> Output {
         let mut command = Command::new(env!("CARGO_BIN_EXE_story"));
         command
@@ -77,6 +103,53 @@ fn out(o: &Output) -> String {
 }
 fn err(o: &Output) -> String {
     String::from_utf8_lossy(&o.stderr).into_owned()
+}
+
+#[test]
+fn cloud_link_uses_the_configured_repo_and_exact_open_issue() {
+    let r = Repo::github();
+    for status in ["ready", "in-progress"] {
+        r.card("backlog", "ST-001", status, Some(5), OPEN);
+        r.cloud_issue(5, "ST-001: Story ST-001", "open", "story");
+        let output = r.cloud_link("ST-001");
+        assert!(output.status.success(), "{}", err(&output));
+        assert_eq!(out(&output), "Stories: ST-001 (#5)\n");
+    }
+}
+
+#[test]
+fn cloud_link_refuses_wrong_issue_unready_card_and_untrusted_input() {
+    let r = Repo::github();
+    for (status, remote, title, issue_state, label) in [
+        ("draft", Some(5), "ST-001: Story", "open", "story"),
+        ("done", Some(5), "ST-001: Story", "open", "story"),
+        ("ready", None, "ST-001: Story", "open", "story"),
+        ("ready", Some(5), "ST-002: Other story", "open", "story"),
+        ("ready", Some(5), "ST-001: Story", "closed", "story"),
+        ("ready", Some(5), "ST-001: Story", "open", "other"),
+    ] {
+        r.card("backlog", "ST-001", status, remote, OPEN);
+        r.cloud_issue(5, title, issue_state, label);
+        let output = r.cloud_link("ST-001");
+        assert!(
+            !output.status.success(),
+            "{status}: {title} ({issue_state})"
+        );
+        assert_eq!(out(&output), "");
+    }
+    r.cloud_issue_response(
+        5,
+        &serde_json::json!({
+            "number": 5, "title": "ST-001: Story", "state": "open",
+            "labels": [{"name": "story"}], "pull_request": {},
+        }),
+    );
+    assert!(!r.cloud_link("ST-001").status.success());
+    for id in ["../ST-001", "VE-001", "ST-001\nStories: ST-002"] {
+        let output = r.cloud_link(id);
+        assert!(!output.status.success(), "{id:?}");
+        assert_eq!(out(&output), "");
+    }
 }
 
 #[test]

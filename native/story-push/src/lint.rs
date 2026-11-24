@@ -247,6 +247,25 @@ pub(crate) fn criteria(s: &Js) -> Vec<(Option<bool>, String)> {
         .collect()
 }
 
+pub(crate) fn tick_criteria(raw: &str) -> Option<String> {
+    let mut ticked = raw.to_owned();
+    let mut offset = 0;
+    for line in raw.split_inclusive('\n') {
+        let text = line
+            .strip_suffix('\n')
+            .map_or(line, |s| s.strip_suffix('\r').unwrap_or(s));
+        if let Some(matched) = LIST_ITEM.captures(text) {
+            let checkbox = matched.get(1)?;
+            if checkbox.as_str() == " " {
+                let start = offset + checkbox.start();
+                ticked.replace_range(start..start + 1, "x");
+            }
+        }
+        offset += line.len();
+    }
+    Some(ticked)
+}
+
 fn title_present(s: &Js, _: &Context) -> Found {
     match s.get("title") {
         Js::Undefined => err("Story has no title."),
