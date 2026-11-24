@@ -972,7 +972,7 @@ fn summary(story: &Js, digest: Option<&String>) -> Value {
         "size": size,
         "epic": text(story.get("epic")),
         "depends_on": depends_on,
-        "labels": blocked::labels(story),
+        "labels": crate::blocked::labels(story),
         "remote_url": text(story.get("remote_url")),
         "updated": text(story.get("updated")),
         "sha256": digest,
@@ -1060,7 +1060,7 @@ impl Filter {
                 .as_deref()
                 .is_none_or(|e| field("epic") == Some(e))
             && self.labels.as_ref().is_none_or(|wanted| {
-                let have = blocked::labels(story);
+                let have = crate::blocked::labels(story);
                 wanted.iter().all(|w| have.iter().any(|h| h == w))
             })
     }
@@ -1334,6 +1334,18 @@ impl Repo {
         Ok(sha(lenient_story::serialize(story).as_bytes()))
     }
 
+    /// Saves the blocked stories that a move to done cleared, and names them in `result`.
+    fn save_unblocked(&self, unblocked: &[Js], result: &mut Value) -> Result<(), ToolError> {
+        for story in unblocked {
+            self.save(story)?;
+        }
+        if !unblocked.is_empty() {
+            let ids: Vec<String> = unblocked.iter().map(|s| s.get("id").string()).collect();
+            result["auto_cleared_blocked"] = json!(ids);
+        }
+        Ok(())
+    }
+
     #[allow(clippy::too_many_arguments)]
     fn written(
         &self,
@@ -1457,8 +1469,14 @@ fn update_in(server: &Server, repo: &Repo, args: &Map<String, Value>) -> Result<
         },
         set::Refusal::Other(message) => repo.malformed(&message),
     })?;
+    let done = |s: &Js| s.get("status").string() == "done";
+    let unblocked = if done(&change.story) && !done(&current) {
+        crate::blocked::unblocked(&repo.stories()?.0, id)
+    } else {
+        Vec::new()
+    };
     let after = repo.save(&change.story)?;
-    Ok(repo.written(
+    let mut result = repo.written(
         "story_update",
         "updated",
         &change.story,
@@ -1466,7 +1484,9 @@ fn update_in(server: &Server, repo: &Repo, args: &Map<String, Value>) -> Result<
         &after,
         fields,
         Some(change.line),
-    ))
+    );
+    repo.save_unblocked(&unblocked, &mut result)?;
+    Ok(result)
 }
 
 /// What `story-accept` leaves behind that a story still lacks: every criterion checkbox ticked
@@ -1577,8 +1597,8 @@ fn accept_in(repo: &Repo, args: &Map<String, Value>) -> Result<Value, ToolError>
     let line = "accepted with evidence for every criterion";
     let date = chrono::Utc::now().format("%Y-%m-%d").to_string();
     let next = lenient_story::append_changelog(&Js::Obj(next), line, &date);
+    let unblocked = crate::blocked::unblocked(&repo.stories()?.0, id);
     let after = repo.save(&next)?;
-    let cleared = blocked::auto_clear_after_done(repo, id)?;
     let mut result = repo.written(
         "story_accept",
         "updated",
@@ -1588,9 +1608,7 @@ fn accept_in(repo: &Repo, args: &Map<String, Value>) -> Result<Value, ToolError>
         vec!["status".into(), heading.into(), "Evidence".into()],
         Some(line.into()),
     );
-    if !cleared.is_empty() {
-        result["auto_cleared_blocked"] = json!(cleared);
-    }
+    repo.save_unblocked(&unblocked, &mut result)?;
     Ok(result)
 }
 

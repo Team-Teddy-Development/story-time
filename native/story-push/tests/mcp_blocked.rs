@@ -75,6 +75,22 @@ impl Fixture {
     fn read(&self, id: &str) -> String {
         fs::read_to_string(self.root.join(format!("backlog/{id}.md"))).unwrap()
     }
+    fn cli(&self, args: &[&str]) -> String {
+        let output = Command::new(env!("CARGO_BIN_EXE_story"))
+            .args(args)
+            .env_clear()
+            .env("PATH", "/nonexistent")
+            .env("HOME", &self.base)
+            .current_dir(&self.root)
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        String::from_utf8(output.stdout).unwrap()
+    }
 }
 impl Drop for Fixture {
     fn drop(&mut self) {
@@ -358,6 +374,73 @@ fn clear_blocked_refuses_until_deps_done() {
     let labels = content["labels"].as_array().unwrap();
     assert!(!labels.iter().any(|l| l == "blocked"));
     assert!(!content["next_steps"].as_array().unwrap().is_empty());
+}
+
+#[test]
+fn story_set_done_clears_the_parent_only_after_its_last_unblock_story() {
+    let fixture = Fixture::new();
+    fixture.write(
+        "backlog/ST-070.md",
+        &story(
+            "ST-070",
+            "ready",
+            "labels: [blocked]\ndepends_on: [ST-071, ST-072]\n",
+        ),
+    );
+    fixture.write(
+        "backlog/ST-071.md",
+        &story("ST-071", "in-progress", "relates_to: [ST-070]\n"),
+    );
+    fixture.write(
+        "backlog/ST-072.md",
+        &story("ST-072", "in-progress", "relates_to: [ST-070]\n"),
+    );
+
+    assert_eq!(
+        fixture.cli(&["set", "ST-071", "status=done"]),
+        "ST-071 updated.\n"
+    );
+    assert!(fixture.read("ST-070").contains("blocked"));
+
+    assert_eq!(
+        fixture.cli(&["set", "ST-072", "status=done"]),
+        "ST-072 updated.\nST-070 unblocked: every dependency is done.\n"
+    );
+    let parent = fixture.read("ST-070");
+    assert!(!parent.contains("labels:"), "{parent}");
+    assert!(
+        parent.contains("Unblocked: ST-072 finished the last dependency"),
+        "{parent}"
+    );
+}
+
+#[test]
+fn story_update_to_done_clears_the_blocked_parent() {
+    let fixture = Fixture::new();
+    fixture.write(
+        "backlog/ST-080.md",
+        &story(
+            "ST-080",
+            "ready",
+            "labels: [blocked, platform]\ndepends_on: [ST-081]\n",
+        ),
+    );
+    let accepted = story("ST-081", "in-progress", "relates_to: [ST-080]\n")
+        .replace("- [ ]", "- [x]")
+        + "\n## Evidence\nThe staging token exists.\n";
+    fixture.write("backlog/ST-081.md", &accepted);
+    let mut server = fixture.writer();
+    server.init_write();
+    let result = server.tool(
+        "story_update",
+        json!({"id": "ST-081", "expected_sha256": fixture.sha("ST-081"), "set": {"status": "done"}}),
+    );
+    assert_eq!(
+        structured(&result)["auto_cleared_blocked"],
+        json!(["ST-080"])
+    );
+    let parent = fixture.read("ST-080");
+    assert!(parent.contains("labels: [platform]\n"), "{parent}");
 }
 
 #[test]

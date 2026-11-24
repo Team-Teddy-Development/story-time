@@ -4,76 +4,15 @@ use super::{
     conflict, fail, field_error, invalid, io_error, sha, summary, Repo, Server, ToolError, TYPES,
 };
 use crate::{
-    lenient_story::{self, Js},
+    blocked::{depends_on, ensure_blocked, has_blocked, labels, remove_blocked},
+    lenient_story::Js,
     list, new_story, note as note_mod,
 };
 use serde_json::{json, Map, Value};
 use std::collections::{HashMap, HashSet};
 
-pub(super) const BLOCKED: &str = "blocked";
 pub(super) const MAX_DEPTH: usize = 2;
 const BLOCKER_KINDS: &[&str] = &["dependency", "access", "ambiguity", "external", "other"];
-
-pub(super) fn labels(story: &Js) -> Vec<String> {
-    match story.get("labels") {
-        Js::Undefined => Vec::new(),
-        Js::Arr(items) => items
-            .iter()
-            .filter_map(|v| match v {
-                Js::Str(s) if !lenient_story::trim(s).is_empty() => Some(s.clone()),
-                _ => None,
-            })
-            .collect(),
-        other => {
-            let owned = other.string();
-            let text = lenient_story::trim(&owned);
-            if text.is_empty() {
-                Vec::new()
-            } else {
-                vec![text.to_owned()]
-            }
-        }
-    }
-}
-
-pub(super) fn has_blocked(story: &Js) -> bool {
-    labels(story).iter().any(|l| l == BLOCKED)
-}
-
-fn set_labels(story: &Js, labels: Vec<String>) -> Js {
-    let mut props = story.props().to_vec();
-    if labels.is_empty() {
-        props.retain(|(k, _)| k != "labels");
-    } else {
-        Js::set(
-            &mut props,
-            "labels",
-            Js::Arr(labels.into_iter().map(Js::Str).collect()),
-        );
-    }
-    Js::Obj(props)
-}
-
-fn ensure_blocked(story: &Js) -> Js {
-    let mut labels = labels(story);
-    if !labels.iter().any(|l| l == BLOCKED) {
-        labels.push(BLOCKED.into());
-    }
-    set_labels(story, labels)
-}
-
-fn remove_blocked(story: &Js) -> Js {
-    let labels: Vec<String> = labels(story).into_iter().filter(|l| l != BLOCKED).collect();
-    set_labels(story, labels)
-}
-
-fn depends_on(story: &Js) -> Vec<String> {
-    match story.get("depends_on") {
-        Js::Undefined => Vec::new(),
-        Js::Arr(items) => items.iter().map(Js::string).collect(),
-        other => vec![other.string()],
-    }
-}
 
 fn relates_to(story: &Js) -> Vec<String> {
     match story.get("relates_to") {
@@ -557,45 +496,4 @@ pub(super) fn clear_in(repo: &Repo, args: &Map<String, Value>) -> Result<Value, 
     result["labels"] = json!(labels(&next));
     result["next_steps"] = json!(next_steps_clear(id));
     Ok(result)
-}
-
-/// After a story becomes done, clear blocked parents whose depends_on are all done.
-pub(super) fn auto_clear_after_done(repo: &Repo, done_id: &str) -> Result<Vec<String>, ToolError> {
-    let (stories, _) = repo.stories()?;
-    let mut cleared = Vec::new();
-    for story in &stories {
-        if !has_blocked(story) {
-            continue;
-        }
-        let deps = depends_on(story);
-        if !deps.iter().any(|d| d == done_id) {
-            continue;
-        }
-        let all_done = deps.iter().all(|dep| {
-            if dep == done_id {
-                return true;
-            }
-            list::get(&repo.dir, dep)
-                .ok()
-                .flatten()
-                .is_some_and(|s| s.get("status").string() == "done")
-        });
-        if !all_done {
-            continue;
-        }
-        let id = story.get("id").string();
-        let Some(current) = list::get(&repo.dir, &id).map_err(|_| io_error("read story file"))?
-        else {
-            continue;
-        };
-        if !has_blocked(&current) {
-            continue;
-        }
-        let next = remove_blocked(&current);
-        let next = note_mod::append(&next, "Unblocked: auto-cleared after depends_on completed")
-            .map_err(|m| fail("invalid_value", &m))?;
-        list::save(&repo.dir, &next).map_err(|_| io_error("write story file"))?;
-        cleared.push(id);
-    }
-    Ok(cleared)
 }
