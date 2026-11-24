@@ -687,13 +687,27 @@ impl Workspace {
         self.registry.repos.iter().position(|repo| repo.key == key)
     }
 
-    /// The forge that holds the repository `key`.
-    pub(super) fn forge_of(&self, key: &str) -> Option<Forge> {
-        self.registry
-            .repos
-            .iter()
-            .find(|repo| repo.key == key)
-            .map(|repo| repo.forge)
+    pub(super) fn repository(&self, key: &str) -> Option<&RegistryRepo> {
+        self.index(key).map(|index| &self.registry.repos[index])
+    }
+
+    pub(super) fn comments_enabled(&self) -> bool {
+        self.writes()
+            || (self.gitea.is_some()
+                && self
+                    .registry
+                    .repos
+                    .iter()
+                    .any(|repo| repo.forge == Forge::Gitea))
+    }
+
+    pub(super) fn gitea(&self) -> Option<&Gitea> {
+        self.gitea.as_ref()
+    }
+
+    pub(super) fn lock_write(&self, key: &str) -> Result<MutexGuard<'_, ()>, String> {
+        let index = self.index(key).ok_or("the repository is not registered")?;
+        Ok(self.writes[index].lock().unwrap_or_else(|e| e.into_inner()))
     }
 
     /// Starts a write of `key`: takes its write lock and fetches it, whatever the TTL. A write
@@ -740,12 +754,6 @@ impl Workspace {
         let index = self.index(key).ok_or("the repository is not registered")?;
         let forge = self.forge.as_ref().ok_or("the server has no GitHub App")?;
         call(forge, &self.forge_access(index)?)
-    }
-
-    /// The owner and name of the repository `key` at the forge.
-    pub(super) fn forge_repository(&self, key: &str) -> Result<(String, String), String> {
-        let index = self.index(key).ok_or("the repository is not registered")?;
-        forge_auth::repository(&self.registry.repos[index].clone)
     }
 
     /// The login and the numeric user id of the App's bot, asked of the forge once.
@@ -910,13 +918,12 @@ impl Writing<'_> {
         Ok(ids)
     }
 
-    /// Makes the commit that puts `bytes` at `path` on top of `base`, and returns its id. The
-    /// commit is in the clone only; `push` sends it.
+    /// Makes the commit that puts the bytes of each file at its path on top of `base`, and
+    /// returns its id. The commit is in the clone only; `push` sends it.
     pub(super) fn commit(
         &self,
         base: &str,
-        path: &str,
-        bytes: &[u8],
+        files: &[(String, Vec<u8>)],
         message: &str,
         author: &str,
     ) -> Result<String, String> {
@@ -942,9 +949,11 @@ impl Writing<'_> {
         };
         let made = (|| {
             git(&["read-tree", base], None)?;
-            let blob = git(&["hash-object", "-w", "--stdin"], Some(bytes))?;
-            let entry = format!("100644,{blob},{path}");
-            git(&["update-index", "--add", "--cacheinfo", &entry], None)?;
+            for (path, bytes) in files {
+                let blob = git(&["hash-object", "-w", "--stdin"], Some(bytes))?;
+                let entry = format!("100644,{blob},{path}");
+                git(&["update-index", "--add", "--cacheinfo", &entry], None)?;
+            }
             let tree = git(&["write-tree"], None)?;
             git(
                 &["commit-tree", &tree, "-p", base],
