@@ -5,8 +5,7 @@ use super::{
 };
 use crate::{
     lenient_story::{self, Js},
-    list, new_story,
-    note as note_mod,
+    list, new_story, note as note_mod,
 };
 use serde_json::{json, Map, Value};
 use std::collections::{HashMap, HashSet};
@@ -134,7 +133,12 @@ fn would_cycle(stories: &[Js], from: &str, new_deps: &[String]) -> bool {
         };
         graph.insert(id, deps);
     }
-    fn visit(id: &str, graph: &HashMap<String, Vec<String>>, active: &mut HashSet<String>, done: &mut HashSet<String>) -> bool {
+    fn visit(
+        id: &str,
+        graph: &HashMap<String, Vec<String>>,
+        active: &mut HashSet<String>,
+        done: &mut HashSet<String>,
+    ) -> bool {
         if done.contains(id) {
             return false;
         }
@@ -256,7 +260,8 @@ pub(super) fn mark_in(repo: &Repo, args: &Map<String, Value>) -> Result<Value, T
         fields.push("status".into());
     }
     let line = format!("Blocked: {kind} — {reason}");
-    let next = note_mod::append(&next, &line).map_err(|m| field_error("invalid_value", "reason", m))?;
+    let next =
+        note_mod::append(&next, &line).map_err(|m| field_error("invalid_value", "reason", m))?;
     let after = repo.save(&next)?;
     let mut result = repo.written(
         "story_mark_blocked",
@@ -364,17 +369,19 @@ pub(super) fn propose_in(
     let mut next_floor = floor;
     for (i, spec) in unblocks.iter().enumerate() {
         let title = spec["title"].as_str().unwrap_or_default();
-        let kind = spec
-            .get("type")
-            .and_then(Value::as_str)
-            .unwrap_or("story");
+        let kind = spec.get("type").and_then(Value::as_str).unwrap_or("story");
         if !TYPES.contains(&kind) {
             return Err(invalid(
                 &format!("/unblocks/{i}/type"),
                 format!("Unknown type \"{kind}\"."),
             ));
         }
-        let mut argv = vec!["--title".into(), title.to_owned(), "--type".into(), kind.to_owned()];
+        let mut argv = vec![
+            "--title".into(),
+            title.to_owned(),
+            "--type".into(),
+            kind.to_owned(),
+        ];
         if let Some(statement) = spec.get("statement").and_then(Value::as_str) {
             argv.extend(["--statement".into(), statement.to_owned()]);
         }
@@ -400,9 +407,7 @@ pub(super) fn propose_in(
             },
         )?;
         let child_id = made.get("id").string();
-        next_floor = next_floor.max(
-            crate::next_id::number(&child_id, prefix).unwrap_or(0.0),
-        );
+        next_floor = next_floor.max(crate::next_id::number(&child_id, prefix).unwrap_or(0.0));
         let mut props = made.props().to_vec();
         Js::set(
             &mut props,
@@ -447,10 +452,7 @@ pub(super) fn propose_in(
         Js::Arr(deps.iter().cloned().map(Js::Str).collect()),
     );
     let parent_next = ensure_blocked(&Js::Obj(props));
-    let line = format!(
-        "Proposed unblocks: {}",
-        created_ids.join(", ")
-    );
+    let line = format!("Proposed unblocks: {}", created_ids.join(", "));
     let parent_next =
         note_mod::append(&parent_next, &line).map_err(|m| fail("invalid_value", &m))?;
     let after = repo.save(&parent_next)?;
@@ -524,9 +526,7 @@ pub(super) fn clear_in(repo: &Repo, args: &Map<String, Value>) -> Result<Value, 
         let (stories, _) = repo.stories()?;
         let open: Vec<String> = depends_on(&current)
             .into_iter()
-            .filter(|dep| {
-                !by_id(&stories, dep).is_some_and(|s| s.get("status").string() == "done")
-            })
+            .filter(|dep| !by_id(&stories, dep).is_some_and(|s| s.get("status").string() == "done"))
             .collect();
         if !open.is_empty() {
             return Err(ToolError {
@@ -542,7 +542,8 @@ pub(super) fn clear_in(repo: &Repo, args: &Map<String, Value>) -> Result<Value, 
         .and_then(Value::as_str)
         .map(|n| format!("Unblocked: {n}"))
         .unwrap_or_else(|| "Unblocked: blocked label cleared".into());
-    next = note_mod::append(&next, &note_text).map_err(|m| field_error("invalid_value", "note", m))?;
+    next =
+        note_mod::append(&next, &note_text).map_err(|m| field_error("invalid_value", "note", m))?;
     let after = repo.save(&next)?;
     let mut result = repo.written(
         "story_clear_blocked",

@@ -216,7 +216,9 @@ fn mark_blocked_releases_wip_and_returns_next_steps() {
     let steps = content["next_steps"].as_array().unwrap();
     assert!(steps.len() >= 2, "{steps:?}");
     assert!(
-        steps.iter().any(|s| s.as_str().unwrap().contains("story_propose_unblocks")),
+        steps
+            .iter()
+            .any(|s| s.as_str().unwrap().contains("story_propose_unblocks")),
         "{steps:?}"
     );
     let body = fixture.read("ST-001");
@@ -299,7 +301,10 @@ fn propose_refuses_over_split_and_duplicate() {
     // Schema may reject before tool (maxItems 5) or tool returns over_split.
     let text = format!("{err}");
     assert!(
-        text.contains("over_split") || text.contains("At most") || text.contains("maxItems") || text.contains("does not match"),
+        text.contains("over_split")
+            || text.contains("At most")
+            || text.contains("maxItems")
+            || text.contains("does not match"),
         "{err}"
     );
 }
@@ -315,7 +320,10 @@ fn clear_blocked_refuses_until_deps_done() {
             "labels: [blocked]\ndepends_on: [ST-031]\n",
         ),
     );
-    fixture.write("backlog/ST-031.md", &story("ST-031", "ready", "relates_to: [ST-030]\n"));
+    fixture.write(
+        "backlog/ST-031.md",
+        &story("ST-031", "ready", "relates_to: [ST-030]\n"),
+    );
     let mut server = fixture.writer();
     server.init_write();
     let sha = fixture.sha("ST-030");
@@ -326,10 +334,15 @@ fn clear_blocked_refuses_until_deps_done() {
             "expected_sha256": sha
         }),
     );
-    assert!(error_code(&err).contains("still_blocked") || format!("{err}").contains("still_blocked"), "{err}");
+    assert!(
+        error_code(&err).contains("still_blocked") || format!("{err}").contains("still_blocked"),
+        "{err}"
+    );
 
     // Mark dep done and clear.
-    let dep = fixture.read("ST-031").replace("status: ready", "status: done");
+    let dep = fixture
+        .read("ST-031")
+        .replace("status: ready", "status: done");
     fixture.write("backlog/ST-031.md", &dep);
     let sha = fixture.sha("ST-030");
     let result = server.tool(
@@ -363,7 +376,11 @@ fn rank_skips_blocked_label() {
         .current_dir(&fixture.root)
         .output()
         .unwrap();
-    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
     let ranked: Value = serde_json::from_slice(&output.stdout).unwrap();
     let ids: Vec<&str> = ranked["ranked"]
         .as_array()
@@ -414,7 +431,11 @@ fn render_card_includes_blocked_label() {
         .current_dir(&fixture.root)
         .output()
         .unwrap();
-    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
     let card: Value = serde_json::from_slice(&output.stdout).unwrap();
     let labels = card["labels"].as_array().unwrap();
     assert!(labels.iter().any(|l| l == "blocked"), "{card}");

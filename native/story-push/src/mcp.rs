@@ -1818,15 +1818,12 @@ impl Kind {
                         };
                         fields.contains_key("title")
                             && fields.contains_key("acceptance_criteria")
-                            && entry["title"].as_str().is_some_and(|s| {
-                                (1..=200).contains(&s.chars().count())
-                            })
+                            && entry["title"]
+                                .as_str()
+                                .is_some_and(|s| (1..=200).contains(&s.chars().count()))
                             && entry
                                 .get("statement")
-                                .map(|v| {
-                                    v.as_str()
-                                        .is_some_and(|s| s.chars().count() <= 100_000)
-                                })
+                                .map(|v| v.as_str().is_some_and(|s| s.chars().count() <= 100_000))
                                 .unwrap_or(true)
                             && entry["acceptance_criteria"].as_array().is_some_and(|acs| {
                                 (1..=20).contains(&acs.len())
@@ -1838,15 +1835,9 @@ impl Kind {
                             })
                             && entry
                                 .get("type")
-                                .map(|v| {
-                                    v.as_str()
-                                        .is_some_and(|t| TYPES.contains(&t))
-                                })
+                                .map(|v| v.as_str().is_some_and(|t| TYPES.contains(&t)))
                                 .unwrap_or(true)
-                            && entry
-                                .get("size")
-                                .map(Value::is_number)
-                                .unwrap_or(true)
+                            && entry.get("size").map(Value::is_number).unwrap_or(true)
                     })
             }
             _ => false,

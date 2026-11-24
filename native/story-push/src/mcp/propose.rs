@@ -24,8 +24,7 @@ pub(super) fn handles(tool: &str) -> bool {
             | "story_create"
             | "story_accept"
             | "story_mark_blocked"
-            | "story_clear_blocked"
-        // story_propose_unblocks writes multiple files; local MCP only until multi-file propose lands.
+            | "story_clear_blocked" // story_propose_unblocks writes multiple files; local MCP only until multi-file propose lands.
     )
 }
 
