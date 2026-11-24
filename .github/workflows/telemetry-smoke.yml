@@ -53,3 +53,21 @@ jobs:
           run failure show ST-999
           run failure not-a-command
           echo "LogQL: {service_name=\"story-time\"} | trace_id=\"<correlation id>\""
+  metrics:
+    runs-on: ubuntu-latest
+    env:
+      AUDIENCE: https://xanthos.teamteddy.net
+      METRICS_URL: https://xanthos.teamteddy.net/v1/metrics
+    steps:
+      - name: Send one story_time_ gauge through the gateway
+        run: |
+          set -u
+          token="$(curl -sSf -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
+            "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=$(jq -rn --arg a "$AUDIENCE" '$a|@uri')" | jq -r .value)"
+          echo "::add-mask::$token"
+          now="$(date +%s%N)"
+          body="$(jq -cn --arg now "$now" --arg run "$GITHUB_RUN_ID" '{resourceMetrics:[{resource:{attributes:[{key:"service.name",value:{stringValue:"story-time"}}]},scopeMetrics:[{metrics:[{name:"story_time_smoke",gauge:{dataPoints:[{asInt:"1",timeUnixNano:$now,attributes:[{key:"run_id",value:{stringValue:$run}}]}]}}]}]}]}')"
+          status="$(curl -sS -o /dev/null -w '%{http_code}' -X POST "$METRICS_URL" \
+            -H "Authorization: Bearer $token" -H 'Content-Type: application/json' --data "$body")"
+          echo "gateway HTTP $status; MetricsQL: story_time_smoke{run_id=\"$GITHUB_RUN_ID\"}"
+          test "$status" = 200
