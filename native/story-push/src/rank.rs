@@ -89,6 +89,18 @@ fn rank_backlog<'a>(
             });
             continue;
         }
+        let labeled_blocked = match story.get("labels") {
+            Js::Arr(items) => items.iter().any(|l| l.string() == "blocked"),
+            Js::Str(s) => s == "blocked",
+            _ => false,
+        };
+        if labeled_blocked {
+            excluded.push(Excluded {
+                story,
+                reason: "blocked label".into(),
+            });
+            continue;
+        }
         let depends_on = match story.get("depends_on") {
             Js::Undefined => &[][..],
             Js::Arr(ids) => ids,
