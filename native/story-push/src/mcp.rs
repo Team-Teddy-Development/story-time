@@ -1721,7 +1721,7 @@ fn create_in(repo: &Repo, args: &Map<String, Value>, floor: f64) -> Result<Value
 }
 
 enum Kind {
-    Flag,
+    Flag(bool),
     Text(usize),
     Choice(&'static [&'static str]),
     List(&'static Kind, usize),
@@ -1735,7 +1735,7 @@ enum Kind {
 impl Kind {
     fn schema(&self) -> Value {
         match self {
-            Kind::Flag => json!({"type": "boolean", "default": false}),
+            Kind::Flag(default) => json!({"type": "boolean", "default": default}),
             Kind::Text(max) => json!({"type": "string", "maxLength": max}),
             Kind::Choice(choices) => json!({"type": "string", "enum": choices}),
             Kind::List(item, max) => {
@@ -1765,7 +1765,7 @@ impl Kind {
             Kind::UnblockEntries => json!({
                 "type": "array",
                 "minItems": 1,
-                "maxItems": 5,
+                "maxItems": 20,
                 "items": object(
                     &["title", "acceptance_criteria"],
                     json!({
@@ -1786,7 +1786,7 @@ impl Kind {
     }
     fn check(&self, value: &Value, pointer: &str) -> Result<(), ToolError> {
         let ok = match (self, value) {
-            (Kind::Flag, Value::Bool(_)) => true,
+            (Kind::Flag(_), Value::Bool(_)) => true,
             (Kind::Text(max), Value::String(s)) => s.chars().count() <= *max,
             (Kind::Choice(choices), Value::String(s)) => choices.contains(&s.as_str()),
             (Kind::List(item, max), Value::Array(items)) => {
@@ -1829,7 +1829,7 @@ impl Kind {
                     })
             }
             (Kind::UnblockEntries, Value::Array(entries)) => {
-                (1..=5).contains(&entries.len())
+                (1..=20).contains(&entries.len())
                     && entries.iter().all(|entry| {
                         let Some(fields) = entry.as_object() else {
                             return false;
@@ -2083,7 +2083,7 @@ const TOOLS: [Tool; 11] = [
             },
             Field {
                 name: "allow_duplicate_title",
-                kind: Kind::Flag,
+                kind: Kind::Flag(false),
             },
         ],
         required: &["title"],
@@ -2113,7 +2113,7 @@ const TOOLS: [Tool; 11] = [
             },
             Field {
                 name: "release_wip",
-                kind: Kind::Flag,
+                kind: Kind::Flag(true),
             },
         ],
         required: &["id", "expected_sha256", "reason", "blocker_kind"],
@@ -2147,7 +2147,7 @@ const TOOLS: [Tool; 11] = [
             },
             Field {
                 name: "replace_existing_unblocks",
-                kind: Kind::Flag,
+                kind: Kind::Flag(false),
             },
         ],
         required: &["id", "expected_sha256", "unblocks"],
@@ -2173,7 +2173,7 @@ const TOOLS: [Tool; 11] = [
             },
             Field {
                 name: "force",
-                kind: Kind::Flag,
+                kind: Kind::Flag(false),
             },
         ],
         required: &["id", "expected_sha256"],
