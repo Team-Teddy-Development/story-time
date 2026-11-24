@@ -21,6 +21,7 @@ use crate::{
 };
 use regex_lite::Regex;
 use serde_json::{json, Map, Value};
+mod blocked;
 mod caller;
 mod comments;
 mod forge;
@@ -971,6 +972,7 @@ fn summary(story: &Js, digest: Option<&String>) -> Value {
         "size": size,
         "epic": text(story.get("epic")),
         "depends_on": depends_on,
+        "labels": blocked::labels(story),
         "remote_url": text(story.get("remote_url")),
         "updated": text(story.get("updated")),
         "sha256": digest,
@@ -1038,6 +1040,7 @@ struct Filter {
     status: Option<Vec<String>>,
     kind: Option<String>,
     epic: Option<String>,
+    labels: Option<Vec<String>>,
 }
 impl Filter {
     fn matches(&self, story: &Js) -> bool {
@@ -1056,6 +1059,10 @@ impl Filter {
                 .epic
                 .as_deref()
                 .is_none_or(|e| field("epic") == Some(e))
+            && self.labels.as_ref().is_none_or(|wanted| {
+                let have = blocked::labels(story);
+                wanted.iter().all(|w| have.iter().any(|h| h == w))
+            })
     }
     fn digest(&self, repository: &str) -> String {
         let mut status = self.status.clone();
@@ -1063,9 +1070,20 @@ impl Filter {
             status.sort();
             status.dedup();
         }
-        sha(json!({"repository": repository, "status": status, "type": self.kind, "epic": self.epic})
-            .to_string()
-            .as_bytes())
+        let mut labels = self.labels.clone();
+        if let Some(labels) = labels.as_mut() {
+            labels.sort();
+            labels.dedup();
+        }
+        sha(json!({
+            "repository": repository,
+            "status": status,
+            "type": self.kind,
+            "epic": self.epic,
+            "labels": labels,
+        })
+        .to_string()
+        .as_bytes())
     }
 }
 
@@ -1115,6 +1133,7 @@ fn story_list(server: &Server, args: &Map<String, Value>) -> Result<Value, ToolE
         status: strings(args, "status"),
         kind: args.get("type").and_then(Value::as_str).map(str::to_owned),
         epic: args.get("epic").and_then(Value::as_str).map(str::to_owned),
+        labels: strings(args, "labels"),
     };
     let digest = filter.digest(&repo.root.key);
     let after = match args.get("cursor").and_then(Value::as_str) {
@@ -1559,7 +1578,8 @@ fn accept_in(repo: &Repo, args: &Map<String, Value>) -> Result<Value, ToolError>
     let date = chrono::Utc::now().format("%Y-%m-%d").to_string();
     let next = lenient_story::append_changelog(&Js::Obj(next), line, &date);
     let after = repo.save(&next)?;
-    Ok(repo.written(
+    let cleared = blocked::auto_clear_after_done(repo, id)?;
+    let mut result = repo.written(
         "story_accept",
         "updated",
         &next,
@@ -1567,7 +1587,11 @@ fn accept_in(repo: &Repo, args: &Map<String, Value>) -> Result<Value, ToolError>
         &after,
         vec!["status".into(), heading.into(), "Evidence".into()],
         Some(line.into()),
-    ))
+    );
+    if !cleared.is_empty() {
+        result["auto_cleared_blocked"] = json!(cleared);
+    }
+    Ok(result)
 }
 
 fn story_note(server: &Server, args: &Map<String, Value>) -> Result<Value, ToolError> {
@@ -1688,6 +1712,7 @@ enum Kind {
     Sha256,
     Changes,
     EvidenceEntries,
+    UnblockEntries,
 }
 impl Kind {
     fn schema(&self) -> Value {
@@ -1718,6 +1743,26 @@ impl Kind {
                     "type": ["string", "number", "array", "null"],
                     "items": {"type": "string"},
                 },
+            }),
+            Kind::UnblockEntries => json!({
+                "type": "array",
+                "minItems": 1,
+                "maxItems": 5,
+                "items": object(
+                    &["title", "acceptance_criteria"],
+                    json!({
+                        "title": {"type": "string", "minLength": 1, "maxLength": 200},
+                        "statement": {"type": "string", "maxLength": 100000},
+                        "acceptance_criteria": {
+                            "type": "array",
+                            "minItems": 1,
+                            "maxItems": 20,
+                            "items": {"type": "string", "minLength": 1, "maxLength": 2000}
+                        },
+                        "type": {"type": "string", "enum": ["story", "spike", "bug", "chore"]},
+                        "size": {"type": "number"}
+                    })
+                )
             }),
         }
     }
@@ -1763,6 +1808,36 @@ impl Kind {
                     && changes.values().all(|v| match v {
                         Value::Array(items) => items.iter().all(Value::is_string),
                         _ => matches!(v, Value::String(_) | Value::Number(_) | Value::Null),
+                    })
+            }
+            (Kind::UnblockEntries, Value::Array(entries)) => {
+                (1..=5).contains(&entries.len())
+                    && entries.iter().all(|entry| {
+                        let Some(fields) = entry.as_object() else {
+                            return false;
+                        };
+                        fields.contains_key("title")
+                            && fields.contains_key("acceptance_criteria")
+                            && entry["title"]
+                                .as_str()
+                                .is_some_and(|s| (1..=200).contains(&s.chars().count()))
+                            && entry
+                                .get("statement")
+                                .map(|v| v.as_str().is_some_and(|s| s.chars().count() <= 100_000))
+                                .unwrap_or(true)
+                            && entry["acceptance_criteria"].as_array().is_some_and(|acs| {
+                                (1..=20).contains(&acs.len())
+                                    && acs.iter().all(|ac| {
+                                        ac.as_str().is_some_and(|s| {
+                                            (1..=2000).contains(&s.chars().count())
+                                        })
+                                    })
+                            })
+                            && entry
+                                .get("type")
+                                .map(|v| v.as_str().is_some_and(|t| TYPES.contains(&t)))
+                                .unwrap_or(true)
+                            && entry.get("size").map(Value::is_number).unwrap_or(true)
                     })
             }
             _ => false,
@@ -1819,7 +1894,7 @@ struct Tool {
     run: fn(&Server, &Map<String, Value>) -> Result<Value, ToolError>,
 }
 
-const TOOLS: [Tool; 8] = [
+const TOOLS: [Tool; 11] = [
     Tool {
         name: "story_config",
         hints: READ,
@@ -1846,6 +1921,10 @@ const TOOLS: [Tool; 8] = [
             Field {
                 name: "epic",
                 kind: Kind::Text(64),
+            },
+            Field {
+                name: "labels",
+                kind: Kind::List(&Kind::NonEmpty(64), 20),
             },
             Field {
                 name: "limit",
@@ -1993,7 +2072,99 @@ const TOOLS: [Tool; 8] = [
         output: write_schema,
         run: story_create,
     },
+    Tool {
+        name: "story_mark_blocked",
+        hints: Hints {
+            read_only: false,
+            destructive: true,
+            idempotent: true,
+            open_world: false,
+        },
+        description: "Label a story blocked, optionally release WIP (in-progress→ready), note the reason, and return next_steps so the calling agent can propose unblocks instead of waiting idle.",
+        fields: &[
+            REPOSITORY,
+            ID,
+            EXPECTED,
+            Field {
+                name: "reason",
+                kind: Kind::NonEmpty(1000),
+            },
+            Field {
+                name: "blocker_kind",
+                kind: Kind::Choice(BLOCKER_KINDS),
+            },
+            Field {
+                name: "release_wip",
+                kind: Kind::Flag,
+            },
+        ],
+        required: &["id", "expected_sha256", "reason", "blocker_kind"],
+        output: blocked_write_schema,
+        run: blocked::mark_blocked,
+    },
+    Tool {
+        name: "story_propose_unblocks",
+        hints: Hints {
+            read_only: false,
+            destructive: true,
+            idempotent: false,
+            open_world: false,
+        },
+        description: "Create N unblock children for a blocked parent, wire depends_on and relates_to, and return next_steps naming the children to pull next. Calling agents may invoke this after story_mark_blocked.",
+        fields: &[
+            REPOSITORY,
+            ID,
+            EXPECTED,
+            Field {
+                name: "unblocks",
+                kind: Kind::UnblockEntries,
+            },
+            Field {
+                name: "max_children",
+                kind: Kind::Integer {
+                    min: 1,
+                    max: 5,
+                    default: 5,
+                },
+            },
+            Field {
+                name: "replace_existing_unblocks",
+                kind: Kind::Flag,
+            },
+        ],
+        required: &["id", "expected_sha256", "unblocks"],
+        output: propose_unblocks_schema,
+        run: blocked::propose_unblocks,
+    },
+    Tool {
+        name: "story_clear_blocked",
+        hints: Hints {
+            read_only: false,
+            destructive: true,
+            idempotent: true,
+            open_world: false,
+        },
+        description: "Remove the blocked label when depends_on are done (or with force). Returns next_steps to resume the parent.",
+        fields: &[
+            REPOSITORY,
+            ID,
+            EXPECTED,
+            Field {
+                name: "note",
+                kind: Kind::Text(500),
+            },
+            Field {
+                name: "force",
+                kind: Kind::Flag,
+            },
+        ],
+        required: &["id", "expected_sha256"],
+        output: blocked_write_schema,
+        run: blocked::clear_blocked,
+    },
 ];
+
+const BLOCKER_KINDS: &[&str] = &["dependency", "access", "ambiguity", "external", "other"];
 
 /// The tool that only a server with a registry has.
 const COMMENT_ID: Field = Field {
@@ -2230,6 +2401,7 @@ fn summary_schema() -> Value {
             "size",
             "epic",
             "depends_on",
+            "labels",
             "remote_url",
             "updated",
             "sha256",
@@ -2242,11 +2414,69 @@ fn summary_schema() -> Value {
             "size": {"type": ["number", "string", "null"]},
             "epic": nullable_text,
             "depends_on": texts(),
+            "labels": texts(),
             "remote_url": nullable_text,
             "updated": nullable_text,
             "sha256": nullable_text,
         }),
     )
+}
+
+fn blocked_write_schema() -> Value {
+    let mut schema = write_schema();
+    schema["properties"]["next_steps"] = texts();
+    schema["properties"]["labels"] = texts();
+    schema["properties"]["groomer_hint"] = json!({"type": "string"});
+    schema["required"]
+        .as_array_mut()
+        .unwrap()
+        .push(json!("next_steps"));
+    schema
+}
+
+fn propose_unblocks_schema() -> Value {
+    with_redactions(object(
+        &[
+            "status",
+            "parent",
+            "created",
+            "sha256_before",
+            "sha256_after",
+            "story",
+            "audit",
+            "publish",
+            "next_steps",
+        ],
+        json!({
+            "status": {"enum": ["updated"]},
+            "parent": object(
+                &["id", "depends_on", "labels", "sha256"],
+                json!({
+                    "id": {"type": "string"},
+                    "depends_on": texts(),
+                    "labels": texts(),
+                    "sha256": {"type": "string"},
+                }),
+            ),
+            "created": {
+                "type": "array",
+                "items": object(
+                    &["id", "title", "type"],
+                    json!({
+                        "id": {"type": "string"},
+                        "title": {"type": "string"},
+                        "type": {"type": "string"},
+                    }),
+                ),
+            },
+            "sha256_before": {"type": "string"},
+            "sha256_after": {"type": "string"},
+            "story": summary_schema(),
+            "audit": write_schema()["properties"]["audit"].clone(),
+            "publish": write_schema()["properties"]["publish"].clone(),
+            "next_steps": texts(),
+        }),
+    ))
 }
 
 fn list_schema() -> Value {
@@ -2310,6 +2540,7 @@ fn write_schema() -> Value {
             "sha256_after": text,
             "audit": audit,
             "publish": publish,
+            "auto_cleared_blocked": texts(),
         }),
     ))
 }

@@ -918,13 +918,12 @@ impl Writing<'_> {
         Ok(ids)
     }
 
-    /// Makes the commit that puts `bytes` at `path` on top of `base`, and returns its id. The
-    /// commit is in the clone only; `push` sends it.
+    /// Makes the commit that puts the bytes of each file at its path on top of `base`, and
+    /// returns its id. The commit is in the clone only; `push` sends it.
     pub(super) fn commit(
         &self,
         base: &str,
-        path: &str,
-        bytes: &[u8],
+        files: &[(String, Vec<u8>)],
         message: &str,
         author: &str,
     ) -> Result<String, String> {
@@ -950,9 +949,11 @@ impl Writing<'_> {
         };
         let made = (|| {
             git(&["read-tree", base], None)?;
-            let blob = git(&["hash-object", "-w", "--stdin"], Some(bytes))?;
-            let entry = format!("100644,{blob},{path}");
-            git(&["update-index", "--add", "--cacheinfo", &entry], None)?;
+            for (path, bytes) in files {
+                let blob = git(&["hash-object", "-w", "--stdin"], Some(bytes))?;
+                let entry = format!("100644,{blob},{path}");
+                git(&["update-index", "--add", "--cacheinfo", &entry], None)?;
+            }
             let tree = git(&["write-tree"], None)?;
             git(
                 &["commit-tree", &tree, "-p", base],
