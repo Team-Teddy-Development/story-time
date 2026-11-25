@@ -96,7 +96,7 @@ The **principle-invest** skill holds the quality bar all of them apply.
 
 ## The `story` tool
 
-Use installed Rust `story` for `init`, `push`, `adopt preview`, `plan`, `config`, `show`, `list`, `lint`, `stats`, `secret`, `issues`, `note`, `machine`, `mcp`, `export`, `new`, `rank`, `assignment`, `set`, `split`, `table`, `judge`, `check-pr`, `sync-merge`, `help`, and `metrics`.
+Use installed Rust `story` for `init`, `push`, `adopt preview`, `plan`, `config`, `show`, `list`, `lint`, `stats`, `secret`, `issues`, `note`, `machine`, `mcp`, `export`, `new`, `rank`, `assignment`, `set`, `split`, `sprint`, `table`, `judge`, `check-pr`, `sync-merge`, `help`, and `metrics`.
 The skill installer copies skills only; install the executable separately.
 Read `.story-time/settings.json` before selecting a tracker. Install the native
 command from the repository root:
@@ -106,7 +106,7 @@ cargo install --path native/story-push --locked
 ```
 
 `story push` runs entirely in Rust. Do not invoke the historical Node push
-handler. `story init`, `story adopt preview`, `story plan`, `story config`, `story show`, `story list`, `story lint`, `story stats`, `story secret`, `story issues`, `story note`, `story machine`, `story mcp`, `story export`, `story new`, `story rank`, `story assignment`, `story set`, `story split`, `story table`, `story judge`, `story check-pr`, `story sync-merge`, `story help`, and `story metrics` also run entirely in Rust. No command needs Node.
+handler. `story init`, `story adopt preview`, `story plan`, `story config`, `story show`, `story list`, `story lint`, `story stats`, `story secret`, `story issues`, `story note`, `story machine`, `story mcp`, `story export`, `story new`, `story rank`, `story assignment`, `story set`, `story split`, `story sprint`, `story table`, `story judge`, `story check-pr`, `story sync-merge`, `story help`, and `story metrics` also run entirely in Rust. No command needs Node.
 Plan JSON is the default output; other commands use `--json`.
 
 The separate Rust `gitea-gateway story-push` interface remains available in
@@ -126,9 +126,10 @@ part of either Rust push execution path.
 | `story plan --snapshot` | Capture a complete version-1 request with current source identity and hashes. Native Rust; read-only |
 | `story plan --from request.json [--output docs/planning/name.json]` | Generate a local JSON proposal; explicit output also writes Markdown, with reviewed hashes required for both replacements. Native Rust |
 | `story new --title T [--statement S] [--ac A]... [--type story\|spike\|bug\|chore]` | Create a draft with the next id. In a git repo the id is above every id on all local and remote-tracking branches; `git fetch` first so other branches' ids are seen. Native Rust |
-| `story list [--status S]` | List stories. Native Rust; read-only |
+| `story list [--status S] [--sprint ID]` | List stories, optionally those in one sprint. Native Rust; read-only |
 | `story show <id>` | Print one story. Native Rust; read-only |
-| `story metrics --from YYYY-MM-DD --to YYYY-MM-DD [--json]` | Throughput, WIP, and cycle time for a window from changelog status events, with gaps `unknown`. Native Rust; read-only |
+| `story metrics --from YYYY-MM-DD --to YYYY-MM-DD [--json]` | Throughput, WIP, cycle time and velocity for a window from changelog events, with gaps `unknown`. Native Rust; read-only |
+| `story sprint show <YYYY-Snn> [--json]` | A sprint's dates, committed set with points, dated adds and drops, and done set, from changelog events. Native Rust; read-only |
 | `story check-pr [--body-file F] [--json]` | Check a PR's `Stories:` line, acceptance, and closing keywords (CI). Reads `PR_BODY`, `IS_INCIDENT`, `STORY_ACCEPTANCE`, `REPO`. Native Rust; read-only |
 | `story sync-merge [--all] [--from SHA] [--workflow F] [--json]` | Mirror merged cards to their issues and comment once per PR on each named issue (CI, after a push to the default branch; GitHub and Gitea). Native Rust |
 | `story lint [id...] [--json]` | INVEST / Definition of Ready check. Exit 1 if any story has errors. Native Rust; read-only |
