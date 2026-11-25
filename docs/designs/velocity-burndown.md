@@ -10,23 +10,25 @@
 
 ## Data shape
 
-A sprint record is the one new artifact. One JSON file per sprint, committed with the backlog:
+Sprint membership is an attribute on the story, so every surface that reads a story (CLI, MCP, hosted server, tracker sync) sees it with no new artifact. Decided by Eric, 2026-11-25.
 
 ```
-.story-time/sprints/<sprint-id>.json
-{
-  "id": "2026-S23",
-  "start": "2026-11-24", "end": "2026-12-05", "tz": "America/Chicago",
-  "goal": "...",
-  "committed": [{"id": "ESS-269", "points": 2}, ...],   // snapshot at start
-  "changes": [{"date": "2026-11-26", "op": "add" | "drop", "id": "ESS-410", "points": 5, "why": "..."}],
-  "closed": null | {"date": "2026-12-05", "done": ["ESS-269", ...], "carried": ["ESS-410"]}
-}
+---
+id: ESS-269
+status: in-progress
+size: 2
+sprint: 2026-S23        # new, optional
+---
 ```
 
-- The commitment is a snapshot taken at start, so a later re-estimate does not rewrite history. Scope changes are logged, not edited in.
-- Done dates come from the story changelog, which is the existing single source; the sprint file never copies them.
-- Points are the story `size` at the moment the story enters the sprint.
+- **Sprint calendar.** It comes from settings, not files: `team.sprintDays` (it exists) plus a new `team.sprintAnchor` (the start date of sprint 1, and the time zone). A sprint id `YYYY-Snn` maps to fixed start and end dates. An optional `team.sprints` list overrides the dates and adds a goal for a single sprint (holidays, a short sprint).
+- **Committed set.** This is the stories whose changelog has `set sprint=<id>` on or before the sprint's start date. The changelog is the history, so nothing is snapshotted.
+- **Scope changes.** A `set sprint=<id>` dated after the start is an add. A later `set sprint=<other>` or `set sprint=` is a drop. These are the same changelog lines `story set` and `story_update` already write.
+- **Points at commitment.** This is the last `set size=` event on or before the date the story entered the sprint, so a later re-estimate does not rewrite the burndown.
+- **Done dates.** These come from the existing `set status=done` changelog events.
+- **Carry-over.** When a sprint closes, an unfinished story gets `set sprint=<next>`. That is a drop from the old sprint and an add to the new one, and both are visible.
+
+MCP: `story_show`, `story_list` and `story_update` read and set `sprint` like any other field, `story_list` gains a `sprint` filter, and a sprint is "started" by setting the attribute on its stories. This needs no `story sprint` file commands. `story sprint show <id>` remains as a read-only view of the calendar dates, the committed set, and the changes.
 
 ## Figures
 
@@ -41,15 +43,15 @@ Every figure keeps the `metrics.rs` contract: it names its source, window and un
 
 | Surface | What |
 |---|---|
-| Rust CLI | `story sprint start/add/drop/close/show`, `story velocity`, `story burndown [--sprint ID] [--json/--text/--svg]`, `story forecast (--sprint ID / --epic ID / --ids ...)` |
-| MCP (local `story mcp` and hosted) | read-only `story_velocity`, `story_burndown`, `story_forecast`; `story_sprint` for start/add/drop/close behind the same write rules as `story_update` |
+| Rust CLI | `sprint` attribute via `story set`, `story sprint show`, `story velocity`, `story burndown [--sprint ID] [--json/--text/--svg]`, `story forecast (--sprint ID / --epic ID / --ids ...)` |
+| MCP (local `story mcp` and hosted) | read-only `story_velocity`, `story_burndown`, `story_forecast`; `sprint` is set through `story_update`, and `story_list` filters by it |
 | Skills | `agile-metrics` reports all three; `sprint-planning` sizes the commitment from the velocity range, not the mean; `sprint-review` shows the burndown and the committed-against-done delta; `story-time` routes "burndown", "velocity", "when will it be done" |
 
 The SVG burndown is a small static chart drawn by hand in Rust (no charting dependency), so it can go in a PR body, an issue or a report.
 
 ## Stories, in order
 
-1. Sprint records and `story sprint`. Velocity in `story metrics` stops being `unknown`.
+1. The `sprint` story attribute, the sprint calendar in settings, and `story sprint show`. Velocity in `story metrics` stops being `unknown`.
 2. `story velocity` and `story burndown` (JSON and text), plus burnup.
 3. `story forecast`, the Monte Carlo.
 4. MCP tools, local and hosted.
