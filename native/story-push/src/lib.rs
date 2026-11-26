@@ -1,6 +1,7 @@
 pub mod adoption;
 mod adoption_apply;
 pub mod assignment;
+mod blocked;
 mod check_pr;
 pub mod config;
 pub mod export;

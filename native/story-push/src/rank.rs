@@ -1,6 +1,7 @@
 //! `story rank`: Weighted Shortest Job First over the ready stories, as Node's `rankBacklog` ranks them.
 
 use crate::{
+    blocked,
     config::{self, Flags},
     js_number,
     lenient_story::Js,
@@ -89,12 +90,7 @@ fn rank_backlog<'a>(
             });
             continue;
         }
-        let labeled_blocked = match story.get("labels") {
-            Js::Arr(items) => items.iter().any(|l| l.string() == "blocked"),
-            Js::Str(s) => s == "blocked",
-            _ => false,
-        };
-        if labeled_blocked {
+        if blocked::has_blocked(story) {
             excluded.push(Excluded {
                 story,
                 reason: "blocked label".into(),

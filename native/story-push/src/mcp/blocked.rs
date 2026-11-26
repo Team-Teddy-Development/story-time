@@ -4,76 +4,15 @@ use super::{
     conflict, fail, field_error, invalid, io_error, sha, summary, Repo, Server, ToolError, TYPES,
 };
 use crate::{
-    lenient_story::{self, Js},
+    blocked::{depends_on, ensure_blocked, has_blocked, labels, remove_blocked},
+    lenient_story::Js,
     list, new_story, note as note_mod,
 };
 use serde_json::{json, Map, Value};
 use std::collections::{HashMap, HashSet};
 
-pub(super) const BLOCKED: &str = "blocked";
 pub(super) const MAX_DEPTH: usize = 2;
 const BLOCKER_KINDS: &[&str] = &["dependency", "access", "ambiguity", "external", "other"];
-
-pub(super) fn labels(story: &Js) -> Vec<String> {
-    match story.get("labels") {
-        Js::Undefined => Vec::new(),
-        Js::Arr(items) => items
-            .iter()
-            .filter_map(|v| match v {
-                Js::Str(s) if !lenient_story::trim(s).is_empty() => Some(s.clone()),
-                _ => None,
-            })
-            .collect(),
-        other => {
-            let owned = other.string();
-            let text = lenient_story::trim(&owned);
-            if text.is_empty() {
-                Vec::new()
-            } else {
-                vec![text.to_owned()]
-            }
-        }
-    }
-}
-
-pub(super) fn has_blocked(story: &Js) -> bool {
-    labels(story).iter().any(|l| l == BLOCKED)
-}
-
-fn set_labels(story: &Js, labels: Vec<String>) -> Js {
-    let mut props = story.props().to_vec();
-    if labels.is_empty() {
-        props.retain(|(k, _)| k != "labels");
-    } else {
-        Js::set(
-            &mut props,
-            "labels",
-            Js::Arr(labels.into_iter().map(Js::Str).collect()),
-        );
-    }
-    Js::Obj(props)
-}
-
-fn ensure_blocked(story: &Js) -> Js {
-    let mut labels = labels(story);
-    if !labels.iter().any(|l| l == BLOCKED) {
-        labels.push(BLOCKED.into());
-    }
-    set_labels(story, labels)
-}
-
-fn remove_blocked(story: &Js) -> Js {
-    let labels: Vec<String> = labels(story).into_iter().filter(|l| l != BLOCKED).collect();
-    set_labels(story, labels)
-}
-
-fn depends_on(story: &Js) -> Vec<String> {
-    match story.get("depends_on") {
-        Js::Undefined => Vec::new(),
-        Js::Arr(items) => items.iter().map(Js::string).collect(),
-        other => vec![other.string()],
-    }
-}
 
 fn relates_to(story: &Js) -> Vec<String> {
     match story.get("relates_to") {
@@ -122,44 +61,20 @@ pub(super) fn unblock_depth(id: &str, stories: &[Js]) -> Result<usize, ToolError
     walk(id, stories, &mut HashSet::new(), &mut HashMap::new())
 }
 
-fn would_cycle(stories: &[Js], from: &str, new_deps: &[String]) -> bool {
-    let mut graph: HashMap<String, Vec<String>> = HashMap::new();
-    for story in stories {
-        let id = story.get("id").string();
-        let deps = if id == from {
-            new_deps.to_vec()
-        } else {
-            depends_on(story)
-        };
-        graph.insert(id, deps);
-    }
-    fn visit(
-        id: &str,
-        graph: &HashMap<String, Vec<String>>,
-        active: &mut HashSet<String>,
-        done: &mut HashSet<String>,
-    ) -> bool {
-        if done.contains(id) {
-            return false;
-        }
-        if !active.insert(id.to_owned()) {
+/// Whether `parent`, depending on `deps`, reaches itself again through depends_on. New unblock
+/// stories depend on nothing, so only the dependencies the parent keeps can close a cycle.
+fn would_cycle(stories: &[Js], parent: &str, deps: &[String]) -> bool {
+    let mut seen = HashSet::new();
+    let mut stack = deps.to_vec();
+    while let Some(id) = stack.pop() {
+        if id == parent {
             return true;
         }
-        if let Some(deps) = graph.get(id) {
-            for dep in deps {
-                if graph.contains_key(dep) && visit(dep, graph, active, done) {
-                    return true;
-                }
-            }
+        if seen.insert(id.clone()) {
+            stack.extend(by_id(stories, &id).map(depends_on).unwrap_or_default());
         }
-        active.remove(id);
-        done.insert(id.to_owned());
-        false
     }
-    let mut done = HashSet::new();
-    graph
-        .keys()
-        .any(|id| visit(id, &graph, &mut HashSet::new(), &mut done))
+    false
 }
 
 fn open_unblock_deps(parent: &Js, stories: &[Js]) -> Vec<String> {
@@ -175,33 +90,34 @@ fn open_unblock_deps(parent: &Js, stories: &[Js]) -> Vec<String> {
         .collect()
 }
 
-fn next_steps_mark(id: &str, kind: &str) -> Vec<String> {
+fn next_steps_mark(id: &str, kind: &str, sha256: &str) -> Vec<String> {
     vec![
         format!(
-            "Call story_propose_unblocks on {id} with 1..N unblock specs that name the concrete {kind} blocker outcome. Do this yourself; do not wait idle for a groomer."
+            "Call story_propose_unblocks on {id} with expected_sha256 {sha256} and 1..5 unblock specs that each name {id} and the concrete {kind} outcome; use type spike when how to unblock is still unknown. Do this yourself; do not wait idle for a groomer."
         ),
         format!(
-            "After propose returns, claim and implement the created child ids next. Leave {id} until story_clear_blocked removes the blocked label."
+            "Then refine the created stories to ready and implement them. Rank and assignment skip {id} until its blocked label clears."
         ),
-        "If you cannot name unblock work, escalate to the owner with a note; still keep WIP released on this labeled parent.".into(),
+        "If you cannot name unblock work, escalate to the owner with a story note; WIP stays released on this labeled story.".into(),
     ]
 }
 
 fn next_steps_propose(parent: &str, created: &[String]) -> Vec<String> {
-    let mut steps = Vec::new();
+    let mut steps = vec![format!(
+        "Refine {} to ready; each is a draft. Do not resume {parent} yet.",
+        created.join(", ")
+    )];
     if let Some(first) = created.first() {
-        steps.push(format!(
-            "Claim and implement {first} next (do not resume blocked parent {parent} yet)."
-        ));
+        steps.push(format!("Claim and implement {first} first."));
     }
     if created.len() > 1 {
         steps.push(format!(
-            "Then implement the remaining unblock children: {}.",
+            "Then implement the remaining unblock stories: {}.",
             created[1..].join(", ")
         ));
     }
     steps.push(format!(
-        "When all unblock deps of {parent} are done, call story_clear_blocked on {parent}, then pull {parent} again."
+        "Accepting the last of them clears the blocked label on {parent}; call story_clear_blocked only if {parent} still carries it. Then pull {parent} again."
     ));
     steps
 }
@@ -253,15 +169,17 @@ pub(super) fn mark_in(repo: &Repo, args: &Map<String, Value>) -> Result<Value, T
     }
     let mut next = ensure_blocked(&current);
     let mut fields = vec!["labels".into()];
+    let mut line = format!("Blocked: {kind} — {reason}");
     if release_wip && next.get("status").string() == "in-progress" {
         let mut props = next.props().to_vec();
         Js::set(&mut props, "status", Js::Str("ready".into()));
         next = Js::Obj(props);
         fields.push("status".into());
+        line = format!("set status=ready — {line}");
     }
-    let line = format!("Blocked: {kind} — {reason}");
     let next =
         note_mod::append(&next, &line).map_err(|m| field_error("invalid_value", "reason", m))?;
+    let depth = unblock_depth(id, &repo.stories()?.0).unwrap_or(MAX_DEPTH);
     let after = repo.save(&next)?;
     let mut result = repo.written(
         "story_mark_blocked",
@@ -274,7 +192,11 @@ pub(super) fn mark_in(repo: &Repo, args: &Map<String, Value>) -> Result<Value, T
     );
     result["labels"] = json!(labels(&next));
     result["groomer_hint"] = json!("story_propose_unblocks");
-    result["next_steps"] = json!(next_steps_mark(id, kind));
+    result["next_steps"] = json!(if depth >= MAX_DEPTH {
+        next_steps_depth(id)
+    } else {
+        next_steps_mark(id, kind, &after)
+    });
     Ok(result)
 }
 
@@ -356,6 +278,17 @@ pub(super) fn propose_in(
             details: json!({ "id": id, "open_unblocks": open }),
         });
     }
+    let mut deps = depends_on(&parent);
+    if replace {
+        let drop: HashSet<String> = open.into_iter().collect();
+        deps.retain(|d| !drop.contains(d));
+    }
+    if would_cycle(&stories, id, &deps) {
+        return Err(fail(
+            "dependency_cycle",
+            &format!("{id} already reaches itself through depends_on; nothing was written."),
+        ));
+    }
 
     let prefix = repo.settings["prefix"].as_str().unwrap_or("ST");
     let date = chrono::Utc::now().format("%Y-%m-%d").to_string();
@@ -383,7 +316,12 @@ pub(super) fn propose_in(
             kind.to_owned(),
         ];
         if let Some(statement) = spec.get("statement").and_then(Value::as_str) {
-            argv.extend(["--statement".into(), statement.to_owned()]);
+            let flag = if kind == "spike" {
+                "--question"
+            } else {
+                "--statement"
+            };
+            argv.extend([flag.into(), statement.to_owned()]);
         }
         if let Some(criteria) = spec.get("acceptance_criteria").and_then(Value::as_array) {
             for ac in criteria.iter().filter_map(Value::as_str) {
@@ -423,27 +361,7 @@ pub(super) fn propose_in(
         }));
         created_ids.push(child_id);
     }
-
-    let mut deps = depends_on(&parent);
-    if replace {
-        let drop: HashSet<String> = open.into_iter().collect();
-        deps.retain(|d| !drop.contains(d));
-    }
-    for child_id in &created_ids {
-        if !deps.iter().any(|d| d == child_id) {
-            deps.push(child_id.clone());
-        }
-    }
-    if would_cycle(&stories, id, &deps) {
-        for child_id in &created_ids {
-            let path = repo.dir.join(format!("{child_id}.md"));
-            let _ = std::fs::remove_file(path);
-        }
-        return Err(fail(
-            "dependency_cycle",
-            "Proposing these unblocks would create a depends_on cycle; nothing was written.",
-        ));
-    }
+    deps.extend(created_ids.iter().cloned());
 
     let mut props = parent.props().to_vec();
     Js::set(
@@ -557,45 +475,4 @@ pub(super) fn clear_in(repo: &Repo, args: &Map<String, Value>) -> Result<Value, 
     result["labels"] = json!(labels(&next));
     result["next_steps"] = json!(next_steps_clear(id));
     Ok(result)
-}
-
-/// After a story becomes done, clear blocked parents whose depends_on are all done.
-pub(super) fn auto_clear_after_done(repo: &Repo, done_id: &str) -> Result<Vec<String>, ToolError> {
-    let (stories, _) = repo.stories()?;
-    let mut cleared = Vec::new();
-    for story in &stories {
-        if !has_blocked(story) {
-            continue;
-        }
-        let deps = depends_on(story);
-        if !deps.iter().any(|d| d == done_id) {
-            continue;
-        }
-        let all_done = deps.iter().all(|dep| {
-            if dep == done_id {
-                return true;
-            }
-            list::get(&repo.dir, dep)
-                .ok()
-                .flatten()
-                .is_some_and(|s| s.get("status").string() == "done")
-        });
-        if !all_done {
-            continue;
-        }
-        let id = story.get("id").string();
-        let Some(current) = list::get(&repo.dir, &id).map_err(|_| io_error("read story file"))?
-        else {
-            continue;
-        };
-        if !has_blocked(&current) {
-            continue;
-        }
-        let next = remove_blocked(&current);
-        let next = note_mod::append(&next, "Unblocked: auto-cleared after depends_on completed")
-            .map_err(|m| fail("invalid_value", &m))?;
-        list::save(&repo.dir, &next).map_err(|_| io_error("write story file"))?;
-        cleared.push(id);
-    }
-    Ok(cleared)
 }
