@@ -28,6 +28,7 @@ mod forge;
 mod forge_auth;
 mod graph;
 mod http;
+mod planning;
 mod propose;
 mod registry;
 mod retry;
@@ -492,7 +493,9 @@ impl Server {
             ),
         };
         let redactions = self.redactor.redact(&mut content);
-        content["redactions"] = json!(redactions);
+        if redactions > 0 || is_error || !planning::is_tool(tool.name) {
+            content["redactions"] = json!(redactions);
+        }
         Ok(json!({
             "content": [{"type": "text", "text": content.to_string()}],
             "structuredContent": content,
@@ -1934,7 +1937,10 @@ struct Tool {
     run: fn(&Server, &Map<String, Value>) -> Result<Value, ToolError>,
 }
 
-const TOOLS: [Tool; 11] = [
+const TOOLS: [Tool; 14] = [
+    planning::VELOCITY,
+    planning::BURNDOWN,
+    planning::FORECAST,
     Tool {
         name: "story_config",
         hints: READ,
@@ -2278,6 +2284,7 @@ impl Tool {
     /// a tool takes `ref` and names the commit in its result.
     fn at_commit(&self) -> bool {
         matches!(self.name, "story_list" | "story_show" | "story_lint")
+            || planning::is_tool(self.name)
     }
 
     /// The scope a hosted client needs for this tool.

@@ -277,6 +277,16 @@ fn modern(mut params: Value) -> Value {
 }
 
 #[test]
+fn a_read_only_client_lists_the_planning_tools() {
+    let fixture = Fixture::new();
+    let tools = fixture.http().tools(READER);
+    for name in ["story_velocity", "story_burndown", "story_forecast"] {
+        assert!(tools.iter().any(|tool| tool == name), "{tools:?}");
+    }
+    assert!(!tools.iter().any(|tool| tool == "story_update"));
+}
+
+#[test]
 fn a_request_without_a_known_token_gets_401_on_every_method() {
     let fixture = Fixture::new();
     let server = fixture.http();

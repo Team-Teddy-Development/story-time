@@ -13,7 +13,7 @@ const SOURCE: &str = "closed-sprint velocity from changelog `set sprint=`, `set 
 const DEFINITION: &str = "dates by which 50% and 85% of 10,000 simulated runs finish the remaining points; each run draws one closed-sprint velocity, with replacement, per future sprint, the sprint holding --today counting only its share of calendar days after --today; a run's date is the end of the sprint where its draws reach the remaining points; a percentile is the nearest-rank run (the 5,000th and 8,500th of 10,000)";
 const SAMPLE_SOURCE: &str = "closed-sprint velocity";
 const RUNS: usize = 10_000;
-const DEFAULT_SEED: u64 = 1;
+pub(crate) const DEFAULT_SEED: u64 = 1;
 const MIN_SPRINTS: usize = 3;
 const PERCENTILES: [usize; 2] = [50, 85];
 const EPSILON: f64 = 1e-9;
@@ -124,7 +124,7 @@ pub(crate) fn velocity_sample(points: &[f64]) -> impl FnMut(&mut SplitMix64) -> 
     move |rng| points[rng.below(points.len() as u64) as usize]
 }
 
-enum Target {
+pub(crate) enum Target {
     Sprint(String),
     Epic(String),
     Ids(Vec<String>),
@@ -305,8 +305,23 @@ pub fn run(args: &[String]) -> Result<String, Failure> {
         .ok_or("no sprint calendar in settings (team.sprintAnchor or team.sprints).")?;
     let dir = list::backlog_dir(flags.value("dir"), &loaded.root, &settings)?;
     let stories = metrics::histories(&dir)?;
-    let scope = scope_of(&target, &stories, &calendar, today)?;
-    let (closed, _) = metrics::closed_velocities(&stories, Some(&calendar), today);
+    let report = report(&stories, &calendar, &target, today, seed)?;
+    Ok(if flags.has("json") {
+        format!("{}\n", serde_json::to_string_pretty(&report).unwrap())
+    } else {
+        text(&report)
+    })
+}
+
+pub(crate) fn report(
+    stories: &[History],
+    calendar: &Calendar,
+    target: &Target,
+    today: NaiveDate,
+    seed: u64,
+) -> Result<Value, Failure> {
+    let scope = scope_of(target, stories, calendar, today)?;
+    let (closed, _) = metrics::closed_velocities(stories, Some(calendar), today);
     let points: Vec<f64> = closed.iter().map(|(_, p)| *p).collect();
 
     let rows = if points.len() < MIN_SPRINTS {
@@ -319,7 +334,7 @@ pub fn run(args: &[String]) -> Result<String, Failure> {
     } else if scope.remaining <= EPSILON && !scope.unknown.is_empty() {
         unknown_rows("no sized points remain in the target, so there is nothing to forecast")
     } else {
-        let ahead = sprints_ahead(&calendar, today);
+        let ahead = sprints_ahead(calendar, today);
         let mut rng = SplitMix64::new(seed);
         let runs = simulate(
             scope.remaining,
@@ -342,7 +357,7 @@ pub fn run(args: &[String]) -> Result<String, Failure> {
     };
 
     let window_start = closed.first().map_or(today, |(s, _)| s.start);
-    let report = json!({
+    Ok(json!({
         "metric": "forecast",
         "units": "date",
         "window": format!("{window_start}..{today}"),
@@ -361,12 +376,7 @@ pub fn run(args: &[String]) -> Result<String, Failure> {
         "seed": seed,
         "rows": rows,
         "unknown": scope.unknown,
-    });
-    Ok(if flags.has("json") {
-        format!("{}\n", serde_json::to_string_pretty(&report).unwrap())
-    } else {
-        text(&report)
-    })
+    }))
 }
 
 fn unknown_rows(reason: &str) -> Vec<Value> {

@@ -28,11 +28,20 @@ returns:
   `in-progress`. Units: stories.
 - `cycle_time_median`: median days from the first `in-progress` event to the
   `done` event, with a per-story list. Units: days.
-- `velocity`: always `unknown` today. Units: points per sprint.
+- `velocity`: completed points per closed sprint, with mean, minimum, and maximum for the last three and six closed sprints. Units: points per sprint.
 
 Never compute a figure yourself. Do not count stories from `story list`,
 from prose, or from memory. Do not convert points to hours or days. If the
 command fails, report the error and stop; do not estimate in its place.
+
+For remaining points by day, run `story burndown --sprint ID --json`.
+For completion percentiles, run `story forecast --sprint ID --json`.
+Use `--epic ID` or `--ids A,B` to forecast a different scope.
+
+For an allowlisted repository on MCP, use `story_velocity`, `story_burndown`, or
+`story_forecast`. Send `from` and `to` for velocity, or `sprint` for burndown.
+For a forecast, send one of `sprint`, `epic`, or `ids`. On the hosted server,
+use `ref` to read a branch and cite the returned `sha`.
 
 ## 3. Present the figures as given
 
@@ -43,7 +52,7 @@ command output into this table, one row per figure:
 |---|---|---|---|---|
 | throughput | 3 | stories | 2026-11-01..2026-11-14 | changelog `set status=` and `split into` lines |
 | cycle_time_median | `unknown` | days | 2026-11-01..2026-11-14 | changelog `set status=` and `split into` lines |
-| velocity | `unknown` | points per sprint | 2026-11-01..2026-11-14 | no sprint record is stored |
+| velocity | `unknown` | points per sprint | 2026-11-01..2026-11-14 | sprint assignments and dates; fewer than three closed sprints |
 
 Then list each entry of every figure's `unknown` array with its story and
 reason. Add the definition the command gives when the lead asks how a
@@ -58,10 +67,8 @@ look complete.
 
 These facts are not stored. Do not invent them:
 
-- No sprint record is stored, so velocity is `unknown`. Name the question
-  that would fill it: which sprints, with which dates and members.
-- No blocked or scope event history is stored. Lead time, blocked time, and
-  scope change are `unknown`.
+- If the calendar or known closed sprints are missing, report the reason from velocity or forecast.
+- Do not infer lead time or blocked time from sprint scope changes.
 - A story whose status has no matching changelog event has a gap in its
   history. The command lists it as `unknown` for every figure.
 

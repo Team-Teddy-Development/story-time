@@ -16,7 +16,9 @@ Planning proposes local artifacts; it does not start or close a sprint.
    Keep missing goals null and name the question.
 2. Record start, end, and time zone from supplied calendar evidence. Configured
    `team.sprintDays` records duration only; it cannot establish dates or holidays.
-3. Obtain a point budget, reserve in the same unit, and the evidence source.
+3. Obtain a point budget and reserve in points. Use the velocity minimum to
+   maximum over the last 3 closed sprints from `story metrics --from D --to D --json`.
+   Record the budget selected within that range and its evidence source.
    Velocity, working days, and availability are different quantities. If capacity
    is missing, produce a provisional plan with no commitments. Zero capacity is
    valid. Never create a velocity or availability metric from estimates.
@@ -70,6 +72,9 @@ the plan provisional with `publication.tracker_sprint_fields` as a named reason.
 Record these limits rather than inventing tracker commands or synchronization.
 For missing permission or access, add an `exclusions` reason for that ID in the
 request. It blocks selection and records the provisional eligibility gap.
+
+When the lead starts the sprint, set `sprint` for each chosen story with
+`story set ID sprint=YYYY-Snn`. Do not assign a proposal before that decision.
 
 Hand a selected ready story to the **story-pick** skill. Recheck WIP and current
 source state before **story-kickoff** starts implementation. Completion belongs to

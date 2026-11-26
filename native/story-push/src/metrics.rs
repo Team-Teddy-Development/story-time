@@ -55,31 +55,46 @@ pub fn run(args: &[String]) -> Result<String, Failure> {
 }
 
 pub(crate) fn histories(dir: &Path) -> Result<Vec<History>, String> {
+    histories_with(
+        dir,
+        |id| {
+            fs::read_to_string(dir.join(format!("{id}.md")))
+                .map(Some)
+                .map_err(|e| e.to_string())
+        },
+        |e| format!("{}: {e}", dir.display()),
+    )
+}
+
+pub(crate) fn histories_with<E>(
+    dir: &Path,
+    mut read: impl FnMut(&str) -> Result<Option<String>, E>,
+    list_error: impl FnOnce(std::io::Error) -> E,
+) -> Result<Vec<History>, E> {
     let mut ids: Vec<String> = fs::read_dir(dir)
-        .map_err(|e| format!("{}: {e}", dir.display()))?
+        .map_err(list_error)?
         .filter_map(|entry| {
             let name = entry.ok()?.file_name().into_string().ok()?;
             crate::story_file_id(&name).map(str::to_owned)
         })
         .collect();
     ids.sort();
-    ids.into_iter()
-        .map(|id| {
-            let text =
-                fs::read_to_string(dir.join(format!("{id}.md"))).map_err(|e| e.to_string())?;
-            Ok(match lenient_story::parse(&text) {
-                Ok(parsed) => history(id, &parsed.to_value()),
-                Err(e) => History {
-                    id,
-                    log: StoryLog::default(),
-                    gap: Some(format!("story file does not parse: {e}")),
-                    status: String::new(),
-                    size: None,
-                    epic: None,
-                },
-            })
-        })
-        .collect()
+    let mut histories = Vec::with_capacity(ids.len());
+    for id in ids {
+        let Some(text) = read(&id)? else { continue };
+        histories.push(match lenient_story::parse(&text) {
+            Ok(parsed) => history(id, &parsed.to_value()),
+            Err(e) => History {
+                id,
+                log: StoryLog::default(),
+                gap: Some(format!("story file does not parse: {e}")),
+                status: String::new(),
+                size: None,
+                epic: None,
+            },
+        });
+    }
+    Ok(histories)
 }
 
 /// Reads `- DATE set k=v, status=S — note` and `- DATE split into ...` lines. A status named only
@@ -243,7 +258,7 @@ fn report(
 /// Completed points per closed sprint. A sprint is closed when its end is on or before `to`, and
 /// the window start does not apply: the figure looks back over every closed sprint. Each sprint
 /// counts the points its stories had when they entered it, so a re-estimate never rewrites it.
-fn velocity(
+pub(crate) fn velocity(
     stories: &[History],
     calendar: Option<&Calendar>,
     from: NaiveDate,

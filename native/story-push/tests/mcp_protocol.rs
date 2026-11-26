@@ -308,6 +308,7 @@ fn planning_tools_match_native_cli_json() {
         .expect("metrics must include velocity");
     assert_eq!(velocity["closed_sprints"], 3);
     let mut mcp = fixture.server();
+    let schemas = output_schemas(&mut mcp);
     for (name, args, expected) in [
         (
             "story_burndown",
@@ -325,7 +326,10 @@ fn planning_tools_match_native_cli_json() {
             velocity,
         ),
     ] {
-        assert_eq!(structured(&mcp.tool(name, args)), expected, "{name}");
+        let result = mcp.tool(name, args);
+        let actual = structured(&result);
+        assert_eq!(actual, expected, "{name}");
+        conforms(&schemas[name], actual, name).unwrap();
     }
     assert_eq!(mcp.finish().0, Some(0));
 }
@@ -424,10 +428,7 @@ fn read_tools_match_their_output_schemas_and_agree_with_the_cli() {
     let mut server = fixture.server();
     let schemas = output_schemas(&mut server);
     let names: Vec<_> = schemas.keys().cloned().collect();
-    assert_eq!(
-        names,
-        ["story_config", "story_list", "story_show", "story_lint"]
-    );
+    assert_eq!(names, READ_TOOLS);
 
     let check = |name: &str, value: &Value| {
         conforms(&schemas[name], value, name).unwrap_or_else(|e| panic!("{e}\n{value:#}"));
@@ -649,7 +650,10 @@ fn modern_and_legacy_clients_both_work_and_version_faults_use_their_codes() {
     );
     let tools = modern.modern("tools/list", json!({}));
     assert_eq!(tools["result"]["resultType"], "complete");
-    assert_eq!(tools["result"]["tools"].as_array().unwrap().len(), 4);
+    assert_eq!(
+        tools["result"]["tools"].as_array().unwrap().len(),
+        READ_TOOLS.len()
+    );
     assert!(tools["result"].get("nextCursor").is_none());
     for tool in tools["result"]["tools"].as_array().unwrap() {
         assert_eq!(
@@ -706,7 +710,10 @@ fn modern_and_legacy_clients_both_work_and_version_faults_use_their_codes() {
     assert_eq!(init["result"]["serverInfo"]["name"], "story-time");
     legacy.notify(&json!({"jsonrpc": "2.0", "method": "notifications/initialized"}));
     let tools = legacy.send(&request("tools/list", json!({})));
-    assert_eq!(tools["result"]["tools"].as_array().unwrap().len(), 4);
+    assert_eq!(
+        tools["result"]["tools"].as_array().unwrap().len(),
+        READ_TOOLS.len()
+    );
     assert!(tools["result"].get("resultType").is_none());
     let called = legacy.send(&request(
         "tools/call",
@@ -1062,7 +1069,15 @@ fn story_lint_reads_an_outside_machine_the_same_whether_it_exists() {
     server.finish();
 }
 
-const READ_TOOLS: [&str; 4] = ["story_config", "story_list", "story_show", "story_lint"];
+const READ_TOOLS: [&str; 7] = [
+    "story_velocity",
+    "story_burndown",
+    "story_forecast",
+    "story_config",
+    "story_list",
+    "story_show",
+    "story_lint",
+];
 
 fn tool_names(server: &mut Server) -> Vec<String> {
     let listed = server.modern("tools/list", json!({}));

@@ -17,7 +17,7 @@ local `story` CLI:
 
 | Work | Tool |
 |---|---|
-| Read | `story_show`, `story_list`, `story_lint`, `story_config` |
+| Read | `story_show`, `story_list`, `story_lint`, `story_config`, `story_velocity`, `story_burndown`, `story_forecast` |
 | Links between stories and repositories | `story_graph` |
 | Edit | `story_update`, `story_note`, `story_create` |
 | Tracker comments | `story_comments`, `story_resolve_comment` |
@@ -82,7 +82,7 @@ state-machine and decision-table write checked models that acceptance-criteria a
 | "sprint review", "close the sprint" | **sprint-review** skill |
 | "plan a release", "what is in this release?" | **release-planning** skill |
 | "retrospective", "retro", "how do we work better?" | **retrospective** skill |
-| "metrics", "cycle time", "throughput", "velocity" | **agile-metrics** skill |
+| "metrics", "cycle time", "throughput", "velocity", "burndown", "forecast", "when will it be done" | **agile-metrics** skill |
 | "project status", "status report", "where are we?" | **project-status** skill |
 | "what should I work on next?" | **story-pick** skill |
 | "map out this epic / feature" | **story-map** skill |

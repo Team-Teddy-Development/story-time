@@ -401,6 +401,36 @@ fn a_read_within_the_ttl_does_not_fetch_and_a_read_after_it_sees_the_new_commit(
 }
 
 #[test]
+fn a_named_ref_uses_its_own_sprint_calendar_and_reports_its_sha() {
+    let fixture = Fixture::new();
+    let core = fixture.upstream("core");
+    fixture.git(&core, &["checkout", "-q", "-b", "story-time/ST-001"]);
+    fixture.write(
+        "core", ".story-time/settings.json",
+        r#"{"tracker":"files","sync":"off","team":{"sprintDays":10,"wipLimit":1,"sprints":[{"id":"2026-S01","start":"2026-11-02","end":"2026-11-15"}]}}"#,
+    );
+    fixture.write(
+        "core",
+        "backlog/ST-001.md",
+        &format!(
+            "{}\n## Changelog\n- 2026-11-01 set size=5, sprint=2026-S01\n",
+            story("ST-001", "Legacy story", "depends_on: []\n")
+        ),
+    );
+    let head = fixture.commit("core", "sprint calendar and assignment on the proposal");
+    fixture.git(&core, &["checkout", "-q", "main"]);
+    let server = fixture.serve(&fixture.registry(""), &[]);
+    let report = server.ok("story_burndown", json!({
+        "repository": "core", "ref": "story-time/ST-001", "sprint": "2026-S01", "today": "2026-11-06"
+    }));
+    assert_eq!(report["sha"], head);
+    assert_eq!(report["rows"].as_array().unwrap().len(), 14);
+    assert_eq!(report["rows"][0]["day"], "2026-11-02");
+    assert_eq!(report["rows"][0]["remaining"], 5);
+    assert_eq!(report["rows"][5]["remaining"], Value::Null);
+}
+
+#[test]
 fn a_named_ref_reads_the_story_of_that_branch() {
     let fixture = Fixture::new();
     let server = fixture.serve(&fixture.registry(""), &[]);

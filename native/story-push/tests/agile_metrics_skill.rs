@@ -33,7 +33,8 @@ fn agile_metrics_reports_gaps_as_unknown_and_never_fills_them() {
     let text = skill("agile-metrics");
     position(&text, "Report a gap as `unknown`");
     position(&text, "Never fill a gap");
-    position(&text, "No sprint record is stored");
+    position(&text, "If the calendar or known closed sprints are missing");
+    assert!(!text.contains("always `unknown` today"));
 }
 
 #[test]
@@ -52,5 +53,41 @@ fn agile_metrics_runs_no_write_command_and_uses_no_long_dashes() {
 
 #[test]
 fn the_router_sends_metrics_requests_to_agile_metrics() {
-    assert!(skill("story-time").contains("**agile-metrics** skill"));
+    let router = skill("story-time");
+    let route = router
+        .lines()
+        .find(|line| line.contains("**agile-metrics** skill"))
+        .unwrap();
+    for text in ["burndown", "forecast", "when will it be done"] {
+        position(route, text);
+    }
+}
+
+#[test]
+fn planning_and_review_use_native_sprint_figures() {
+    let metrics = skill("agile-metrics");
+    for term in [
+        "story burndown",
+        "story forecast",
+        "story_velocity",
+        "story_burndown",
+        "story_forecast",
+    ] {
+        position(&metrics, term);
+    }
+    let planning = skill("sprint-planning")
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ");
+    position(
+        &planning,
+        "velocity minimum to maximum over the last 3 closed sprints",
+    );
+    position(&planning, "story set ID sprint=YYYY-Snn");
+    let review = skill("sprint-review");
+    position(&review, "story burndown --sprint");
+    position(
+        &review,
+        "committed points against done points from `story sprint show`",
+    );
 }

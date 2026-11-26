@@ -63,28 +63,36 @@ pub fn run_burndown(args: &[String]) -> Result<String, Failure> {
         config::parse(&loaded.raw).map_err(|e| format!("{}: {e}", loaded.path.display()))?;
     let calendar = Calendar::from_settings(&settings)
         .ok_or("no sprint calendar in settings (team.sprintAnchor or team.sprints).")?;
+    let today = given.unwrap_or_else(|| today_in(calendar.tz()));
+    let dir = list::backlog_dir(flags.value("dir"), &loaded.root, &settings)?;
+    let stories = metrics::histories(&dir)?;
+    let report = report(&stories, &calendar, id, today)?;
+    Ok(render(&report, &flags, burndown_text))
+}
+
+pub(crate) fn report(
+    stories: &[History],
+    calendar: &Calendar,
+    id: &str,
+    today: NaiveDate,
+) -> Result<Value, String> {
     let sprint = calendar.resolve(id)?;
     if sprint.end < sprint.start {
         return Err(format!(
             "{id} ends ({}) before it starts ({}).",
             sprint.end, sprint.start
-        )
-        .into());
+        ));
     }
-    let today = given.unwrap_or_else(|| today_in(calendar.tz()));
-    let dir = list::backlog_dir(flags.value("dir"), &loaded.root, &settings)?;
-    let stories = metrics::histories(&dir)?;
-    let report = burndown(&stories, &calendar, &sprint, today);
-    Ok(render(&report, &flags, burndown_text))
+    Ok(burndown(stories, calendar, &sprint, today))
 }
 
-/// The date now in the calendar's zone. The zone is applied through `TZ`, which the platform
-/// clock reads, and an unknown zone name reads as UTC.
-fn today_in(tz: Option<&str>) -> NaiveDate {
-    if let Some(tz) = tz {
-        std::env::set_var("TZ", tz);
+pub(crate) fn today_in(tz: Option<&str>) -> NaiveDate {
+    match tz {
+        Some(tz) => chrono::Utc::now()
+            .with_timezone(&tz.parse::<chrono_tz::Tz>().unwrap_or(chrono_tz::UTC))
+            .date_naive(),
+        None => chrono::Local::now().date_naive(),
     }
-    chrono::Local::now().date_naive()
 }
 
 fn burndown(
