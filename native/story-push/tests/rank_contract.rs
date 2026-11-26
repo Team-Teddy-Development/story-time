@@ -120,7 +120,7 @@ impl Drop for Sandbox {
     }
 }
 
-/// Native output without the refined review queue (ST-209), which Node never printed.
+/// Native output without the refined review queue (ST-211), which Node never printed.
 fn without_refined_queue(out: &str) -> String {
     if let Some(start) = out.find(",\n  \"refinedQueue\": ") {
         return format!("{}\n}}\n", &out[..start]);
