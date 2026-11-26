@@ -31,7 +31,7 @@ import { checkTable, tableCriteria } from './src/domain/decision-table.mjs';
 
 const USAGE = readFileSync(new URL('./usage.txt', import.meta.url), 'utf8').trimEnd();
 
-const NATIVE_ONLY = new Set(['plan', 'adopt', 'issues', 'metrics', 'sprint', 'mcp', 'check-pr', 'sync-merge', 'assignment']);
+const NATIVE_ONLY = new Set(['plan', 'adopt', 'issues', 'metrics', 'sprint', 'forecast', 'mcp', 'check-pr', 'sync-merge', 'assignment']);
 const BOOLEAN = new Set(['json', 'force', 'include-refined', 'command', 'all', 'dry-run']);
 const REPEATABLE = new Set(['ac']);
 const PUSH_FLAGS = new Set(['all', 'dry-run', 'json', 'config', 'dir']);
