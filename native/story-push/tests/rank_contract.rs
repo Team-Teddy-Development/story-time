@@ -122,7 +122,14 @@ impl Drop for Sandbox {
 
 /// Native output without the refined review queue (ST-211), which Node never printed.
 fn without_refined_queue(out: &str) -> String {
-    if let Some(start) = out.find(",\n  \"refinedQueue\": ") {
+    const KEY: &str = ",\n  \"refinedQueue\": ";
+    if let Some(start) = out.find(KEY) {
+        let tail = out[start + KEY.len()..]
+            .strip_suffix("\n}\n")
+            .expect("refinedQueue closes the object");
+        let queue: serde_json::Value = serde_json::from_str(tail)
+            .unwrap_or_else(|e| panic!("refinedQueue is the last key ({e}): {out}"));
+        assert!(queue.is_array(), "{out}");
         return format!("{}\n}}\n", &out[..start]);
     }
     let Some(start) = out.find("\nRefined review queue") else {

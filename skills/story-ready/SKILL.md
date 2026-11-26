@@ -20,6 +20,8 @@ story rank --json
 `refinedQueue` lists them oldest first, with `days` in refined (absent when
 unknown). Review each one through steps 1 to 3 before any draft. Every review
 ends one of two ways: promote the story to `ready`, or name the remaining gap.
+Without the CLI, the `refined.stale` warnings from MCP `story_lint` show the
+stale part of the queue.
 
 ## 1. Automated checks
 
@@ -43,7 +45,7 @@ Every `error` blocks. Route each one to the skill that fixes it:
 | `spike.unblocks` | Link the waiting story (`story set <story> depends_on=<spike>`), or archive the spike. A spike nobody waits on buys nothing |
 | `spike.*` | **spike** skill |
 | `state_machine.exists` | **state-machine** skill |
-| `refined.stale` | A warning: the story has waited in `refined` past `team.refinedStaleDays`. Review it now |
+| `refined.stale` | A warning: the story has waited in `refined` past `team.refinedStaleDays` (default 7). Review it now |
 
 Spikes and chores with exactly one acceptance criterion need no size.
 Warnings don't block, but report them.

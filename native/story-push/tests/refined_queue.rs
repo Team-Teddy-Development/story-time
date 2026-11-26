@@ -211,6 +211,46 @@ fn a_non_positive_limit_fails_config_validation() {
 }
 
 #[test]
+fn the_limit_itself_is_not_stale() {
+    let s = Sandbox::new(json!({}));
+    s.story("ST-001", "Seven", "refined", Some(0), &refined_on(7));
+    s.story("ST-002", "Eight", "refined", Some(0), &refined_on(8));
+    let lint = s.json(&["lint", "--json"]);
+    assert_eq!(stale(&lint, "ST-001"), Vec::<String>::new());
+    assert_eq!(
+        stale(&lint, "ST-002"),
+        vec!["warning: In refined for 8 days, past the 7-day limit. Run story-ready: promote it to ready or name the remaining gap."]
+    );
+}
+
+#[test]
+fn a_limit_past_the_signed_range_never_warns() {
+    let s = backlog(json!({"refinedStaleDays": 10_000_000_000_000_000_000u64}));
+    let lint = s.json(&["lint", "--json"]);
+    assert_eq!(stale(&lint, "ST-002"), Vec::<String>::new());
+}
+
+#[test]
+fn a_story_hand_edited_back_to_refined_has_an_unknown_age() {
+    let s = Sandbox::new(json!({}));
+    s.story(
+        "ST-001",
+        "Hand edited",
+        "refined",
+        Some(0),
+        &format!("{}- {} set status=ready\n", refined_on(40), ago(1)),
+    );
+    assert_eq!(
+        s.json(&["rank", "--json"])["refinedQueue"],
+        json!([{"id": "ST-001", "title": "Hand edited"}])
+    );
+    assert_eq!(
+        stale(&s.json(&["lint", "--json"]), "ST-001"),
+        Vec::<String>::new()
+    );
+}
+
+#[test]
 fn a_future_entry_date_reads_as_zero_days() {
     let s = Sandbox::new(json!({}));
     s.story(
@@ -305,8 +345,14 @@ fn the_skills_take_the_refined_queue_first() {
         queue < review,
         "refinement takes the refined queue before the wider review"
     );
+    let after_queue = &refinement[queue..review];
     assert!(
-        ready.contains("restarts its clock") && refinement.contains("story-ready"),
+        after_queue.contains("Run the **story-ready** skill on each")
+            && after_queue.contains("promotes it to `ready` or names the remaining gap"),
+        "refinement sends each queued story through story-ready to ready or a named gap"
+    );
+    assert!(
+        ready.contains("restarts its clock"),
         "a re-review that fails records the gap"
     );
 

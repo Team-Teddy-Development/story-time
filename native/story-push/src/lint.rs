@@ -274,7 +274,7 @@ pub(crate) fn tick_criteria(raw: &str) -> Option<String> {
 fn refined_stale(s: &Js, ctx: &Context) -> Found {
     let limit = ctx.refined_stale_days.unwrap_or(refined::STALE_DAYS);
     match refined::waiting(s).and_then(|w| w.days) {
-        Some(days) if days > limit as i64 => warn(format!(
+        Some(days) if days.unsigned_abs() > limit => warn(format!(
             "In refined for {days} days, past the {limit}-day limit. Run story-ready: promote it to ready or name the remaining gap."
         )),
         _ => none(),

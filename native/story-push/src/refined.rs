@@ -13,16 +13,16 @@ pub(crate) struct Waiting<'a> {
     pub(crate) days: Option<i64>,
 }
 
-/// When a refined story entered `refined`: its last `set status=refined` changelog line. A story
-/// put in `refined` without one has an unknown entry date; `updated` would not do, because any
-/// later edit such as a note moves it and makes a stale story look fresh.
+/// When a refined story entered `refined`: the date of its last status event, when that event is
+/// `set status=refined`. Otherwise the entry date is unknown. `updated` would not do, because any
+/// later edit such as a note moves it and makes a stale story look fresh; an older refined event
+/// would overstate the age of a story whose status was later hand-edited back to `refined`.
 fn since(story: &Js) -> Option<NaiveDate> {
     crate::metrics::history(String::new(), &story.to_value())
         .log
         .status
-        .into_iter()
-        .rev()
-        .find(|(_, status)| status == "refined")
+        .pop()
+        .filter(|(_, status)| status == "refined")
         .map(|(date, _)| date)
 }
 
