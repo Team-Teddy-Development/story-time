@@ -388,3 +388,77 @@ fn text_output_names_both_dates() {
     assert!(text.contains("85%"), "{text}");
     assert!(text.contains("2026-12-13"), "{text}");
 }
+
+#[test]
+fn a_replay_with_a_past_today_judges_each_story_by_its_status_on_that_day() {
+    let p = Project::new();
+    p.closed(&[10; 5]);
+    let log = |lines: &[&str]| lines.iter().map(|l| (*l).to_owned()).collect::<Vec<_>>();
+    let entered = "2026-11-10 set size=4, sprint=2026-S06";
+    p.write(
+        "ST-301",
+        "in-progress",
+        "size: 4\nsprint: 2026-S06\n",
+        &log(&[
+            entered,
+            "2026-11-18 set status=done",
+            "2026-11-22 set status=in-progress",
+        ]),
+    );
+    p.write(
+        "ST-302",
+        "done",
+        "size: 4\nsprint: 2026-S07\n",
+        &log(&[
+            entered,
+            "2026-11-18 set status=done",
+            "2026-11-25 set sprint=2026-S07",
+        ]),
+    );
+    p.write(
+        "ST-303",
+        "split",
+        "size: 4\nsprint: 2026-S06\n",
+        &log(&[entered, "2026-11-19 set status=split"]),
+    );
+    p.write(
+        "ST-304",
+        "ready",
+        "size: 4\nsprint: 2026-S06\n",
+        &log(&[entered, "2026-11-12 set status=ready"]),
+    );
+    let report = p.forecast(&["--sprint", "2026-S06", "--today", "2026-11-20"]);
+    assert_eq!(report["remaining_points"], 4);
+}
+
+#[test]
+fn a_story_named_twice_counts_once() {
+    let p = Project::new();
+    p.closed(&[10; 5]).open("ST-201", Some(5), "");
+    let report = p.forecast(&["--ids", "ST-201,ST-201", "--today", "2026-11-15"]);
+    assert_eq!(report["remaining_points"], 5);
+}
+
+#[test]
+fn a_calendar_that_ends_after_the_listed_sprints_is_still_reproducible() {
+    let p = Project::bounded();
+    p.closed(&[8, 10, 12, 9, 11])
+        .open("ST-201", Some(12), "")
+        .open("ST-202", Some(8), "");
+    let args = [
+        "forecast",
+        "--ids",
+        "ST-201,ST-202",
+        "--today",
+        "2026-11-15",
+        "--seed",
+        "7",
+        "--json",
+    ];
+    let (first, second) = (p.run(&args), p.run(&args));
+    assert!(first.status.success());
+    assert_eq!(first.stdout, second.stdout);
+    let report: Value = serde_json::from_slice(&first.stdout).unwrap();
+    assert_eq!(report["rows"][0]["date"], "2026-12-13");
+    assert_eq!(report["rows"][1]["date"], "unknown");
+}
