@@ -23,6 +23,8 @@ const READER: &str = "reader-token-0123456789abcdef";
 const WRITER: &str = "writer-token-0123456789abcdef";
 const LINKER: &str = "linker-token-0123456789abcdef";
 const ORIGIN: &str = "https://allowed.example";
+/// The story that `Http::audit_settled` shows as the writer. No test reads it as the writer.
+const SENTINEL: &str = "ST-003";
 
 const SETTINGS: &str = r#"{
   "tracker": "github",
@@ -237,6 +239,29 @@ impl Http {
             std::thread::sleep(Duration::from_millis(10));
         }
     }
+    /// The audit lines of every request answered before this call, for a check that no tool
+    /// ran. It sends a sentinel call and waits for its line: the server writes each line before
+    /// it answers and the reader keeps stderr's order, so a lagging line of an earlier request
+    /// has arrived by then and cannot hide a tool that ran (ST-159, ST-211).
+    fn audit_settled(&self) -> Vec<Value> {
+        let shown = self.call(WRITER, "story_show", json!({"id": SENTINEL}));
+        assert_eq!(shown["isError"], false, "{shown}");
+        let sentinel = |l: &Value| {
+            l["client_id"] == "writer" && l["tool"] == "story_show" && l["ids"] == json!([SENTINEL])
+        };
+        let mut lines = self.audit_when(|lines| lines.iter().any(sentinel));
+        let at = lines
+            .iter()
+            .position(sentinel)
+            .unwrap_or_else(|| panic!("the sentinel's audit line did not arrive: {lines:?}"));
+        assert_eq!(
+            at + 1,
+            lines.len(),
+            "no line follows the sentinel: {lines:?}"
+        );
+        lines.truncate(at);
+        lines
+    }
 }
 impl Drop for Http {
     fn drop(&mut self) {
@@ -303,7 +328,7 @@ fn a_request_without_a_known_token_gets_401_on_every_method() {
             .body(list.to_string()),
     );
     assert_eq!(basic.status(), 401);
-    assert!(server.audit_lines().is_empty(), "no tool ran");
+    assert!(server.audit_settled().is_empty(), "no tool ran");
 }
 
 /// ST-146: a client that cannot send a header gives its token in the path.
@@ -344,7 +369,10 @@ fn a_marked_client_gives_its_token_in_the_path_and_no_other_client_can() {
     assert!(!both.to_string().contains("story_update"), "{both}");
     // The marked client can also use the header.
     assert!(server.tools(LINKER).contains(&"story_show".to_owned()));
-    let ran = server.audit_lines().len();
+    // Wait for the call's audit line; the stderr reader can lag the answer (ST-159).
+    let ran = server
+        .audit_when(|lines| lines.iter().any(|l| l["tool"] == "story_show"))
+        .len();
     assert_eq!(ran, 1, "one tool call ran: story_show");
 
     // An unknown token gives the answer that every refusal below must equal.
@@ -377,8 +405,9 @@ fn a_marked_client_gives_its_token_in_the_path_and_no_other_client_can() {
     let get = send(server.client.get(format!("{}/mcp/{LINKER}", server.url)));
     assert_eq!(get.status(), 405);
 
+    // After the sentinel's line, every line of the requests above is in the log.
     assert_eq!(
-        server.audit_lines().len(),
+        server.audit_settled().len(),
         ran,
         "no refused request ran a tool"
     );
@@ -571,7 +600,7 @@ fn a_header_that_does_not_match_the_body_gets_minus_32020() {
         assert!(response.get("result").is_none());
     }
     assert_eq!(
-        server.audit_lines().len(),
+        server.audit_settled().len(),
         ran,
         "a refused request runs no tool"
     );
