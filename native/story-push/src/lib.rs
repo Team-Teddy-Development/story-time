@@ -2,6 +2,7 @@ pub mod adoption;
 mod adoption_apply;
 pub mod assignment;
 mod blocked;
+pub mod burndown;
 mod check_pr;
 pub mod config;
 pub mod export;
@@ -68,6 +69,12 @@ pub const NATIVE_COMMANDS: &[(&str, Native)] = &[
     ("mcp", mcp::run),
     ("table", table::run),
     ("metrics", |args| metrics::run(args).map(|out| (out, 0))),
+    ("burndown", |args| {
+        burndown::run_burndown(args).map(|out| (out, 0))
+    }),
+    ("burnup", |args| {
+        burndown::run_burnup(args).map(|out| (out, 0))
+    }),
     ("sprint", |args| sprint_cmd::run(args).map(|out| (out, 0))),
     ("export", |args| export::run(args).map(|out| (out, 0))),
     ("note", |args| note::run(args).map(|out| (out, 0))),

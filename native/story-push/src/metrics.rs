@@ -17,6 +17,8 @@ pub(crate) struct History {
     pub(crate) id: String,
     pub(crate) log: StoryLog,
     pub(crate) gap: Option<String>,
+    pub(crate) epic: Option<String>,
+    pub(crate) size: Option<f64>,
 }
 
 pub fn run(args: &[String]) -> Result<String, Failure> {
@@ -70,6 +72,8 @@ pub(crate) fn histories(dir: &Path) -> Result<Vec<History>, String> {
                     id,
                     log: StoryLog::default(),
                     gap: Some(format!("story file does not parse: {e}")),
+                    epic: None,
+                    size: None,
                 },
             })
         })
@@ -122,6 +126,8 @@ fn history(id: String, parsed: &Value) -> History {
         id,
         log,
         gap: (!consistent).then(|| format!("status {status} has no matching changelog event")),
+        epic: parsed["epic"].as_str().map(str::to_owned),
+        size: parsed["size"].as_f64(),
     }
 }
 
