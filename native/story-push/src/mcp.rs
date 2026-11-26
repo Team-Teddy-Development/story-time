@@ -1622,7 +1622,7 @@ fn accept_in(repo: &Repo, args: &Map<String, Value>) -> Result<Value, ToolError>
     let mut next = current.props().to_vec();
     Js::set(&mut next, "sections", Js::Obj(sections));
     Js::set(&mut next, "status", Js::Str("done".into()));
-    let line = "accepted with evidence for every criterion";
+    let line = "set status=done \u{2014} accepted with evidence for every criterion";
     let date = chrono::Utc::now().format("%Y-%m-%d").to_string();
     let next = lenient_story::append_changelog(&Js::Obj(next), line, &date);
     let unblocked = crate::blocked::unblocked(&repo.stories()?.0, id);
