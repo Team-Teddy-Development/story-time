@@ -255,6 +255,81 @@ fn structured(result: &Value) -> &Value {
     &result["structuredContent"]
 }
 
+#[test]
+fn planning_tools_match_native_cli_json() {
+    let fixture = Fixture::new();
+    fixture.write(
+        ".story-time/settings.json",
+        r#"{"tracker":"files","sync":"off","team":{"sprintDays":10,"wipLimit":1,"sprints":[{"id":"2026-S01","start":"2026-09-07","end":"2026-09-20"},{"id":"2026-S02","start":"2026-10-05","end":"2026-10-18"},{"id":"2026-S03","start":"2026-11-02","end":"2026-11-15"}]}}"#,
+    );
+    for (n, day, sprint, done) in [
+        (1, "2026-09-07", "2026-S01", true),
+        (2, "2026-10-05", "2026-S02", true),
+        (3, "2026-11-02", "2026-S03", true),
+        (4, "2026-11-02", "2026-S03", false),
+    ] {
+        let status = if done { "done" } else { "ready" };
+        let text = story(n, status, "story", None, &format!(
+            "\n## Changelog\n- {day} created\n- {day} set size={}, sprint={sprint}\n- {day} set status={status}\n", n % 5 + 1
+        )).replace("created: 2026-11-14", &format!("created: {day}"));
+        fixture.write(&format!("backlog/ST-{n:03}.md"), &text);
+    }
+    let burndown = fixture.cli(&[
+        "burndown",
+        "--sprint",
+        "2026-S03",
+        "--today",
+        "2026-11-06",
+        "--json",
+    ]);
+    let forecast = fixture.cli(&[
+        "forecast",
+        "--ids",
+        "ST-003,ST-004",
+        "--today",
+        "2026-11-15",
+        "--seed",
+        "7",
+        "--json",
+    ]);
+    let metrics = fixture.cli(&[
+        "metrics",
+        "--from",
+        "2026-09-07",
+        "--to",
+        "2026-11-15",
+        "--json",
+    ]);
+    let velocity = metrics["figures"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|figure| figure["metric"] == "velocity")
+        .expect("metrics must include velocity");
+    assert_eq!(velocity["closed_sprints"], 3);
+    let mut mcp = fixture.server();
+    for (name, args, expected) in [
+        (
+            "story_burndown",
+            json!({"sprint":"2026-S03","today":"2026-11-06"}),
+            &burndown,
+        ),
+        (
+            "story_forecast",
+            json!({"ids":["ST-003","ST-004"],"today":"2026-11-15","seed":7}),
+            &forecast,
+        ),
+        (
+            "story_velocity",
+            json!({"from":"2026-09-07","to":"2026-11-15"}),
+            velocity,
+        ),
+    ] {
+        assert_eq!(structured(&mcp.tool(name, args)), expected, "{name}");
+    }
+    assert_eq!(mcp.finish().0, Some(0));
+}
+
 fn tool_error(result: &Value) -> &Value {
     assert_eq!(result["isError"], true, "{result}");
     &result["structuredContent"]["error"]
