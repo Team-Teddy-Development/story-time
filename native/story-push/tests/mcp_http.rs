@@ -565,7 +565,10 @@ fn a_header_that_does_not_match_the_body_gets_minus_32020() {
         ("Mcp-Name", "story_show"),
     ]);
     assert_eq!(matching["result"]["isError"], false, "{matching}");
-    let ran = server.audit_lines().len();
+    // Wait for the matching call's audit line; the stderr reader can lag the answer (ST-159).
+    let ran = server
+        .audit_when(|lines| lines.iter().any(|l| l["tool"] == "story_show"))
+        .len();
 
     for headers in [
         [("Mcp-Method", "tools/list")],

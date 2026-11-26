@@ -20,6 +20,10 @@ pub(crate) struct History {
     pub(crate) status: String,
     pub(crate) size: Option<f64>,
     pub(crate) epic: Option<String>,
+    /// `built_by` from the front matter, as the merge hooks write it.
+    pub(crate) built_by: Option<String>,
+    /// The PR number in the note of the first `status=done` line, `delivered: PR #N (sha)`.
+    pub(crate) pr: Option<u64>,
 }
 
 pub fn run(args: &[String]) -> Result<String, Failure> {
@@ -91,6 +95,8 @@ pub(crate) fn histories_with<E>(
                 status: String::new(),
                 size: None,
                 epic: None,
+                built_by: None,
+                pr: None,
             },
         });
     }
@@ -102,6 +108,7 @@ pub(crate) fn histories_with<E>(
 fn history(id: String, parsed: &Value) -> History {
     let text = parsed["sections"]["Changelog"].as_str().unwrap_or("");
     let mut log = StoryLog::default();
+    let mut pr = None;
     for line in text.lines() {
         let Some((date, rest)) = line.strip_prefix("- ").and_then(|l| l.split_once(' ')) else {
             continue;
@@ -113,15 +120,19 @@ fn history(id: String, parsed: &Value) -> History {
             log.status.push((date, "split".to_owned()));
             continue;
         }
-        let Some(assignments) = rest
-            .strip_prefix("set ")
-            .and_then(|r| r.split(" \u{2014} ").next())
-        else {
+        let Some((assignments, note)) = rest.strip_prefix("set ").map(|r| {
+            let mut parts = r.splitn(2, " \u{2014} ");
+            (parts.next().unwrap_or(""), parts.next())
+        }) else {
             continue;
         };
         for pair in assignments.split(", ") {
             let pair = pair.trim();
             if let Some(status) = pair.strip_prefix("status=") {
+                let first_done = status == "done" && !log.status.iter().any(|(_, s)| s == "done");
+                if first_done {
+                    pr = note.and_then(delivered_pr);
+                }
                 log.status.push((date, status.to_owned()));
             } else if let Some(sprint) = pair.strip_prefix("sprint=") {
                 log.sprint.push((
@@ -146,7 +157,16 @@ fn history(id: String, parsed: &Value) -> History {
         status: status.to_owned(),
         size: parsed["size"].as_f64().filter(|n| n.is_finite()),
         epic: parsed["epic"].as_str().map(str::to_owned),
+        built_by: parsed["built_by"].as_str().map(str::to_owned),
+        pr,
     }
+}
+
+/// `N` from a note holding `delivered: PR #N`, as the merge hooks write it.
+fn delivered_pr(note: &str) -> Option<u64> {
+    let rest = &note[note.find("delivered: PR #")? + "delivered: PR #".len()..];
+    let digits: String = rest.chars().take_while(char::is_ascii_digit).collect();
+    digits.parse().ok()
 }
 
 fn report(

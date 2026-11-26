@@ -26,6 +26,9 @@ const STATUSES: [&str; 7] = [
 ];
 const NUMERIC: [&str; 4] = ["value", "time_criticality", "risk_reduction", "size"];
 const LIST: [&str; 4] = ["depends_on", "relates_to", "children", "labels"];
+/// Who built a story, as the merge hooks record it: `factory` for a `factory/` head branch.
+pub(crate) const BUILDERS: [&str; 2] = ["factory", "person"];
+pub(crate) const BUILT_BY: &str = "built_by must be factory or person";
 pub(crate) const IMMUTABLE: [&str; 4] = ["id", "created", "updated", "sections"];
 
 pub fn run(args: &[String]) -> Result<String, Failure> {
@@ -218,6 +221,9 @@ pub(crate) fn coerce(key: &str, raw: &str) -> Result<Option<Js>, String> {
         return Err(format!(
             "sprint must be YYYY-Snn (for example 2026-S23), got \"{raw}\"."
         ));
+    }
+    if key == "built_by" && !BUILDERS.contains(&raw) {
+        return Err(BUILT_BY.into());
     }
     if key == "type" && !TYPES.contains(&raw) {
         return Err(format!(
