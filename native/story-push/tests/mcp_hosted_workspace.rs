@@ -1724,7 +1724,7 @@ fn a_private_gitea_repository_is_unavailable_to_a_server_without_the_token() {
 }
 
 #[test]
-fn proposals_on_a_gitea_repository_are_refused_before_any_forge_call() {
+fn gitea_writes_without_a_gitea_token_are_refused_before_any_forge_call() {
     let fixture = Fixture::new();
     // `core` is the Gitea repository and has the branch `story-time/VC-109`. `web` is GitHub.
     let registry = fixture.registry("");
@@ -1799,10 +1799,8 @@ fn proposals_on_a_gitea_repository_are_refused_before_any_forge_call() {
         );
         assert_eq!(refused["error"]["retryable"], false, "{name}: {refused}");
         let message = refused["error"]["message"].as_str().unwrap();
-        assert!(
-            message.contains("Gitea") && message.contains("not supported"),
-            "{message}"
-        );
+        // ST-149: a write needs the Gitea bot token, which this server lacks.
+        assert!(message.contains("no Gitea bot token"), "{name}: {message}");
     }
     assert!(
         stub.seen.lock().unwrap().is_empty(),
@@ -1865,4 +1863,616 @@ fn a_gitea_token_file_that_is_missing_empty_or_without_a_registry_stops_the_star
         stderr.contains("--gitea-token-file") && stderr.contains("--registry"),
         "{stderr}"
     );
+}
+
+/// One pull request of the Gitea stub.
+#[derive(Clone)]
+struct GiteaPull {
+    number: u64,
+    head: String,
+    head_repo: String,
+    base: String,
+    title: String,
+    body: String,
+}
+
+/// What the Gitea stub holds and saw.
+struct GiteaState {
+    pulls: Vec<GiteaPull>,
+    /// The method, path, query, and `Authorization` header of each REST request.
+    rest: Vec<(String, String, String, String)>,
+    /// The token that the REST API and git take. Each has its own, so that a test can refuse one.
+    rest_token: String,
+    git_token: String,
+    /// `git-receive-pack` answers 403.
+    refuse_push: bool,
+}
+
+/// The pull requests a list page holds at most. Gitea 1.21 caps `limit` with a setting, so the
+/// stub caps it below what the client asks.
+const GITEA_PAGE_CAP: usize = 2;
+
+/// A stub of Gitea 1.21.11 for the repository `o/core`: the REST API under `/api/v1` (a pull
+/// request list with no `head` filter) and its bare repository under `/git`, served by
+/// `git http-backend` to a request with the bot token as the basic password.
+struct GiteaStub {
+    url: String,
+    state: Arc<Mutex<GiteaState>>,
+    address: std::net::SocketAddr,
+    stopped: Arc<std::sync::atomic::AtomicBool>,
+}
+
+impl GiteaStub {
+    /// `files` holds `o/core.git`. Four pull requests are open at the start: three from
+    /// branches that are not story branches, and one that is from a fork of `o/core` and has
+    /// the head name `story-time/ST-001`.
+    fn start(files: PathBuf, token: &str) -> Self {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        let url = format!("http://{address}");
+        let seeded = |number: u64, head: &str, repo: &str| GiteaPull {
+            number,
+            head: head.to_owned(),
+            head_repo: repo.to_owned(),
+            base: "main".into(),
+            title: format!("Seeded {number}"),
+            body: String::new(),
+        };
+        let state = Arc::new(Mutex::new(GiteaState {
+            pulls: vec![
+                seeded(1, "feature/a", "o/core"),
+                seeded(2, "story-time/ST-001", "mallory/core"),
+                seeded(3, "feature/b", "o/core"),
+                seeded(4, "feature/c", "o/core"),
+            ],
+            rest: Vec::new(),
+            rest_token: token.to_owned(),
+            git_token: token.to_owned(),
+            refuse_push: false,
+        }));
+        let stopped = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let (shared, stop, base) = (state.clone(), stopped.clone(), url.clone());
+        std::thread::spawn(move || {
+            for stream in listener.incoming() {
+                if stop.load(Ordering::Relaxed) {
+                    break;
+                }
+                let Ok(stream) = stream else { continue };
+                let (shared, files, base) = (shared.clone(), files.clone(), base.clone());
+                std::thread::spawn(move || {
+                    // An I/O error here is the client closing its connection.
+                    let _ = Self::serve(stream, &shared, &files, &base);
+                });
+            }
+        });
+        Self {
+            url,
+            state,
+            address,
+            stopped,
+        }
+    }
+
+    fn pulls(&self) -> Vec<GiteaPull> {
+        self.state.lock().unwrap().pulls.clone()
+    }
+
+    fn posts(&self) -> usize {
+        let state = self.state.lock().unwrap();
+        state.rest.iter().filter(|call| call.0 == "POST").count()
+    }
+
+    fn serve(
+        stream: std::net::TcpStream,
+        state: &Mutex<GiteaState>,
+        files: &Path,
+        base: &str,
+    ) -> std::io::Result<()> {
+        use std::io::{Read, Write};
+        let mut reader = BufReader::new(stream.try_clone()?);
+        let mut stream = stream;
+        loop {
+            let mut line = String::new();
+            if reader.read_line(&mut line)? == 0 {
+                return Ok(());
+            }
+            let mut parts = line.split_whitespace();
+            let method = parts.next().unwrap_or_default().to_owned();
+            let target = parts.next().unwrap_or_default().to_owned();
+            let (path, query) = target.split_once('?').unwrap_or((&target, ""));
+            let (path, query) = (path.to_owned(), query.to_owned());
+            let (mut authorization, mut length) = (String::new(), 0usize);
+            let (mut content_type, mut encoding) = (String::new(), String::new());
+            loop {
+                let mut header = String::new();
+                reader.read_line(&mut header)?;
+                let header = header.trim_end();
+                if header.is_empty() {
+                    break;
+                }
+                let (name, value) = header.split_once(':').unwrap_or((header, ""));
+                let value = value.trim().to_owned();
+                match name.to_ascii_lowercase().as_str() {
+                    "authorization" => authorization = value,
+                    "content-length" => length = value.parse().unwrap_or(0),
+                    "content-type" => content_type = value,
+                    "content-encoding" => encoding = value,
+                    _ => {}
+                }
+            }
+            let mut body = vec![0; length];
+            reader.read_exact(&mut body)?;
+            let (status, content_type, answer) = if let Some(rest) = path.strip_prefix("/api/v1/") {
+                let (status, answer) =
+                    Self::rest(state, base, &method, rest, &query, &authorization, &body);
+                (status, "application/json".to_owned(), answer)
+            } else if let Some(info) = path.strip_prefix("/git") {
+                Self::git(
+                    state,
+                    files,
+                    (&method, info, &query),
+                    (&authorization, &content_type, &encoding),
+                    &body,
+                )
+            } else {
+                (404, "text/plain".into(), Vec::new())
+            };
+            write!(
+                stream,
+                "HTTP/1.1 {status} Stub\r\nContent-Type: {content_type}\r\nContent-Length: {}\r\n\r\n",
+                answer.len()
+            )?;
+            stream.write_all(&answer)?;
+            stream.flush()?;
+        }
+    }
+
+    /// The pull request routes of Gitea 1.21: a list with `state`, `page`, and `limit` only,
+    /// and a create that refuses a second open pull request from the same head.
+    fn rest(
+        state: &Mutex<GiteaState>,
+        base: &str,
+        method: &str,
+        path: &str,
+        query: &str,
+        authorization: &str,
+        body: &[u8],
+    ) -> (u16, Vec<u8>) {
+        let mut state = state.lock().unwrap();
+        state.rest.push((
+            method.to_owned(),
+            path.to_owned(),
+            query.to_owned(),
+            authorization.to_owned(),
+        ));
+        let reply = |status: u16, value: Value| (status, value.to_string().into_bytes());
+        if path != "repos/o/core/pulls" {
+            return reply(404, json!({"message": "not found"}));
+        }
+        if authorization != format!("token {}", state.rest_token) {
+            return reply(401, json!({"message": "token is required"}));
+        }
+        let shown = |pull: &GiteaPull| {
+            json!({
+                "number": pull.number,
+                "html_url": format!("{base}/o/core/pulls/{}", pull.number),
+                "state": "open",
+                "head": {"ref": pull.head, "repo": {"full_name": pull.head_repo}},
+                "base": {"ref": pull.base},
+            })
+        };
+        match method {
+            "GET" => {
+                let value = |name: &str| {
+                    query
+                        .split('&')
+                        .find_map(|pair| pair.strip_prefix(&format!("{name}=")))
+                        .and_then(|text| text.parse::<usize>().ok())
+                };
+                let page = value("page").unwrap_or(1).max(1);
+                let limit = value("limit").unwrap_or(30).clamp(1, GITEA_PAGE_CAP);
+                let listed: Vec<Value> = state
+                    .pulls
+                    .iter()
+                    .skip((page - 1) * limit)
+                    .take(limit)
+                    .map(shown)
+                    .collect();
+                reply(200, json!(listed))
+            }
+            "POST" => {
+                let sent: Value = serde_json::from_slice(body).unwrap_or_default();
+                let text = |key: &str| sent[key].as_str().unwrap_or_default().to_owned();
+                let head = text("head");
+                if state
+                    .pulls
+                    .iter()
+                    .any(|pull| pull.head == head && pull.head_repo == "o/core")
+                {
+                    return reply(409, json!({"message": "pull request already exists"}));
+                }
+                let pull = GiteaPull {
+                    number: state.pulls.len() as u64 + 1,
+                    head,
+                    head_repo: "o/core".into(),
+                    base: text("base"),
+                    title: text("title"),
+                    body: text("body"),
+                };
+                let answer = shown(&pull);
+                state.pulls.push(pull);
+                reply(201, answer)
+            }
+            _ => reply(405, json!({"message": "method not allowed"})),
+        }
+    }
+
+    /// Runs `git http-backend` for one request, and returns its status, content type, and body.
+    fn git(
+        state: &Mutex<GiteaState>,
+        files: &Path,
+        (method, info, query): (&str, &str, &str),
+        (authorization, content_type, encoding): (&str, &str, &str),
+        body: &[u8],
+    ) -> (u16, String, Vec<u8>) {
+        use std::io::{Read, Write};
+        let (git_token, refuse_push) = {
+            let state = state.lock().unwrap();
+            (state.git_token.clone(), state.refuse_push)
+        };
+        let basic = format!(
+            "basic {}",
+            base64(format!("x-access-token:{git_token}").as_bytes())
+        );
+        if !authorization.eq_ignore_ascii_case(&basic) {
+            return (401, "text/plain".into(), Vec::new());
+        }
+        if refuse_push && (query.contains("git-receive-pack") || info.ends_with("git-receive-pack"))
+        {
+            return (403, "text/plain".into(), Vec::new());
+        }
+        let mut child = Command::new("git")
+            .arg("http-backend")
+            .env_clear()
+            .env("PATH", std::env::var_os("PATH").unwrap_or_default())
+            .env("GIT_CONFIG_NOSYSTEM", "1")
+            .env("GIT_CONFIG_GLOBAL", "/dev/null")
+            .env("GIT_PROJECT_ROOT", files)
+            .env("GIT_HTTP_EXPORT_ALL", "1")
+            .env("REMOTE_USER", "bot")
+            .env("REMOTE_ADDR", "127.0.0.1")
+            .env("REQUEST_METHOD", method)
+            .env("PATH_INFO", info)
+            .env("QUERY_STRING", query)
+            .env("CONTENT_TYPE", content_type)
+            .env("CONTENT_LENGTH", body.len().to_string())
+            .env("HTTP_CONTENT_ENCODING", encoding)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .spawn()
+            .unwrap();
+        let mut stdin = child.stdin.take().unwrap();
+        let input = body.to_vec();
+        let feeder = std::thread::spawn(move || {
+            let _ = stdin.write_all(&input);
+        });
+        let mut out = Vec::new();
+        child.stdout.take().unwrap().read_to_end(&mut out).unwrap();
+        let _ = feeder.join();
+        let _ = child.wait();
+        let split = out
+            .windows(4)
+            .position(|window| window == b"\r\n\r\n")
+            .expect("http-backend ends its headers");
+        let headers = String::from_utf8_lossy(&out[..split]).into_owned();
+        let (mut status, mut kind) = (200, String::from("application/octet-stream"));
+        for header in headers.lines() {
+            let (name, value) = header.split_once(':').unwrap_or((header, ""));
+            match name.to_ascii_lowercase().as_str() {
+                "status" => status = value.trim().split(' ').next().unwrap().parse().unwrap(),
+                "content-type" => kind = value.trim().to_owned(),
+                _ => {}
+            }
+        }
+        (status, kind, out[split + 4..].to_vec())
+    }
+}
+impl Drop for GiteaStub {
+    fn drop(&mut self) {
+        self.stopped.store(true, Ordering::Relaxed);
+        let _ = std::net::TcpStream::connect(self.address);
+    }
+}
+
+/// A Gitea stub that serves a bare copy of `core`, the registry for it, and a token file.
+fn writable_gitea(fixture: &Fixture) -> (GiteaStub, PathBuf, PathBuf) {
+    let files = fixture.base.join("stub-git");
+    let bare = files.join("o/core.git");
+    fs::create_dir_all(bare.parent().unwrap()).unwrap();
+    fixture.git(
+        &fixture.base,
+        &[
+            "clone",
+            "-q",
+            "--bare",
+            fixture.upstream("core").to_str().unwrap(),
+            bare.to_str().unwrap(),
+        ],
+    );
+    let stub = GiteaStub::start(files, GITEA_TOKEN);
+    let registry = gitea_registry(fixture, &format!("{}/git/o/core.git", stub.url));
+    let token_file = fixture.base.join("gitea-token");
+    fs::write(&token_file, format!("{GITEA_TOKEN}\n")).unwrap();
+    (stub, registry, token_file)
+}
+
+fn serve_gitea(fixture: &Fixture, registry: &Path, token_file: &Path) -> Http {
+    fixture.serve(
+        registry,
+        &["--gitea-token-file", token_file.to_str().unwrap()],
+    )
+}
+
+fn bare_of(fixture: &Fixture) -> PathBuf {
+    fixture.base.join("stub-git/o/core.git")
+}
+
+#[test]
+fn a_story_update_on_a_gitea_repository_pushes_one_commit_and_opens_one_pull_request() {
+    let fixture = Fixture::new();
+    let (stub, registry, token_file) = writable_gitea(&fixture);
+    let server = serve_gitea(&fixture, &registry, &token_file);
+    let bare = bare_of(&fixture);
+    let main = fixture.git(&bare, &["rev-parse", "main"]);
+
+    // A server with a Gitea token and no GitHub App has the write tools.
+    let names: Vec<String> = server
+        .tools(WRITER)
+        .iter()
+        .map(|tool| tool["name"].as_str().unwrap().to_owned())
+        .collect();
+    assert!(names.contains(&"story_update".to_owned()), "{names:?}");
+
+    let shown = server.call_as(
+        WRITER,
+        "story_show",
+        json!({"repository": "core", "id": "ST-001"}),
+    );
+    let written = server.call_as(
+        WRITER,
+        "story_update",
+        json!({"repository": "core", "id": "ST-001", "expected_sha256": shown["sha256"], "set": {"title": "Renamed"}}),
+    );
+    assert!(written.get("error").is_none(), "{written}");
+    assert_eq!(written["state"], "proposed", "{written}");
+    assert_eq!(written["branch"], "story-time/ST-001");
+    // The stub holds four pull requests already, so this one is the fifth.
+    assert_eq!(
+        written["pr_url"],
+        format!("{}/o/core/pulls/5", stub.url).as_str()
+    );
+
+    // The remote: the default branch did not move; the story branch is one commit ahead.
+    assert_eq!(fixture.git(&bare, &["rev-parse", "main"]), main);
+    assert_eq!(
+        fixture.git(&bare, &["rev-parse", "story-time/ST-001"]),
+        written["head_sha"].as_str().unwrap()
+    );
+    assert_eq!(
+        fixture.git(&bare, &["rev-list", "--count", "main..story-time/ST-001"]),
+        "1"
+    );
+    let author = fixture.git(
+        &bare,
+        &["log", "-1", "--format=%an|%ae", "story-time/ST-001"],
+    );
+    assert_eq!(author, "story-time|story-time@noreply.127.0.0.1");
+
+    // The forge: one pull request, to the default branch, with the Stories line first.
+    assert_eq!(stub.posts(), 1);
+    let pulls = stub.pulls();
+    assert_eq!(pulls.len(), 5);
+    assert_eq!(pulls[4].head, "story-time/ST-001");
+    assert_eq!(pulls[4].base, "main");
+    assert!(pulls[4].title.contains("ST-001") && pulls[4].title.contains("Renamed"));
+    assert_eq!(pulls[4].body.lines().next().unwrap(), "Stories: ST-001");
+
+    // Each REST request carried the token in the Gitea form, and no output shows the token.
+    let basic = base64(format!("x-access-token:{GITEA_TOKEN}").as_bytes());
+    for call in stub.state.lock().unwrap().rest.iter() {
+        assert_eq!(call.3, format!("token {GITEA_TOKEN}"), "{call:?}");
+    }
+    for text in [written.to_string(), server.stderr()] {
+        assert!(
+            !text.contains(GITEA_TOKEN) && !text.contains(&basic),
+            "{text}"
+        );
+    }
+}
+
+#[test]
+fn a_second_edit_on_a_gitea_repository_uses_the_open_pull_request() {
+    let fixture = Fixture::new();
+    let (stub, registry, token_file) = writable_gitea(&fixture);
+    let server = serve_gitea(&fixture, &registry, &token_file);
+    let bare = bare_of(&fixture);
+
+    let shown = server.call_as(
+        WRITER,
+        "story_show",
+        json!({"repository": "core", "id": "ST-001"}),
+    );
+    let first = server.call_as(
+        WRITER,
+        "story_update",
+        json!({"repository": "core", "id": "ST-001", "expected_sha256": shown["sha256"], "set": {"size": 3}}),
+    );
+    assert!(first.get("error").is_none(), "{first}");
+    let second = server.call_as(
+        WRITER,
+        "story_note",
+        json!({"repository": "core", "id": "ST-001", "expected_sha256": first["sha256_after"], "note": "Reviewed"}),
+    );
+    assert!(second.get("error").is_none(), "{second}");
+    assert_eq!(second["state"], "proposed");
+    assert_eq!(second["pr_url"], first["pr_url"], "{second}");
+    assert_eq!(
+        fixture.git(&bare, &["rev-list", "--count", "main..story-time/ST-001"]),
+        "2",
+        "a second commit on the same branch"
+    );
+    assert_eq!(stub.posts(), 1, "no second pull request");
+    assert_eq!(stub.pulls().len(), 5);
+
+    // The list has no `head` filter. The server read the pages until it found its own pull
+    // request, and skipped the pull request of a fork that has the same head name.
+    let state = stub.state.lock().unwrap();
+    let lists: Vec<&String> = state
+        .rest
+        .iter()
+        .filter(|call| call.0 == "GET")
+        .map(|call| &call.2)
+        .collect();
+    assert!(
+        lists.iter().all(|query| query.contains("state=open")),
+        "{lists:?}"
+    );
+    assert!(
+        lists.iter().any(|query| query.contains("page=3")),
+        "{lists:?}"
+    );
+}
+
+#[test]
+fn story_create_and_story_note_on_a_gitea_repository_have_the_fields_of_github() {
+    let fixture = Fixture::new();
+    let (stub, registry, token_file) = writable_gitea(&fixture);
+    let server = serve_gitea(&fixture, &registry, &token_file);
+    let bare = bare_of(&fixture);
+    let schemas: std::collections::HashMap<String, Value> = server
+        .tools(WRITER)
+        .into_iter()
+        .map(|tool| {
+            (
+                tool["name"].as_str().unwrap().to_owned(),
+                tool["outputSchema"].clone(),
+            )
+        })
+        .collect();
+
+    let shown = server.call_as(
+        WRITER,
+        "story_show",
+        json!({"repository": "core", "id": "ST-001"}),
+    );
+    let noted = server.call_as(
+        WRITER,
+        "story_note",
+        json!({"repository": "core", "id": "ST-001", "expected_sha256": shown["sha256"], "note": "A note"}),
+    );
+    let created = server.call_as(
+        WRITER,
+        "story_create",
+        json!({"repository": "core", "title": "A new story"}),
+    );
+    for (name, result) in [("story_note", &noted), ("story_create", &created)] {
+        assert!(result.get("error").is_none(), "{name}: {result}");
+        let schema = &schemas[name];
+        for field in schema["required"].as_array().unwrap() {
+            assert!(
+                result.get(field.as_str().unwrap()).is_some(),
+                "{name} lacks {field}: {result}"
+            );
+        }
+        for field in result.as_object().unwrap().keys() {
+            assert!(
+                schema["properties"].get(field).is_some(),
+                "{name} has the unlisted field {field}: {result}"
+            );
+        }
+        assert_eq!(result["state"], "proposed", "{name}");
+        assert!(
+            result["pr_url"].as_str().unwrap().starts_with(&stub.url),
+            "{result}"
+        );
+        let id = result["story"]["id"].as_str().unwrap();
+        assert_eq!(result["branch"], format!("story-time/{id}").as_str());
+        assert_eq!(
+            fixture.git(&bare, &["rev-parse", &format!("story-time/{id}")]),
+            result["head_sha"].as_str().unwrap()
+        );
+    }
+    assert_eq!(stub.posts(), 2, "one pull request for each story");
+}
+
+#[test]
+fn a_refused_gitea_token_gives_forge_unavailable_and_no_output_shows_the_token() {
+    let fixture = Fixture::new();
+    let (stub, registry, token_file) = writable_gitea(&fixture);
+    let server = serve_gitea(&fixture, &registry, &token_file);
+    let bare = bare_of(&fixture);
+    let shown = server.call_as(
+        WRITER,
+        "story_show",
+        json!({"repository": "core", "id": "ST-001"}),
+    );
+    let update = json!({"repository": "core", "id": "ST-001", "expected_sha256": shown["sha256"], "set": {"size": 3}});
+
+    // The REST API refuses the token. The branch that the server pushed is removed again.
+    stub.state.lock().unwrap().rest_token = "gta_SomeOtherToken".into();
+    let refused_rest = server.call_as(WRITER, "story_update", update.clone());
+    assert_eq!(
+        refused_rest["error"]["code"], "forge_unavailable",
+        "{refused_rest}"
+    );
+    assert_eq!(refused_rest["error"]["retryable"], true);
+    assert_eq!(
+        refused_rest["error"]["details"]["operation"], "open the pull request",
+        "{refused_rest}"
+    );
+    assert!(
+        refused_rest["error"]["details"]["reason"]
+            .as_str()
+            .unwrap()
+            .contains("401"),
+        "{refused_rest}"
+    );
+    assert!(!fixture
+        .git(&bare, &["branch", "--list"])
+        .contains("story-time/ST-001"));
+    assert_eq!(stub.posts(), 1, "the one refused create");
+
+    // Git refuses the push.
+    {
+        let mut state = stub.state.lock().unwrap();
+        state.rest_token = GITEA_TOKEN.into();
+        state.refuse_push = true;
+    }
+    let refused_push = server.call_as(WRITER, "story_update", update);
+    assert_eq!(
+        refused_push["error"]["code"], "forge_unavailable",
+        "{refused_push}"
+    );
+    assert_eq!(
+        refused_push["error"]["details"]["operation"], "push the story branch",
+        "{refused_push}"
+    );
+    assert!(!fixture
+        .git(&bare, &["branch", "--list"])
+        .contains("story-time/ST-001"));
+    assert_eq!(stub.pulls().len(), 4, "no pull request of ours");
+
+    let basic = base64(format!("x-access-token:{GITEA_TOKEN}").as_bytes());
+    for text in [
+        shown.to_string(),
+        refused_rest.to_string(),
+        refused_push.to_string(),
+        server.stderr(),
+    ] {
+        assert!(
+            !text.contains(GITEA_TOKEN) && !text.contains(&basic),
+            "{text}"
+        );
+    }
 }
