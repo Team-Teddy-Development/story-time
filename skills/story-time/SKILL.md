@@ -96,7 +96,7 @@ The **principle-invest** skill holds the quality bar all of them apply.
 
 ## The `story` tool
 
-Use installed Rust `story` for `init`, `push`, `adopt preview`, `plan`, `config`, `show`, `list`, `lint`, `stats`, `secret`, `issues`, `note`, `machine`, `mcp`, `export`, `new`, `rank`, `assignment`, `set`, `split`, `sprint`, `burndown`, `burnup`, `table`, `judge`, `check-pr`, `sync-merge`, `help`, and `metrics`.
+Use installed Rust `story` for `init`, `push`, `adopt preview`, `plan`, `config`, `show`, `list`, `lint`, `stats`, `secret`, `issues`, `note`, `machine`, `mcp`, `export`, `new`, `rank`, `assignment`, `set`, `split`, `sprint`, `forecast`, `burndown`, `burnup`, `table`, `judge`, `check-pr`, `sync-merge`, `help`, and `metrics`.
 The skill installer copies skills only; install the executable separately.
 Read `.story-time/settings.json` before selecting a tracker. Install the native
 command from the repository root:
@@ -106,7 +106,7 @@ cargo install --path native/story-push --locked
 ```
 
 `story push` runs entirely in Rust. Do not invoke the historical Node push
-handler. `story init`, `story adopt preview`, `story plan`, `story config`, `story show`, `story list`, `story lint`, `story stats`, `story secret`, `story issues`, `story note`, `story machine`, `story mcp`, `story export`, `story new`, `story rank`, `story assignment`, `story set`, `story split`, `story sprint`, `story burndown`, `story burnup`, `story table`, `story judge`, `story check-pr`, `story sync-merge`, `story help`, and `story metrics` also run entirely in Rust. No command needs Node.
+handler. `story init`, `story adopt preview`, `story plan`, `story config`, `story show`, `story list`, `story lint`, `story stats`, `story secret`, `story issues`, `story note`, `story machine`, `story mcp`, `story export`, `story new`, `story rank`, `story assignment`, `story set`, `story split`, `story sprint`, `story forecast`, `story burndown`, `story burnup`, `story table`, `story judge`, `story check-pr`, `story sync-merge`, `story help`, and `story metrics` also run entirely in Rust. No command needs Node.
 Plan JSON is the default output; other commands use `--json`.
 
 The separate Rust `gitea-gateway story-push` interface remains available in
@@ -132,6 +132,7 @@ part of either Rust push execution path.
 | `story sprint show <YYYY-Snn> [--json]` | A sprint's dates, committed set with points, dated adds and drops, and done set, from changelog events. Native Rust; read-only |
 | `story burndown --sprint <YYYY-Snn> [--today YYYY-MM-DD] [--json]` | Remaining points per day for a sprint: scope, remaining, the ideal line, weekends and today, with unsized stories `unknown`. Native Rust; read-only |
 | `story burnup (--epic ID \| --ids A,B) --from YYYY-MM-DD --to YYYY-MM-DD [--json]` | Cumulative points done against scope for an epic or a set of stories. Native Rust; read-only |
+| `story forecast (--sprint ID \| --epic ID \| --ids A,B) [--today D] [--seed N] [--json]` | 50% and 85% completion dates from 10,000 seeded runs over closed-sprint velocity; fewer than 3 closed sprints and unsized stories stay `unknown`. Native Rust; read-only |
 | `story check-pr [--body-file F] [--json]` | Check a PR's `Stories:` line, acceptance, and closing keywords (CI). Reads `PR_BODY`, `IS_INCIDENT`, `STORY_ACCEPTANCE`, `REPO`. Native Rust; read-only |
 | `story sync-merge [--all] [--from SHA] [--workflow F] [--json]` | Mirror merged cards to their issues and comment once per PR on each named issue (CI, after a push to the default branch; GitHub and Gitea). Native Rust |
 | `story lint [id...] [--json]` | INVEST / Definition of Ready check. Exit 1 if any story has errors. Native Rust; read-only |

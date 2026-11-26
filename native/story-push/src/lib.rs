@@ -6,6 +6,7 @@ pub mod burndown;
 mod check_pr;
 pub mod config;
 pub mod export;
+pub mod forecast;
 pub mod gateway;
 pub mod help;
 pub mod init;
@@ -76,6 +77,7 @@ pub const NATIVE_COMMANDS: &[(&str, Native)] = &[
         burndown::run_burnup(args).map(|out| (out, 0))
     }),
     ("sprint", |args| sprint_cmd::run(args).map(|out| (out, 0))),
+    ("forecast", |args| forecast::run(args).map(|out| (out, 0))),
     ("export", |args| export::run(args).map(|out| (out, 0))),
     ("note", |args| note::run(args).map(|out| (out, 0))),
     ("new", |args| new_story::run(args).map(|out| (out, 0))),

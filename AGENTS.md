@@ -3,7 +3,7 @@
 ## Find the story before editing
 
 Use this repository's installed native `story` executable for `init`, `push`,
-`adopt`, `plan`, `config`, `show`, `secret`, `issues` (a read-only list of open Gitea issues), `list`, `lint`, `stats`, `note`, `set`, `split`, `sprint`, `burndown`, `burnup`, `machine`, `mcp`, `export`, `new`, `rank`, `assignment`, `table`, `judge`, `check-pr`, `sync-merge`, `help`, and
+`adopt`, `plan`, `config`, `show`, `secret`, `issues` (a read-only list of open Gitea issues), `list`, `lint`, `stats`, `note`, `set`, `split`, `sprint`, `forecast`, `burndown`, `burnup`, `machine`, `mcp`, `export`, `new`, `rank`, `assignment`, `table`, `judge`, `check-pr`, `sync-merge`, `help`, and
 `metrics` (read-only delivery figures from changelog status events).
 Build it with `cargo install --path native/story-push --locked`.
 Native `story` runs every command and needs no Node or
