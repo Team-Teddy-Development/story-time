@@ -287,7 +287,74 @@ fn team(t: &Value) -> Result<Value, String> {
         team.insert("velocity".into(), velocity.clone());
     }
     team.insert("wipLimit".into(), wip_limit);
+    if let Some(anchor) = present(prop(t, "sprintAnchor")) {
+        team.insert("sprintAnchor".into(), sprint_anchor(anchor)?);
+    }
+    if let Some(sprints) = present(prop(t, "sprints")) {
+        team.insert("sprints".into(), sprints_override(sprints)?);
+    }
     Ok(Value::Object(team))
+}
+
+/// `team.sprintAnchor`: the start of sprint 1, which must be a weekday, and its time zone.
+fn sprint_anchor(a: &Value) -> Result<Value, String> {
+    use crate::sprint::{parse_date, valid_tz};
+    use chrono::Datelike;
+    let date = prop(a, "date")
+        .and_then(Value::as_str)
+        .and_then(parse_date)
+        .ok_or("team.sprintAnchor.date must be a YYYY-MM-DD date.")?;
+    if matches!(date.weekday(), chrono::Weekday::Sat | chrono::Weekday::Sun) {
+        return Err(format!(
+            "team.sprintAnchor.date must be a weekday; {date} is a {}.",
+            date.weekday()
+        ));
+    }
+    let tz = prop(a, "tz")
+        .and_then(Value::as_str)
+        .filter(|tz| valid_tz(tz))
+        .ok_or("team.sprintAnchor.tz must be a time zone name such as America/Chicago or UTC.")?;
+    Ok(json!({"date": date.format("%Y-%m-%d").to_string(), "tz": tz}))
+}
+
+/// `team.sprints`: dates and an optional goal for single sprints, each id once.
+fn sprints_override(list: &Value) -> Result<Value, String> {
+    use crate::sprint::{parse_date, valid_id};
+    let items = list
+        .as_array()
+        .ok_or("team.sprints must be a list of {id, start, end, goal} objects.")?;
+    let mut seen = Vec::new();
+    let mut out = Vec::new();
+    for (i, item) in items.iter().enumerate() {
+        let at = |field: &str| format!("team.sprints[{i}].{field}");
+        let id = prop(item, "id")
+            .and_then(Value::as_str)
+            .filter(|id| valid_id(id))
+            .ok_or_else(|| format!("{} must be YYYY-Snn.", at("id")))?;
+        if seen.contains(&id) {
+            return Err(format!("{} repeats {id}.", at("id")));
+        }
+        seen.push(id);
+        let date = |field: &str| {
+            prop(item, field)
+                .and_then(Value::as_str)
+                .and_then(parse_date)
+                .ok_or_else(|| format!("{} must be a YYYY-MM-DD date.", at(field)))
+        };
+        let (start, end) = (date("start")?, date("end")?);
+        if end < start {
+            return Err(format!("{} is before {}.", at("end"), at("start")));
+        }
+        let mut row = Map::new();
+        row.insert("id".into(), json!(id));
+        row.insert("start".into(), json!(start.format("%Y-%m-%d").to_string()));
+        row.insert("end".into(), json!(end.format("%Y-%m-%d").to_string()));
+        if let Some(goal) = string(prop(item, "goal"), &at("goal"))? {
+            row.insert("goal".into(), goal);
+        }
+        out.push(Value::Object(row));
+    }
+    Ok(Value::Array(out))
 }
 
 fn project(p: &Value) -> Result<Value, String> {

@@ -14,6 +14,7 @@ value: 8                   # user/business value          (1 2 3 5 8 13 20)
 time_criticality: 5        # cost of waiting               (1 2 3 5 8 13 20)
 risk_reduction: 3          # risk reduction / enablement   (1 2 3 5 8 13 20)
 size: 3                    # relative effort               (1 2 3 5 8 13 20)
+sprint: 2026-S23           # optional: the sprint the story is in (YYYY-Snn)
 depends_on: [ST-010]
 relates_to: [VC-109]      # optional: related stories that do not block this one
 state_machine: model/state/enrollment.toml   # optional, see below
@@ -43,6 +44,18 @@ Written by story-kickoff.
 - 2026-11-01 created
 - 2026-11-04 set size=3 — planning poker, anchors ST-003 (2) and ST-007 (5)
 ```
+
+`sprint:` puts the story in a sprint. Set it with `story set <id> sprint=2026-S23`
+(or `story_update`), which logs `set sprint=2026-S23` in the changelog; `sprint=`
+removes it. The changelog is the history: `story sprint show` and `story metrics`
+read what a sprint committed to, added, dropped and finished from those lines, and
+read points from the last `set size=` before the story entered the sprint. The
+sprint's dates come from settings, not the story: `team.sprintDays` (working
+days), `team.sprintAnchor` (`{"date": "2026-01-05", "tz": "America/Chicago"}`, the
+weekday the first sprint starts; each sprint runs `sprintDays` working days and
+numbering restarts at `S01` for the first sprint that starts in each year) and an optional
+`team.sprints` list of `{id, start, end, goal}` that overrides single sprints.
+`story lint` reports `sprint.format` as an error when `sprint` is not `YYYY-Snn`.
 
 `state_machine:` names the lifecycle model the story moves an entity
 through, relative to the repo root (see the **state-machine** skill).

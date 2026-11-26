@@ -214,6 +214,11 @@ pub(crate) fn coerce(key: &str, raw: &str) -> Result<Option<Js>, String> {
             STATUSES.join(", ")
         ));
     }
+    if key == "sprint" && !crate::sprint::valid_id(raw) {
+        return Err(format!(
+            "sprint must be YYYY-Snn (for example 2026-S23), got \"{raw}\"."
+        ));
+    }
     if key == "type" && !TYPES.contains(&raw) {
         return Err(format!(
             "Unknown type \"{raw}\". Use one of: {}.",
