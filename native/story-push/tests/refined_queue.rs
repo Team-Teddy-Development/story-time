@@ -4,8 +4,9 @@ use chrono::{Duration, Utc};
 use serde_json::{json, Value};
 use std::{
     fs,
+    io::{BufRead, BufReader, Write},
     path::{Path, PathBuf},
-    process::Command,
+    process::{Command, Stdio},
     sync::atomic::{AtomicUsize, Ordering},
 };
 
@@ -136,9 +137,9 @@ fn rank_lists_the_refined_review_queue_oldest_first_with_ages() {
     assert_eq!(
         queue,
         " (oldest first; run story-ready on each):\n\
+         \x20 ST-004  age unknown  No event\n\
          \x20 ST-005  age unknown  No date\n\
          \x20 ST-002  30 days  Thirty\n\
-         \x20 ST-004  20 days  No event\n\
          \x20 ST-001  10 days  Ten\n\
          \x20 ST-003  2 days  Two\n"
     );
@@ -147,9 +148,9 @@ fn rank_lists_the_refined_review_queue_oldest_first_with_ages() {
     assert_eq!(
         rank["refinedQueue"],
         json!([
+            {"id": "ST-004", "title": "No event"},
             {"id": "ST-005", "title": "No date"},
             {"id": "ST-002", "title": "Thirty", "refinedSince": ago(30), "days": 30},
-            {"id": "ST-004", "title": "No event", "refinedSince": ago(20), "days": 20},
             {"id": "ST-001", "title": "Ten", "refinedSince": ago(10), "days": 10},
             {"id": "ST-003", "title": "Two", "refinedSince": ago(2), "days": 2},
         ])
@@ -177,7 +178,7 @@ fn lint_warns_when_a_story_sits_in_refined_past_the_default_limit() {
     };
     assert_eq!(stale(&lint, "ST-001"), vec![message(10)]);
     assert_eq!(stale(&lint, "ST-002"), vec![message(30)]);
-    assert_eq!(stale(&lint, "ST-004"), vec![message(20)]);
+    assert_eq!(stale(&lint, "ST-004"), Vec::<String>::new());
     assert_eq!(stale(&lint, "ST-003"), Vec::<String>::new());
     assert_eq!(stale(&lint, "ST-005"), Vec::<String>::new());
     assert_eq!(stale(&lint, "ST-006"), Vec::<String>::new());
@@ -188,7 +189,6 @@ fn the_limit_comes_from_team_refined_stale_days() {
     let s = backlog(json!({"refinedStaleDays": 20}));
     let lint = s.json(&["lint", "--json"]);
     assert_eq!(stale(&lint, "ST-001"), Vec::<String>::new());
-    assert_eq!(stale(&lint, "ST-004"), Vec::<String>::new());
     assert_eq!(
         stale(&lint, "ST-002"),
         vec!["warning: In refined for 30 days, past the 20-day limit. Run story-ready: promote it to ready or name the remaining gap."]
@@ -208,6 +208,61 @@ fn a_non_positive_limit_fails_config_validation() {
             "{bad}: {stderr}"
         );
     }
+}
+
+#[test]
+fn a_future_entry_date_reads_as_zero_days() {
+    let s = Sandbox::new(json!({}));
+    s.story(
+        "ST-001",
+        "Clock skew",
+        "refined",
+        Some(0),
+        &format!("- {} set status=refined\n", ago(-3)),
+    );
+    assert_eq!(
+        s.json(&["rank", "--json"])["refinedQueue"][0]["days"],
+        json!(0)
+    );
+}
+
+#[test]
+fn mcp_story_lint_reads_the_limit_from_settings() {
+    let s = backlog(json!({"refinedStaleDays": 20}));
+    let mut child = Command::new(env!("CARGO_BIN_EXE_story"))
+        .args(["mcp", "--root", s.0.to_str().unwrap()])
+        .env_clear()
+        .env("PATH", "/nonexistent")
+        .env("HOME", &s.0)
+        .current_dir(&s.0)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .unwrap();
+    let request = json!({"jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": {
+        "name": "story_lint",
+        "arguments": {},
+        "_meta": {
+            "io.modelcontextprotocol/protocolVersion": "2026-07-28",
+            "io.modelcontextprotocol/clientInfo": {"name": "refined-queue-test", "version": "1"},
+            "io.modelcontextprotocol/clientCapabilities": {}
+        }
+    }});
+    writeln!(child.stdin.take().unwrap(), "{request}").unwrap();
+    let mut line = String::new();
+    BufReader::new(child.stdout.take().unwrap())
+        .read_line(&mut line)
+        .unwrap();
+    let _ = child.kill();
+    let _ = child.wait();
+    let response: Value = serde_json::from_str(&line).unwrap_or_else(|e| panic!("{e}: {line}"));
+    let results = &response["result"]["structuredContent"]["results"];
+    assert_eq!(stale(results, "ST-001"), Vec::<String>::new(), "{response}");
+    assert_eq!(
+        stale(results, "ST-002"),
+        vec!["warning: In refined for 30 days, past the 20-day limit. Run story-ready: promote it to ready or name the remaining gap."]
+    );
 }
 
 fn skill(name: &str) -> String {

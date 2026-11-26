@@ -13,18 +13,17 @@ pub(crate) struct Waiting<'a> {
     pub(crate) days: Option<i64>,
 }
 
-/// When a refined story entered `refined`: its last `set status=refined` changelog line, else
-/// its `updated` date, or `None` when neither is recorded.
+/// When a refined story entered `refined`: its last `set status=refined` changelog line. A story
+/// put in `refined` without one has an unknown entry date; `updated` would not do, because any
+/// later edit such as a note moves it and makes a stale story look fresh.
 fn since(story: &Js) -> Option<NaiveDate> {
-    let history = crate::metrics::history(String::new(), &story.to_value());
-    history
+    crate::metrics::history(String::new(), &story.to_value())
         .log
         .status
-        .iter()
+        .into_iter()
         .rev()
         .find(|(_, status)| status == "refined")
-        .map(|(date, _)| *date)
-        .or_else(|| NaiveDate::parse_from_str(&story.get("updated").string(), "%Y-%m-%d").ok())
+        .map(|(date, _)| date)
 }
 
 pub(crate) fn waiting(story: &Js) -> Option<Waiting<'_>> {
@@ -33,7 +32,7 @@ pub(crate) fn waiting(story: &Js) -> Option<Waiting<'_>> {
         Waiting {
             story,
             since,
-            days: since.map(|d| (Utc::now().date_naive() - d).num_days()),
+            days: since.map(|d| (Utc::now().date_naive() - d).num_days().max(0)),
         }
     })
 }

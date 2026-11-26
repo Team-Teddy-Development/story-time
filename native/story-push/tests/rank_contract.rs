@@ -125,10 +125,19 @@ fn without_refined_queue(out: &str) -> String {
     if let Some(start) = out.find(",\n  \"refinedQueue\": ") {
         return format!("{}\n}}\n", &out[..start]);
     }
-    match out.find("\nRefined review queue") {
-        Some(start) => out[..start].to_owned(),
-        None => out.to_owned(),
-    }
+    let Some(start) = out.find("\nRefined review queue") else {
+        return out.to_owned();
+    };
+    let mut queue = out[start + 1..].lines();
+    assert_eq!(
+        queue.next(),
+        Some("Refined review queue (oldest first; run story-ready on each):")
+    );
+    assert!(
+        queue.all(|line| line.starts_with("  ST-")),
+        "only queue lines follow the queue header: {out}"
+    );
+    out[..start].to_owned()
 }
 
 fn legacy() -> PathBuf {
