@@ -139,7 +139,7 @@ Nothing is written if any value is invalid:
     "process": "agile",
     "areaPath": "Shop\\Payments"
   },
-  "team": { "sprintDays": 10, "velocity": 24, "wipLimit": 1 },
+  "team": { "sprintDays": 10, "velocity": 24, "wipLimit": 1, "refinedStaleDays": 7 },
   "project": { "stack": ["csharp", "aspnetcore", "react"], "testFramework": "xunit", "testCommand": "dotnet test" },
   "definitionOfDone": ["Release note added to CHANGELOG.md"],
   "definitionOfReady": ["UX sign-off linked for UI stories"]
@@ -237,7 +237,7 @@ Show the effective config from `story config` and say how it will be used:
   prints the `gh` or `az boards` command that creates the item.
 - With sync `ask` or `auto`, `story push <id>` creates or updates the
   tracker item and records `remote` / `remote_url` in the story.
-- **story-pick** uses `team.wipLimit` and `team.sprintDays`.
+- **story-pick** uses `team.wipLimit` and `team.sprintDays`. Lint uses `team.refinedStaleDays`.
   **refinement** records missing velocity. **sprint-planning** uses supplied goal,
   calendar, budget, and reserve for local proposals. Install native `story` separately.
 - **story-ready** and **story-accept** add `definitionOfReady` and

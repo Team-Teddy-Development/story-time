@@ -27,6 +27,7 @@ mod org_index;
 pub mod otlp;
 pub mod planning;
 pub mod rank;
+pub(crate) mod refined;
 pub mod secret;
 pub mod set;
 pub mod show;

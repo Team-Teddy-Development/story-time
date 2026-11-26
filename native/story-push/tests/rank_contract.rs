@@ -81,7 +81,7 @@ impl Sandbox {
         let native = self.run(true, args);
         assert_eq!(before, self.files(), "native changed files for {args:?}");
         assert_eq!(
-            String::from_utf8_lossy(&native.stdout),
+            without_refined_queue(&String::from_utf8_lossy(&native.stdout)),
             String::from_utf8_lossy(&node.stdout),
             "stdout differs for {args:?}; native stderr: {}; node stderr: {}",
             String::from_utf8_lossy(&native.stderr),
@@ -118,6 +118,33 @@ impl Drop for Sandbox {
     fn drop(&mut self) {
         let _ = fs::remove_dir_all(&self.0);
     }
+}
+
+/// Native output without the refined review queue (ST-211), which Node never printed.
+fn without_refined_queue(out: &str) -> String {
+    const KEY: &str = ",\n  \"refinedQueue\": ";
+    if let Some(start) = out.find(KEY) {
+        let tail = out[start + KEY.len()..]
+            .strip_suffix("\n}\n")
+            .expect("refinedQueue closes the object");
+        let queue: serde_json::Value = serde_json::from_str(tail)
+            .unwrap_or_else(|e| panic!("refinedQueue is the last key ({e}): {out}"));
+        assert!(queue.is_array(), "{out}");
+        return format!("{}\n}}\n", &out[..start]);
+    }
+    let Some(start) = out.find("\nRefined review queue") else {
+        return out.to_owned();
+    };
+    let mut queue = out[start + 1..].lines();
+    assert_eq!(
+        queue.next(),
+        Some("Refined review queue (oldest first; run story-ready on each):")
+    );
+    assert!(
+        queue.all(|line| line.starts_with("  ST-")),
+        "only queue lines follow the queue header: {out}"
+    );
+    out[..start].to_owned()
 }
 
 fn legacy() -> PathBuf {
@@ -221,6 +248,12 @@ fn every_argument_form_matches_node() {
     mixed(&s);
     let plain = s.both_forms(&[], 0);
     assert!(plain.contains("Excluded:"), "{plain}");
+    assert!(
+        plain.ends_with(
+            "\nRefined review queue (oldest first; run story-ready on each):\n  ST-006  age unknown  Refined\n  ST-018  age unknown  Refined blocked\n"
+        ),
+        "{plain}"
+    );
     for args in [
         &["--include-refined"][..],
         &["--limit", "2"],

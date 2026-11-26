@@ -9,7 +9,7 @@ use crate::{
     lenient_story::{lines, trim, Js},
     list,
     org_index::{prefix_of, OrgIndex, Resolved},
-    show, Failure,
+    refined, show, Failure,
 };
 use regex_lite::Regex;
 use std::{
@@ -50,6 +50,8 @@ pub(crate) struct Context<'a> {
     pub(crate) org: Option<&'a OrgIndex>,
     /// The story prefixes that the registry of a hosted server declares for this repository.
     pub(crate) declared: Option<&'a [String]>,
+    /// `team.refinedStaleDays`; `None` means [`refined::STALE_DAYS`].
+    pub(crate) refined_stale_days: Option<u64>,
 }
 
 type Found = Result<Vec<(Severity, String)>, String>;
@@ -60,7 +62,7 @@ struct Rule {
     check: fn(&Js, &Context) -> Found,
 }
 
-const RULES: [Rule; 22] = [
+const RULES: [Rule; 23] = [
     rule("title.present", "N", title_present),
     rule("statement.format", "V", statement_format),
     rule("statement.benefit", "V", statement_benefit),
@@ -87,6 +89,7 @@ const RULES: [Rule; 22] = [
     rule("state_machine.exists", "T", state_machine_exists),
     rule("sprint.format", "E", sprint_format),
     rule("built_by.value", "E", built_by_value),
+    rule("refined.stale", "N", refined_stale),
 ];
 
 const fn rule(id: &'static str, invest: &'static str, check: fn(&Js, &Context) -> Found) -> Rule {
@@ -266,6 +269,16 @@ pub(crate) fn tick_criteria(raw: &str) -> Option<String> {
         offset += line.len();
     }
     Some(ticked)
+}
+
+fn refined_stale(s: &Js, ctx: &Context) -> Found {
+    let limit = ctx.refined_stale_days.unwrap_or(refined::STALE_DAYS);
+    match refined::waiting(s).and_then(|w| w.days) {
+        Some(days) if days.unsigned_abs() > limit => warn(format!(
+            "In refined for {days} days, past the {limit}-day limit. Run story-ready: promote it to ready or name the remaining gap."
+        )),
+        _ => none(),
+    }
 }
 
 fn title_present(s: &Js, _: &Context) -> Found {
@@ -774,6 +787,7 @@ pub fn run(args: &[String]) -> Result<(String, u8), Failure> {
         root: Some(&loaded.root),
         org: None,
         declared: None,
+        refined_stale_days: refined_stale_days(&settings),
     };
     let mut results = Vec::new();
     for story in &targets {
@@ -843,4 +857,11 @@ fn human(story: &Js, findings: &[Finding]) -> String {
         }))
         .collect::<Vec<_>>()
         .join("\n")
+}
+
+/// `team.refinedStaleDays` from validated settings.
+pub(crate) fn refined_stale_days(settings: &serde_json::Value) -> Option<u64> {
+    settings["team"]["refinedStaleDays"]
+        .as_f64()
+        .map(|n| n as u64)
 }

@@ -21,6 +21,7 @@ use crate::{
 };
 use regex_lite::Regex;
 use serde_json::{json, Map, Value};
+mod agile;
 mod blocked;
 mod caller;
 mod comments;
@@ -928,9 +929,13 @@ impl Repo {
         Ok((stories, digests))
     }
 
+    /// `message` without the absolute path of the repository root.
+    fn strip(&self, message: &str) -> String {
+        message.replace(&format!("{}/", self.root.path.display()), "")
+    }
+
     fn malformed(&self, message: &str) -> ToolError {
-        let root = format!("{}/", self.root.path.display());
-        fail("story_malformed", &message.replace(&root, ""))
+        fail("story_malformed", &self.strip(message))
     }
 
     fn story(&self, id: &str) -> Result<(Js, Vec<u8>), ToolError> {
@@ -1267,6 +1272,7 @@ fn story_lint(server: &Server, args: &Map<String, Value>) -> Result<Value, ToolE
         root: Some(&repo.root.path),
         org: org.as_ref(),
         declared: server.declared(&repo.root.key),
+        refined_stale_days: lint::refined_stale_days(&repo.settings),
     };
     let (mut errors, mut warnings) = (0, 0);
     let mut results = Vec::new();
@@ -1919,6 +1925,22 @@ const READ: Hints = Hints {
     idempotent: true,
     open_world: false,
 };
+const SPRINT: Field = Field {
+    name: "sprint",
+    kind: Kind::Text(8),
+};
+const DATE_FROM: Field = Field {
+    name: "from",
+    kind: Kind::Text(10),
+};
+const DATE_TO: Field = Field {
+    name: "to",
+    kind: Kind::Text(10),
+};
+const DATE_TODAY: Field = Field {
+    name: "today",
+    kind: Kind::Text(10),
+};
 const EXPECTED: Field = Field {
     name: "expected_sha256",
     kind: Kind::Sha256,
@@ -1934,7 +1956,7 @@ struct Tool {
     run: fn(&Server, &Map<String, Value>) -> Result<Value, ToolError>,
 }
 
-const TOOLS: [Tool; 11] = [
+const TOOLS: [Tool; 14] = [
     Tool {
         name: "story_config",
         hints: READ,
@@ -2010,6 +2032,53 @@ const TOOLS: [Tool; 11] = [
         required: &[],
         output: lint_schema,
         run: story_lint,
+    },
+    Tool {
+        name: "story_velocity",
+        hints: READ,
+        description: "The velocity figure of `story metrics` for the window ending on `to`: mean completed points per closed sprint over the last 3 and the last 6 closed sprints, with minimum and maximum, `unknown` when fewer sprints have known points. Size a commitment from the minimum to maximum range, not the mean.",
+        fields: &[REPOSITORY, DATE_FROM, DATE_TO],
+        required: &["from", "to"],
+        output: agile::velocity_schema,
+        run: agile::story_velocity,
+    },
+    Tool {
+        name: "story_burndown",
+        hints: READ,
+        description: "The JSON of `story burndown --sprint`: for each day of the sprint, its scope, the points remaining (null after `today`) and the ideal line, with the stories whose size is unknown. `today` defaults to the server's UTC date.",
+        fields: &[REPOSITORY, SPRINT, DATE_TODAY],
+        required: &["sprint"],
+        output: agile::burndown_schema,
+        run: agile::story_burndown,
+    },
+    Tool {
+        name: "story_forecast",
+        hints: READ,
+        description: "The JSON of `story forecast`: the dates by which the open points of one target (exactly one of `sprint`, `epic` or `ids`) are finished at the 50th and 85th percentile of 10000 simulated runs over past sprint velocities, `unknown` with a reason when fewer than 3 sprints are closed. `seed` makes a run repeatable. `today` defaults to the server's UTC date.",
+        fields: &[
+            REPOSITORY,
+            SPRINT,
+            Field {
+                name: "epic",
+                kind: Kind::Text(64),
+            },
+            Field {
+                name: "ids",
+                kind: Kind::List(&Kind::NonEmpty(64), 100),
+            },
+            DATE_TODAY,
+            Field {
+                name: "seed",
+                kind: Kind::Integer {
+                    min: 0,
+                    max: 9_007_199_254_740_991,
+                    default: 1,
+                },
+            },
+        ],
+        required: &[],
+        output: agile::forecast_schema,
+        run: agile::story_forecast,
     },
     Tool {
         name: "story_update",
@@ -2277,7 +2346,15 @@ impl Tool {
     /// Whether this tool reads the story files of one commit of a registered repository. Such
     /// a tool takes `ref` and names the commit in its result.
     fn at_commit(&self) -> bool {
-        matches!(self.name, "story_list" | "story_show" | "story_lint")
+        matches!(
+            self.name,
+            "story_list"
+                | "story_show"
+                | "story_lint"
+                | "story_velocity"
+                | "story_burndown"
+                | "story_forecast"
+        )
     }
 
     /// The scope a hosted client needs for this tool.
