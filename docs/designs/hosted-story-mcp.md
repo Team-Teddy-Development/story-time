@@ -58,7 +58,7 @@ No tool can answer "which web stories wait on this core story?" To answer that t
 *   Neo4j or the tracker as the source of truth.
 *   Direct commits to a default branch.
 *   Resolving PR review threads. v1 covers issue comments only.
-*   **Gitea comments.** The server reads the stories of a Gitea repository (ST-140) and proposes changes to them (ST-149). Comments on Gitea wait for ST-150.
+*   **Gitea comments.** The server reads the stories of a Gitea repository (ST-140), proposes changes to them (ST-149), and reads and resolves comments on their issues (ST-150).
 *   Links across registry orgs.
 *   Publishing tracker issues from the server. A story created on the server stays unpublished until someone runs `story push` after the merge.
 *   An OAuth authorization server, a web UI, or human logins.
@@ -395,7 +395,7 @@ GIT_TERMINAL_PROMPT=0
 | Tools | Scope | Prefix check |
 | --- | --- | --- |
 | `story_config`, `story_list`, `story_show`, `story_lint`, `story_repos`, `story_graph`, `story_comments` | read | None; reads cover the whole org. |
-| `story_update`, `story_note`, `story_create` | write | Target ID, or the prefix for `story_create`. |
+| `story_update`, `story_note`, `story_create`, `story_accept` | write | Target ID, or the prefix for `story_create`. |
 | `story_graph_sync` | write | None. The tool triggers a manual rebuild. |
 | `story_resolve_comment` | comment | Target ID. |
 
@@ -408,7 +408,9 @@ Hosted-only fields live in separate hosted schemas that `Backend::Hosted` select
 | Tool | Exists today | Hosted change |
 | --- | --- | --- |
 | `story_config`, `story_list`, `story_show`, `story_lint` | yes | Optional `ref`. Adds `{repository, sha, fetched_at}`, `proposed`, and org-aware lint. |
-| `story_update`, `story_note`, `story_create` | yes | Branch-and-PR write (Component 4). Adds `state`, `pr_url`, `branch`, and `head_sha`. |
+| `story_update`, `story_note`, `story_create`, `story_accept` | yes | Branch-and-PR write (Component 4). Adds `state`, `pr_url`, `branch`, and `head_sha`. |
+
+To propose acceptance for an in-progress GitHub story, call `story_accept` with its ID and current `expected_sha256` from `story_show`. Supply `evidence` entries in the form `{"criterion": 1, "evidence": "The integration test passed."}`. Criterion numbers start at 1. Supply one unique, nonempty, single-line entry per criterion. If a proposal is already open, use the proposal's `content_sha256`. The operation ticks the original criteria and adds the evidence to the proposal. It does not update `main` or close the issue. The repository's normal merge and tracker sync steps still apply.
 | `story_graph`, `story_graph_sync` | yes | Org-wide sync. Adds `direction` and the synced SHAs. |
 | `story_repos` | new | Returns `[{key, org, prefixes, forge: github\|gitea, sha, fetched_at, state: ready\|cloning\|unavailable, last_error}]`. |
 | `story_comments`, `story_resolve_comment` | new | Component 7. |

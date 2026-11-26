@@ -2,7 +2,7 @@
 //! field, gates a move to `ready` on the lint, and logs the change in the changelog.
 
 use crate::{
-    adoption_apply,
+    adoption_apply, blocked,
     config::{self, Flags},
     js_number,
     lenient_story::{append_changelog, ordered, trim, Js},
@@ -25,7 +25,7 @@ const STATUSES: [&str; 7] = [
     "archived",
 ];
 const NUMERIC: [&str; 4] = ["value", "time_criticality", "risk_reduction", "size"];
-const LIST: [&str; 3] = ["depends_on", "relates_to", "children"];
+const LIST: [&str; 4] = ["depends_on", "relates_to", "children", "labels"];
 pub(crate) const IMMUTABLE: [&str; 4] = ["id", "created", "updated", "sections"];
 
 pub fn run(args: &[String]) -> Result<String, Failure> {
@@ -69,11 +69,23 @@ pub fn run(args: &[String]) -> Result<String, Failure> {
                 .join("\n")
         ),
     })?;
+    let done = |s: &Js| s.get("status").string() == "done";
+    let unblocked = if done(&change.story) && !done(&current) {
+        blocked::unblocked(&list::stories(&dir, None)?, id)
+    } else {
+        Vec::new()
+    };
     list::save(&dir, &change.story)?;
+    let mut out = format!("{} updated.\n", change.story.get("id").string());
+    for parent in &unblocked {
+        list::save(&dir, parent)?;
+        let parent = parent.get("id").string();
+        out.push_str(&format!("{parent} unblocked: every dependency is done.\n"));
+    }
     Ok(if flags.has("json") {
         format!("{}\n", change.story.json())
     } else {
-        format!("{} updated.\n", change.story.get("id").string())
+        out
     })
 }
 

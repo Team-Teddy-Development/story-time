@@ -1,6 +1,7 @@
 //! `story rank`: Weighted Shortest Job First over the ready stories, as Node's `rankBacklog` ranks them.
 
 use crate::{
+    blocked,
     config::{self, Flags},
     js_number,
     lenient_story::Js,
@@ -89,6 +90,13 @@ fn rank_backlog<'a>(
             });
             continue;
         }
+        if blocked::has_blocked(story) {
+            excluded.push(Excluded {
+                story,
+                reason: "blocked label".into(),
+            });
+            continue;
+        }
         let depends_on = match story.get("depends_on") {
             Js::Undefined => &[][..],
             Js::Arr(ids) => ids,
@@ -141,6 +149,17 @@ fn rank_backlog<'a>(
             })
     });
     Ok((ranked, excluded))
+}
+
+pub(crate) fn ordered_candidates<'a>(
+    stories: &'a [Js],
+    statuses: &[&str],
+) -> Result<Vec<&'a Js>, String> {
+    Ok(rank_backlog(stories, statuses)?
+        .0
+        .into_iter()
+        .map(|r| r.story)
+        .collect())
 }
 
 /// `Number.prototype.toFixed(2)`.
