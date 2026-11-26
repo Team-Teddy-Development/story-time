@@ -42,6 +42,10 @@ Commands:
                                            Native: throughput, WIP, cycle time and velocity from changelog events; read-only
   sprint show <YYYY-Snn> [--json]
                                            Native: a sprint's dates, committed set, scope changes and done set; read-only
+  burndown --sprint <YYYY-Snn> [--today YYYY-MM-DD] [--json]
+                                           Native: remaining points per day for a sprint, with scope, ideal, weekend and today; read-only
+  burnup (--epic ID | --ids A,B) --from YYYY-MM-DD --to YYYY-MM-DD [--json]
+                                           Native: cumulative points done against scope for an epic or a set of stories; read-only
   forecast (--sprint ID | --epic ID | --ids A,B) [--today YYYY-MM-DD] [--seed N] [--json]
                                            Native: 50% and 85% completion dates from closed-sprint velocity; read-only
   check-pr [--body-file F] [--json]
