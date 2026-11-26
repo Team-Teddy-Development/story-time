@@ -269,7 +269,7 @@ pub(super) fn run(
                     format!("Stories: {id}")
                 };
                 let body = format!(
-                    "{line}\n\nstory-time proposes a change to `{path}`. Client `{client}` asked for it through the story-time MCP server.\n"
+                    "{line}\n\n## Change\n\nUpdate `{path}` at the request of `{client}` through the Story Time MCP server.\n\n## Verification\n\nSee the pull request checks for results.\n"
                 );
                 match writing.create_pull(&branch, &title, &body) {
                     Ok(url) => url,
