@@ -1827,3 +1827,63 @@ fn the_agile_tools_refuse_bad_arguments_and_a_repository_with_no_calendar() {
         .contains(fixture.root.to_str().unwrap()));
     server.finish();
 }
+
+#[test]
+fn the_agile_tools_refuse_a_far_date_and_name_no_path_in_an_error() {
+    let fixture = agile_fixture();
+    let mut server = fixture.server();
+    for today in ["9999-01-01", "1999-12-31", "2026-13-01"] {
+        let refused = server.tool("story_forecast", json!({"ids": ["ST-201"], "today": today}));
+        assert_eq!(tool_error(&refused)["code"], "invalid_argument", "{today}");
+        let refused = server.tool(
+            "story_burndown",
+            json!({"sprint": "2026-S05", "today": today}),
+        );
+        assert_eq!(tool_error(&refused)["code"], "invalid_argument", "{today}");
+    }
+    let missing = server.tool(
+        "story_forecast",
+        json!({"ids": ["ST-999"], "today": "2026-11-15"}),
+    );
+    assert_eq!(tool_error(&missing)["code"], "story_not_found");
+    server.finish();
+
+    let settings = SPRINT_SETTINGS.replace(
+        "\"prefix\":\"ST\"",
+        "\"prefix\":\"ST\",\"backlogDir\":\"notes.txt\"",
+    );
+    fixture.write(".story-time/settings.json", &settings);
+    fixture.write("notes.txt", "not a directory");
+    let mut server = fixture.server();
+    let broken = server.tool(
+        "story_velocity",
+        json!({"from": "2026-09-07", "to": "2026-11-15"}),
+    );
+    let error = tool_error(&broken);
+    assert_eq!(error["code"], "report_failed", "{broken}");
+    let message = error["message"].as_str().unwrap();
+    assert!(message.contains("notes.txt"), "{message}");
+    assert!(
+        !message.contains(fixture.root.to_str().unwrap()),
+        "{message}"
+    );
+    server.finish();
+}
+
+#[test]
+fn the_agile_tools_refuse_an_oversized_story_file() {
+    let fixture = agile_fixture();
+    let big = format!(
+        "{}{}",
+        dated_story("ST-400", "draft", 1, &[]),
+        "x".repeat(1024 * 1024)
+    );
+    fixture.write("backlog/ST-400.md", &big);
+    let mut server = fixture.server();
+    let refused = server.tool(
+        "story_velocity",
+        json!({"from": "2026-09-07", "to": "2026-11-15"}),
+    );
+    assert_eq!(tool_error(&refused)["code"], "story_too_large");
+    server.finish();
+}

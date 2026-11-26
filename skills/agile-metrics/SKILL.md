@@ -59,8 +59,10 @@ When the `story-time` MCP server is connected and lists the repository, call
 `story_velocity` (`from`, `to`), `story_burndown` (`sprint`, `today`) and
 `story_forecast` (one of `sprint`, `epic`, `ids`, plus `today` and `seed`)
 instead, naming the `repository`. Each returns the JSON of its command on that
-repository's default branch. `ref` reads a proposal branch instead and the
-result names its `sha`. These tools only read.
+repository's backlog: the checked-out files of a local server, the default
+branch of a hosted one. `today` defaults to the server's UTC date, so pass it.
+`ref` reads a proposal branch of a hosted server and the result names its `sha`.
+These tools only read.
 
 ## 4. Present the figures as given
 

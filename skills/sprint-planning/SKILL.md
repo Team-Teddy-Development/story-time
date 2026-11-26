@@ -1,6 +1,6 @@
 ---
 name: sprint-planning
-description: Propose a goal-based fixed-sprint plan from ordered ready stories, an explicit point budget and reserve, and supplied calendar evidence. Use when the user says "plan a sprint", "sprint planning", or asks which ready stories fit team capacity without starting a sprint.
+description: Propose a goal-based fixed-sprint plan from ordered ready stories, an explicit point budget and reserve, and supplied calendar evidence. Use when the user says "plan a sprint", "sprint planning", or asks which ready stories fit team capacity.
 ---
 
 # Sprint planning
@@ -8,8 +8,8 @@ description: Propose a goal-based fixed-sprint plan from ordered ready stories, 
 `story` means the CLI from the **story-time** skill. Run `story config --json`.
 Consume the **refinement** skill's ordered candidates and epic dispositions.
 If readiness or epic intent is unresolved, return that work to its existing owner.
-Planning proposes local artifacts; it does not start or close a sprint. The
-chosen stories get `sprint` only after the lead approves the plan.
+Planning proposes local artifacts. A sprint starts when the lead approves the
+plan and the chosen stories get their `sprint`; planning never closes one.
 
 ## Confirm the inputs
 

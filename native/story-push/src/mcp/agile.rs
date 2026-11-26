@@ -3,8 +3,10 @@
 //! and returns that command's JSON, so a tool and its command cannot disagree.
 
 use super::{fail, invalid, strings, with_redactions, Repo, Server, ToolError};
-use crate::{burndown, forecast, metrics, Failure};
+use crate::{burndown, forecast, metrics, sprint, Failure};
+use chrono::{NaiveDate, Utc};
 use serde_json::{json, Map, Value};
+use std::fs;
 
 type Command = fn(&[String]) -> Result<String, Failure>;
 
@@ -27,14 +29,53 @@ fn report(repo: &Repo, command: Command, flags: Vec<(&str, String)>) -> Result<V
         argv.push(format!("--{flag}"));
         argv.push(value);
     }
+    within_limits(repo)?;
     let text = command(&argv).map_err(|failure| {
+        let message = repo.strip(&failure.message);
+        let first = message.lines().next().unwrap_or_default();
         if failure.code == 2 {
-            invalid("", repo.strip(&failure.message))
+            invalid("", first.to_owned())
+        } else if first.starts_with("no story ") {
+            fail("story_not_found", first)
         } else {
-            fail("report_failed", &repo.strip(&failure.message))
+            fail("report_failed", &message)
         }
     })?;
     serde_json::from_str(&text).map_err(|_| fail("report_failed", "The report is not JSON."))
+}
+
+/// The commands read every story file themselves, so each file must first pass what `Repo::bytes`
+/// holds every other tool to: it resolves inside the repository and is at most 1 MiB.
+fn within_limits(repo: &Repo) -> Result<(), ToolError> {
+    let Ok(entries) = fs::read_dir(&repo.dir) else {
+        return Ok(());
+    };
+    for entry in entries.flatten() {
+        if let Some(id) = entry.file_name().to_str().and_then(crate::story_file_id) {
+            repo.bytes(id)?;
+        }
+    }
+    Ok(())
+}
+
+/// The days a `today` may be from now. A server that takes `today` from a client would otherwise
+/// let a date in year 9999 make the forecast walk the whole calendar.
+const EARLIEST: (i32, u32, u32) = (2000, 1, 1);
+const LATEST: (i32, u32, u32) = (2100, 1, 1);
+
+/// `today` as the call gives it, or the server's UTC date, always checked and always passed on,
+/// so that no call reads the zone of the process.
+fn today(args: &Map<String, Value>) -> Result<(&'static str, String), ToolError> {
+    let day = match text(args, "today") {
+        Some(raw) => sprint::parse_date(raw)
+            .ok_or_else(|| invalid("/today", "/today is not a YYYY-MM-DD date.".into()))?,
+        None => Utc::now().date_naive(),
+    };
+    let bound = |(y, m, d): (i32, u32, u32)| NaiveDate::from_ymd_opt(y, m, d).unwrap();
+    if day < bound(EARLIEST) || day >= bound(LATEST) {
+        return Err(invalid("/today", "/today is outside 2000 to 2099.".into()));
+    }
+    Ok(("today", day.to_string()))
 }
 
 fn text<'a>(args: &'a Map<String, Value>, key: &str) -> Option<&'a str> {
@@ -66,11 +107,9 @@ pub(super) fn story_burndown(
     args: &Map<String, Value>,
 ) -> Result<Value, ToolError> {
     let repo = server.open(args)?;
-    Ok(repo.at(report(
-        &repo,
-        burndown::run_burndown,
-        given(args, &["sprint", "today"]),
-    )?))
+    let mut flags = given(args, &["sprint"]);
+    flags.push(today(args)?);
+    Ok(repo.at(report(&repo, burndown::run_burndown, flags)?))
 }
 
 pub(super) fn story_forecast(
@@ -78,7 +117,8 @@ pub(super) fn story_forecast(
     args: &Map<String, Value>,
 ) -> Result<Value, ToolError> {
     let repo = server.open(args)?;
-    let mut flags = given(args, &["sprint", "epic", "today"]);
+    let mut flags = given(args, &["sprint", "epic"]);
+    flags.push(today(args)?);
     if let Some(ids) = strings(args, "ids") {
         for id in &ids {
             repo.check_id(id)?;
@@ -118,6 +158,12 @@ pub(super) fn velocity_schema() -> Value {
             "sprints": {"type": "array", "items": {
                 "type": "object",
                 "required": ["id", "start", "end", "completed_points"],
+                "properties": {
+                    "id": {"type": "string"},
+                    "start": {"type": "string"},
+                    "end": {"type": "string"},
+                    "completed_points": {"type": "number"},
+                }
             }},
             "last_3": stat,
             "last_6": stat,

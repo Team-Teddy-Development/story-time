@@ -2044,7 +2044,7 @@ const TOOLS: [Tool; 14] = [
     Tool {
         name: "story_burndown",
         hints: READ,
-        description: "The JSON of `story burndown --sprint`: for each day of the sprint, its scope, the points remaining (null after `today`) and the ideal line, with the stories whose size is unknown.",
+        description: "The JSON of `story burndown --sprint`: for each day of the sprint, its scope, the points remaining (null after `today`) and the ideal line, with the stories whose size is unknown. `today` defaults to the server's UTC date.",
         fields: &[REPOSITORY, SPRINT, DATE_TODAY],
         required: &["sprint"],
         output: agile::burndown_schema,
@@ -2053,7 +2053,7 @@ const TOOLS: [Tool; 14] = [
     Tool {
         name: "story_forecast",
         hints: READ,
-        description: "The JSON of `story forecast`: the dates by which the open points of one target (exactly one of `sprint`, `epic` or `ids`) are finished at the 50th and 85th percentile of 10000 simulated runs over past sprint velocities, `unknown` with a reason when fewer than 3 sprints are closed. `seed` makes a run repeatable.",
+        description: "The JSON of `story forecast`: the dates by which the open points of one target (exactly one of `sprint`, `epic` or `ids`) are finished at the 50th and 85th percentile of 10000 simulated runs over past sprint velocities, `unknown` with a reason when fewer than 3 sprints are closed. `seed` makes a run repeatable. `today` defaults to the server's UTC date.",
         fields: &[
             REPOSITORY,
             SPRINT,
