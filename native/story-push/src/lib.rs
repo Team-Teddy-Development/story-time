@@ -29,6 +29,8 @@ pub mod set;
 pub mod show;
 pub mod skill_install;
 pub mod split;
+pub mod sprint;
+pub mod sprint_cmd;
 pub mod stats;
 mod stories_line;
 pub mod story;
@@ -66,6 +68,7 @@ pub const NATIVE_COMMANDS: &[(&str, Native)] = &[
     ("mcp", mcp::run),
     ("table", table::run),
     ("metrics", |args| metrics::run(args).map(|out| (out, 0))),
+    ("sprint", |args| sprint_cmd::run(args).map(|out| (out, 0))),
     ("export", |args| export::run(args).map(|out| (out, 0))),
     ("note", |args| note::run(args).map(|out| (out, 0))),
     ("new", |args| new_story::run(args).map(|out| (out, 0))),

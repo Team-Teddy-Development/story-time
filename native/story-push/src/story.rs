@@ -11,6 +11,7 @@ const KEY_ORDER: &[&str] = &[
     "time_criticality",
     "risk_reduction",
     "size",
+    "sprint",
     "timebox",
     "depends_on",
     "relates_to",

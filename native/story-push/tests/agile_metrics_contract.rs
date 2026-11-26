@@ -10,6 +10,9 @@ static NEXT: AtomicUsize = AtomicUsize::new(0);
 const SOURCE: &str =
     "changelog `set status=` and `split into` lines in the backlog story files, day resolution";
 
+const SPRINT_SOURCE: &str = "changelog `set sprint=`, `set size=` and `set status=` lines in the backlog story files, day resolution, with sprint dates from settings team.sprintAnchor and team.sprints";
+const VELOCITY_DEFINITION: &str = "mean completed points per closed sprint over the last 3 closed sprints (closed: sprint end on or before the window end; points: size when the story entered the sprint; done: a status=done event inside the sprint dates), with min and max, and the same over the last 6";
+
 struct Backlog(PathBuf);
 impl Backlog {
     fn new() -> Self {
@@ -155,9 +158,13 @@ fn every_figure_names_its_source_window_and_units_and_the_gap_stays_unknown() {
                     "value": "unknown",
                     "units": "points per sprint",
                     "window": window,
-                    "source": "no sprint record is stored",
-                    "definition": "completed points per sprint",
-                    "unknown": [{"id": null, "reason": "no sprint record is stored"}]
+                    "source": SPRINT_SOURCE,
+                    "definition": VELOCITY_DEFINITION,
+                    "closed_sprints": 0,
+                    "sprints": [],
+                    "last_3": "unknown",
+                    "last_6": "unknown",
+                    "unknown": [{"id": null, "reason": "no sprint calendar in settings (team.sprintAnchor or team.sprints)"}]
                 }
             ]
         })

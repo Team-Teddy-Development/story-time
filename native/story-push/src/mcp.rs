@@ -971,6 +971,7 @@ fn summary(story: &Js, digest: Option<&String>) -> Value {
         "type": text(story.get("type")),
         "size": size,
         "epic": text(story.get("epic")),
+        "sprint": text(story.get("sprint")),
         "depends_on": depends_on,
         "labels": crate::blocked::labels(story),
         "remote_url": text(story.get("remote_url")),
@@ -1040,6 +1041,7 @@ struct Filter {
     status: Option<Vec<String>>,
     kind: Option<String>,
     epic: Option<String>,
+    sprint: Option<String>,
     labels: Option<Vec<String>>,
 }
 impl Filter {
@@ -1059,6 +1061,10 @@ impl Filter {
                 .epic
                 .as_deref()
                 .is_none_or(|e| field("epic") == Some(e))
+            && self
+                .sprint
+                .as_deref()
+                .is_none_or(|sprint| field("sprint") == Some(sprint))
             && self.labels.as_ref().is_none_or(|wanted| {
                 let have = crate::blocked::labels(story);
                 wanted.iter().all(|w| have.iter().any(|h| h == w))
@@ -1075,15 +1081,17 @@ impl Filter {
             labels.sort();
             labels.dedup();
         }
-        sha(json!({
+        let mut digest = json!({
             "repository": repository,
             "status": status,
             "type": self.kind,
             "epic": self.epic,
             "labels": labels,
-        })
-        .to_string()
-        .as_bytes())
+        });
+        if let Some(sprint) = &self.sprint {
+            digest["sprint"] = json!(sprint);
+        }
+        sha(digest.to_string().as_bytes())
     }
 }
 
@@ -1133,8 +1141,22 @@ fn story_list(server: &Server, args: &Map<String, Value>) -> Result<Value, ToolE
         status: strings(args, "status"),
         kind: args.get("type").and_then(Value::as_str).map(str::to_owned),
         epic: args.get("epic").and_then(Value::as_str).map(str::to_owned),
+        sprint: args
+            .get("sprint")
+            .and_then(Value::as_str)
+            .map(str::to_owned),
         labels: strings(args, "labels"),
     };
+    if let Some(sprint) = filter
+        .sprint
+        .as_deref()
+        .filter(|s| !crate::sprint::valid_id(s))
+    {
+        return Err(invalid(
+            "/sprint",
+            format!("/sprint must be YYYY-Snn, got \"{sprint}\"."),
+        ));
+    }
     let digest = filter.digest(&repo.root.key);
     let after = match args.get("cursor").and_then(Value::as_str) {
         Some(cursor) => Some(after(cursor, &digest)?),
@@ -1941,6 +1963,10 @@ const TOOLS: [Tool; 11] = [
                 kind: Kind::Text(64),
             },
             Field {
+                name: "sprint",
+                kind: Kind::Text(8),
+            },
+            Field {
                 name: "labels",
                 kind: Kind::List(&Kind::NonEmpty(64), 20),
             },
@@ -2418,6 +2444,7 @@ fn summary_schema() -> Value {
             "type",
             "size",
             "epic",
+            "sprint",
             "depends_on",
             "labels",
             "remote_url",
@@ -2431,6 +2458,7 @@ fn summary_schema() -> Value {
             "type": nullable_text,
             "size": {"type": ["number", "string", "null"]},
             "epic": nullable_text,
+            "sprint": nullable_text,
             "depends_on": texts(),
             "labels": texts(),
             "remote_url": nullable_text,
