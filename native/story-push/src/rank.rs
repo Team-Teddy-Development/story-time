@@ -1,11 +1,12 @@
-//! `story rank`: Weighted Shortest Job First over the ready stories, as Node's `rankBacklog` ranks them.
+//! `story rank`: Weighted Shortest Job First over the ready stories, as Node's `rankBacklog` ranks them,
+//! then the refined review queue, which Node does not print.
 
 use crate::{
     blocked,
     config::{self, Flags},
     js_number,
     lenient_story::Js,
-    list, table, Failure,
+    list, refined, table, Failure,
 };
 use std::cmp::Ordering;
 
@@ -238,9 +239,25 @@ pub fn run(args: &[String]) -> Result<String, Failure> {
                 ])
             })
             .collect();
+        let queue = refined::queue(&stories)
+            .iter()
+            .map(|w| {
+                obj(vec![
+                    ("id", w.story.get("id").clone()),
+                    ("title", w.story.get("title").clone()),
+                    (
+                        "refinedSince",
+                        w.since
+                            .map_or(Js::Undefined, |d| Js::Str(d.format("%Y-%m-%d").to_string())),
+                    ),
+                    ("days", w.days.map_or(Js::Undefined, |d| Js::Num(d as f64))),
+                ])
+            })
+            .collect();
         let json = obj(vec![
             ("ranked", Js::Arr(ranked)),
             ("excluded", Js::Arr(excluded)),
+            ("refinedQueue", Js::Arr(queue)),
         ]);
         return Ok(format!("{}\n", json.json()));
     }
@@ -271,6 +288,18 @@ pub fn run(args: &[String]) -> Result<String, Failure> {
                 e.story.get("id").string(),
                 e.reason,
                 e.story.get("title").string()
+            ));
+        }
+    }
+    let queue = refined::queue(&stories);
+    if !queue.is_empty() {
+        out.push_str("\nRefined review queue (oldest first; run story-ready on each):\n");
+        for w in &queue {
+            let age = w.days.map_or("age unknown".into(), |d| format!("{d} days"));
+            out.push_str(&format!(
+                "  {}  {age}  {}\n",
+                w.story.get("id").string(),
+                w.story.get("title").string()
             ));
         }
     }

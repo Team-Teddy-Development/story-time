@@ -287,6 +287,12 @@ fn team(t: &Value) -> Result<Value, String> {
         team.insert("velocity".into(), velocity.clone());
     }
     team.insert("wipLimit".into(), wip_limit);
+    if let Some(days) = present(prop(t, "refinedStaleDays")) {
+        if !positive_integer(days) {
+            return Err("team.refinedStaleDays must be a positive integer.".into());
+        }
+        team.insert("refinedStaleDays".into(), days.clone());
+    }
     if let Some(anchor) = present(prop(t, "sprintAnchor")) {
         team.insert("sprintAnchor".into(), sprint_anchor(anchor)?);
     }

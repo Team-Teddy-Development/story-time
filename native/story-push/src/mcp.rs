@@ -1272,6 +1272,7 @@ fn story_lint(server: &Server, args: &Map<String, Value>) -> Result<Value, ToolE
         root: Some(&repo.root.path),
         org: org.as_ref(),
         declared: server.declared(&repo.root.key),
+        refined_stale_days: lint::refined_stale_days(&repo.settings),
     };
     let (mut errors, mut warnings) = (0, 0);
     let mut results = Vec::new();

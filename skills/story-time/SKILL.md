@@ -136,7 +136,7 @@ part of either Rust push execution path.
 | `story check-pr [--body-file F] [--json]` | Check a PR's `Stories:` line, acceptance, and closing keywords (CI). Reads `PR_BODY`, `IS_INCIDENT`, `STORY_ACCEPTANCE`, `REPO`. Native Rust; read-only |
 | `story sync-merge [--all] [--from SHA] [--workflow F] [--json]` | Mirror merged cards to their issues and comment once per PR on each named issue (CI, after a push to the default branch; GitHub and Gitea). Native Rust |
 | `story lint [id...] [--json]` | INVEST / Definition of Ready check. Exit 1 if any story has errors. Native Rust; read-only |
-| `story rank [--limit N] [--include-refined]` | WSJF ranking of ready, unblocked stories, plus why others were excluded. Native Rust; read-only |
+| `story rank [--limit N] [--include-refined]` | WSJF ranking of ready, unblocked stories, why others were excluded, and the refined review queue, oldest first. Native Rust; read-only |
 | `story set <id> key=value... [--note N]` | Update fields with a changelog entry. `status=ready` is lint-gated. Native Rust |
 | `story note <id> "why"` | Log a prose edit (sections) in the changelog. Native Rust |
 | `story split <id> --from children.json` | Split into children atomically. A failure rolls everything back. Native Rust |
@@ -226,9 +226,9 @@ or a `fallback`, means you apply judgement yourself, per the
 ## Statuses
 
 `draft` → `refined` → `ready` → `in-progress` → `done`. Side exits: `split`
-(replaced by children) and `archived` (dropped). Only the **story-ready** skill
-moves a story to `ready`. Never pass `--force` to `story set` unless the user
-explicitly asks to bypass the gate.
+(replaced by children) and `archived` (dropped). Only **story-ready** moves a story
+to `ready`; it takes the refined review queue (`story rank`, `refined.stale`) first.
+Never pass `--force` to `story set` unless the user asks to bypass the gate.
 
 ## Scoring scale
 
