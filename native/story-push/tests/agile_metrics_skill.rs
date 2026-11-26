@@ -33,7 +33,7 @@ fn agile_metrics_reports_gaps_as_unknown_and_never_fills_them() {
     let text = skill("agile-metrics");
     position(&text, "Report a gap as `unknown`");
     position(&text, "Never fill a gap");
-    position(&text, "No sprint record is stored");
+    position(&text, "needs at least 3 closed sprints");
 }
 
 #[test]
@@ -53,4 +53,54 @@ fn agile_metrics_runs_no_write_command_and_uses_no_long_dashes() {
 #[test]
 fn the_router_sends_metrics_requests_to_agile_metrics() {
     assert!(skill("story-time").contains("**agile-metrics** skill"));
+}
+
+fn flat(name: &str) -> String {
+    skill(name).split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+#[test]
+fn the_router_has_a_row_for_burndown_forecast_and_when_will_it_be_done() {
+    let text = skill("story-time");
+    let row = text
+        .lines()
+        .find(|line| line.starts_with('|') && line.contains("\"burndown\""))
+        .expect("a route row for burndown");
+    for phrase in ["\"forecast\"", "\"when will it be done\""] {
+        assert!(
+            row.contains(phrase),
+            "the burndown row names {phrase}: {row}"
+        );
+    }
+    assert!(row.contains("**agile-metrics** skill"), "{row}");
+}
+
+#[test]
+fn agile_metrics_reports_velocity_burndown_and_forecast() {
+    let text = skill("agile-metrics");
+    position(&text, "story burndown");
+    position(&text, "story forecast");
+    position(&text, "story_velocity");
+    assert!(
+        !text.contains("always `unknown` today"),
+        "velocity is no longer always unknown"
+    );
+}
+
+#[test]
+fn sprint_planning_sizes_the_commitment_from_the_velocity_range() {
+    let text = flat("sprint-planning");
+    position(
+        &text,
+        "the budget comes from the velocity minimum to maximum over the last 3 closed sprints",
+    );
+    position(&text, "not the mean");
+    position(&text, "`sprint` through `story set`");
+}
+
+#[test]
+fn sprint_review_shows_the_burndown_and_committed_against_done() {
+    let text = flat("sprint-review");
+    position(&text, "`story burndown --sprint`");
+    position(&text, "committed against done from `story sprint show`");
 }
