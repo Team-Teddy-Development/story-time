@@ -221,6 +221,16 @@ fn truthy(v: Option<&Value>) -> bool {
         _ => true,
     }
 }
+/// Appends the story's frontmatter `labels` (such as `blocked`) that `labels` lacks.
+fn with_frontmatter_labels(labels: &mut Vec<String>, story: &Value) {
+    let extra = story.get("labels").and_then(Value::as_array);
+    for label in extra.into_iter().flatten().filter_map(Value::as_str) {
+        let label = label.trim();
+        if !label.is_empty() && !labels.iter().any(|l| l == label) {
+            labels.push(label.to_owned());
+        }
+    }
+}
 fn lead(s: &Value) -> String {
     if string(s, "type") == "spike" {
         let mut out = format!("### Question\n{}", section(s, "Question"));
@@ -356,14 +366,7 @@ pub fn render_card(story: &Value, tracker: &str, config: &Value) -> Result<Value
             if truthy(story.get("epic")) {
                 labels.push(format!("epic:{}", display(&story["epic"])));
             }
-            if let Some(extra) = story.get("labels").and_then(|v| v.as_array()) {
-                for label in extra.iter().filter_map(Value::as_str) {
-                    let label = label.trim();
-                    if !label.is_empty() && !labels.iter().any(|l| l == label) {
-                        labels.push(label.to_owned());
-                    }
-                }
-            }
+            with_frontmatter_labels(&mut labels, story);
             let body = format!("{}\n\n{}", markdown_body(story), footer(story));
             let text = format!(
                 "**Title:** {title}\n**Labels:** {}\n\n{body}",
@@ -494,6 +497,7 @@ fn ado_fields(s: &Value, config: &Value) -> Result<Vec<Value>, String> {
     if truthy(s.get("epic")) {
         tags.push(format!("epic:{}", display(&s["epic"])));
     }
+    with_frontmatter_labels(&mut tags, s);
     fields.push(json!({"name":"Tags","value":tags.join("; "),"ref":"System.Tags"}));
     for (key, name, reference) in [
         ("areaPath", "Area Path", "System.AreaPath"),
@@ -740,6 +744,13 @@ mod tests {
             assert_eq!(field(&card, "Work Item Type"), kind);
             assert_eq!(field(&card, points), "3");
             assert_eq!(field(&card, "Tags"), "story-time; ST-001; epic:EP-1");
+            let mut blocked = s.clone();
+            blocked["labels"] = json!(["blocked", "epic:EP-1"]);
+            let tagged = render_card(&blocked, "ado", &cfg).unwrap();
+            assert_eq!(
+                field(&tagged, "Tags"),
+                "story-time; ST-001; epic:EP-1; blocked"
+            );
             assert_eq!(field(&card, "Area Path"), "Shop\\Web");
             if process == "basic" {
                 assert!(field(&card, "Acceptance Criteria").is_null());
