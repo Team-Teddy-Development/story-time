@@ -227,9 +227,8 @@ or a `fallback`, means you apply judgement yourself, per the
 
 `draft` → `refined` → `ready` → `in-progress` → `done`. Side exits: `split`
 (replaced by children) and `archived` (dropped). Only the **story-ready** skill
-moves a story to `ready`, taking the refined review queue first (`story rank`,
-oldest first; lint `refined.stale` after `team.refinedStaleDays`, default 7).
-Never pass `--force` to `story set` unless the user asks to bypass the gate.
+moves a story to `ready`, taking the refined review queue first (`story rank`;
+lint `refined.stale`). Never pass `--force` unless the user asks to bypass it.
 
 ## Scoring scale
 
