@@ -93,6 +93,19 @@ fn target(clone: &str, allow_http: bool) -> Result<Option<Target>, String> {
     }))
 }
 
+/// The REST API base and the host name of the Gitea that serves `clone`. The API is at
+/// `/api/v1` of the origin. `None` for a URL that takes no token: a `file` URL.
+pub(super) fn gitea_api(clone: &str, allow_http: bool) -> Result<Option<(String, String)>, String> {
+    Ok(target(clone, allow_http)?.map(|target| {
+        let authority = target.origin.split_once("://").map_or("", |(_, rest)| rest);
+        let host = authority
+            .rsplit_once(':')
+            .filter(|(_, port)| port.bytes().all(|b| b.is_ascii_digit()))
+            .map_or(authority, |(host, _)| host);
+        (format!("{}/api/v1", target.origin), host.to_owned())
+    }))
+}
+
 /// The owner and name in the last two steps of a clone URL's path.
 fn named(path: &str) -> Result<(String, String), String> {
     let mut steps = path.trim_end_matches('/').rsplit('/');
@@ -325,6 +338,11 @@ impl Gitea {
             token: token.to_owned(),
             client,
         })
+    }
+
+    /// The token, for the `Authorization` header of the REST API.
+    pub(super) fn token(&self) -> &str {
+        &self.token
     }
 
     pub(super) fn api(
@@ -689,5 +707,26 @@ mod tests {
             error,
             "GitHub answered the installation request with status 404"
         );
+    }
+
+    #[test]
+    fn the_gitea_api_is_at_the_origin_of_the_clone() {
+        let api = |clone: &str, plain| gitea_api(clone, plain).unwrap();
+        assert_eq!(
+            api("http://192.168.1.56:30003/team-teddy/xanthos.git", true),
+            Some((
+                "http://192.168.1.56:30003/api/v1".into(),
+                "192.168.1.56".into()
+            ))
+        );
+        assert_eq!(
+            api("https://gitea.example/o/r.git", false),
+            Some((
+                "https://gitea.example/api/v1".into(),
+                "gitea.example".into()
+            ))
+        );
+        assert_eq!(api("file:///srv/o/r.git", false), None);
+        assert!(gitea_api("http://192.168.1.56:30003/o/r.git", false).is_err());
     }
 }

@@ -158,6 +158,10 @@ pub(super) fn run(
     if named.is_some_and(|id| !valid_id(id) || !registry::branch_ok(&branch(id))) {
         return Err(fail("invalid_story_id", "That is not a story id."));
     }
+    // A missing credential is a fault of the server, so it is refused before a fetch or a push.
+    workspace
+        .can_write(&key)
+        .map_err(|reason| fail("forge_not_supported", reason))?;
     let writing = workspace
         .write(&key)
         .map_err(|refusal| refused(refusal, &key, None))?;
@@ -269,7 +273,7 @@ pub(super) fn run(
                     format!("Stories: {id}")
                 };
                 let body = format!(
-                    "{line}\n\nstory-time proposes a change to `{path}`. Client `{client}` asked for it through the story-time MCP server.\n"
+                    "{line}\n\n## Change\n\nUpdate `{path}` at the request of `{client}` through the Story Time MCP server.\n\n## Verification\n\nSee the pull request checks for results.\n"
                 );
                 match writing.create_pull(&branch, &title, &body) {
                     Ok(url) => url,

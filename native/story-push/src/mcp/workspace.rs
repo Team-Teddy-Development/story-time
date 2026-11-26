@@ -5,7 +5,7 @@
 //! commands. A repository that the server cannot reach does not stop the other repositories.
 
 use super::{
-    forge::{self, GitHub},
+    forge::{self, Rest},
     forge_auth::{self, App, Gitea},
     registry::{branch_ok, Forge, Registry, RegistryRepo},
     retry,
@@ -45,7 +45,10 @@ pub(super) struct Workspace {
     /// The bot token that reads a Gitea repository. Without it a Gitea repository is read
     /// without a credential.
     gitea: Option<Gitea>,
-    forge: Option<GitHub>,
+    /// The REST client of GitHub. It exists when there is an App.
+    forge: Option<Rest>,
+    /// The REST client of each repository on Gitea, at the API of its own origin.
+    gitea_rest: Vec<Option<Rest>>,
     secrets: Secrets,
     slots: Vec<Mutex<Slot>>,
     /// One lock for each repository, held for the whole of a write: fetch, commit, push, and
@@ -207,7 +210,7 @@ pub(super) fn launch(
         }
     };
     let forge = match &app {
-        Some(_) => Some(GitHub::new(api).map_err(|e| refuse(format!("{e}.")))?),
+        Some(_) => Some(Rest::github(api).map_err(|e| refuse(format!("{e}.")))?),
         None => None,
     };
     let gitea = match flags.get("gitea-token-file") {
@@ -247,7 +250,7 @@ impl Workspace {
         registry: Registry,
         data: &Path,
         (app, gitea): (Option<App>, Option<Gitea>),
-        forge: Option<GitHub>,
+        forge: Option<Rest>,
         secrets: Secrets,
     ) -> Result<Self, String> {
         let made = |path: PathBuf| {
@@ -272,6 +275,17 @@ impl Workspace {
         for name in ["repos", "trees", "home", "tmp"] {
             made(data.join(name))?;
         }
+        let gitea_rest = registry
+            .repos
+            .iter()
+            .map(|repo| match repo.forge {
+                Forge::Gitea => forge_auth::gitea_api(&repo.clone, repo.allow_http)
+                    .ok()
+                    .flatten()
+                    .and_then(|(api, _)| Rest::gitea(&api).ok()),
+                Forge::GitHub => None,
+            })
+            .collect();
         let workspace = Self {
             slots: registry.repos.iter().map(|_| Mutex::default()).collect(),
             status: registry.repos.iter().map(|_| Mutex::default()).collect(),
@@ -284,6 +298,7 @@ impl Workspace {
             app,
             gitea,
             forge,
+            gitea_rest,
             secrets,
             next: AtomicU64::new(0),
         };
@@ -460,16 +475,21 @@ impl Workspace {
         line.chars().take(ERROR_LIMIT).collect()
     }
 
-    /// Fetches `repo`, after making its bare clone when there is none.
-    fn fetch(&self, repo: &RegistryRepo, slot: &mut Slot) -> Result<(), String> {
-        let bare = self.bare(repo);
-        let access = match (repo.forge, &self.app, &self.gitea) {
+    /// What a `git` child needs to reach `repo`, with the credential of its own forge.
+    fn git_access(&self, repo: &RegistryRepo) -> Result<forge_auth::Access, String> {
+        Ok(match (repo.forge, &self.app, &self.gitea) {
             (Forge::GitHub, Some(app), _) => app.git_environment(&repo.clone)?,
             (Forge::Gitea, _, Some(gitea)) => {
                 gitea.git_environment(&repo.clone, repo.allow_http)?
             }
             _ => Default::default(),
-        };
+        })
+    }
+
+    /// Fetches `repo`, after making its bare clone when there is none.
+    fn fetch(&self, repo: &RegistryRepo, slot: &mut Slot) -> Result<(), String> {
+        let bare = self.bare(repo);
+        let access = self.git_access(repo)?;
         if access.secrets != slot.secrets {
             let mut secrets = self.secrets.write().unwrap_or_else(|e| e.into_inner());
             secrets.retain(|secret| !slot.secrets.contains(secret));
@@ -677,10 +697,25 @@ impl Workspace {
         outcome.map(|()| tree)
     }
 
-    /// Whether this server can change stories: it has a GitHub App to push and to open pull
-    /// requests with.
+    /// Whether this server can change stories: it has a GitHub App or a Gitea bot token to push
+    /// and to open pull requests with.
     pub(super) fn writes(&self) -> bool {
-        self.app.is_some() && self.forge.is_some()
+        (self.app.is_some() && self.forge.is_some()) || self.gitea.is_some()
+    }
+
+    /// Whether this server has the credential to propose a change to the repository `key`.
+    /// `Err` says what is missing, without a secret.
+    pub(super) fn can_write(&self, key: &str) -> Result<(), &'static str> {
+        match self.registry.repos[self.index(key).ok_or("the repository is not registered")?].forge
+        {
+            Forge::GitHub if self.app.is_none() || self.forge.is_none() => {
+                Err("This server has no GitHub App, so it cannot propose changes to a GitHub repository.")
+            }
+            Forge::Gitea if self.gitea.is_none() => {
+                Err("This server has no Gitea bot token, so it cannot propose changes to a Gitea repository.")
+            }
+            _ => Ok(()),
+        }
     }
 
     fn index(&self, key: &str) -> Option<usize> {
@@ -728,8 +763,32 @@ impl Workspace {
         })
     }
 
-    /// The forge token of a repository. It joins `Secrets`, and the token it replaces leaves.
+    /// The REST client that serves the repository `index`.
+    fn rest(&self, index: usize) -> Result<&Rest, String> {
+        match self.registry.repos[index].forge {
+            Forge::GitHub => self.forge.as_ref().ok_or("the server has no GitHub App"),
+            Forge::Gitea => self.gitea_rest[index]
+                .as_ref()
+                .ok_or("the clone URL has no Gitea API"),
+        }
+        .map_err(str::to_owned)
+    }
+
+    /// The forge token of a repository. For GitHub it joins `Secrets`, and the token it replaces
+    /// leaves. The Gitea token joined `Secrets` at the start.
     fn forge_access(&self, index: usize) -> Result<forge::Access, String> {
+        if self.registry.repos[index].forge == Forge::Gitea {
+            let gitea = self
+                .gitea
+                .as_ref()
+                .ok_or("the server has no Gitea bot token")?;
+            let (owner, name) = forge_auth::repository(&self.registry.repos[index].clone)?;
+            return Ok(forge::Access {
+                owner,
+                name,
+                token: gitea.token().to_owned(),
+            });
+        }
         let app = self.app.as_ref().ok_or("the server has no GitHub App")?;
         let (owner, name) = forge_auth::repository(&self.registry.repos[index].clone)?;
         let token = app.token(&owner, &name)?;
@@ -749,11 +808,10 @@ impl Workspace {
     pub(super) fn forge<T>(
         &self,
         key: &str,
-        call: impl FnOnce(&GitHub, &forge::Access) -> Result<T, String>,
+        call: impl FnOnce(&Rest, &forge::Access) -> Result<T, String>,
     ) -> Result<T, String> {
         let index = self.index(key).ok_or("the repository is not registered")?;
-        let forge = self.forge.as_ref().ok_or("the server has no GitHub App")?;
-        call(forge, &self.forge_access(index)?)
+        call(self.rest(index)?, &self.forge_access(index)?)
     }
 
     /// The login and the numeric user id of the App's bot, asked of the forge once.
@@ -775,7 +833,7 @@ impl Workspace {
     /// answer, the last answer for this head stands.
     pub(super) fn proposal(&self, key: &str, branch: &str) -> Option<(String, String)> {
         let index = self.index(key)?;
-        // The GitHub App has no installation on a Gitea repository.
+        // A read of a story does not ask Gitea for its pull request yet.
         if self.registry.repos[index].forge == Forge::Gitea {
             return None;
         }
@@ -789,10 +847,9 @@ impl Workspace {
             known.is_some_and(|known| known.at.elapsed() < ttl),
         );
         if !current {
-            let asked = self.forge_access(index).and_then(|access| {
-                let forge = self.forge.as_ref().ok_or("no forge")?;
-                forge.open_pull(&access, branch)
-            });
+            let asked = self
+                .forge_access(index)
+                .and_then(|access| self.rest(index)?.open_pull(&access, branch));
             match asked {
                 Ok(url) => {
                     let found = Proposal {
@@ -933,7 +990,17 @@ impl Writing<'_> {
             .data
             .join("tmp")
             .join(format!("index.{}.{n}", self.repo().key));
-        let email = format!("{author}@users.noreply.github.com");
+        let email = match self.repo().forge {
+            Forge::GitHub => format!("{author}@users.noreply.github.com"),
+            // The form that Gitea gives its own users, which is not a GitHub address.
+            Forge::Gitea => {
+                let host = forge_auth::gitea_api(&self.repo().clone, self.repo().allow_http)
+                    .ok()
+                    .flatten()
+                    .map_or_else(|| "localhost".to_owned(), |(_, host)| host);
+                format!("{author}@noreply.{host}")
+            }
+        };
         let mut environment = vec![(
             "GIT_INDEX_FILE".to_owned(),
             index.to_string_lossy().into_owned(),
@@ -971,10 +1038,7 @@ impl Writing<'_> {
         expected: &str,
     ) -> Result<Pushed, String> {
         let workspace = self.workspace;
-        let access = match &workspace.app {
-            Some(app) => app.git_environment(&self.repo().clone)?,
-            None => Default::default(),
-        };
+        let access = workspace.git_access(self.repo())?;
         let reference = format!("refs/heads/{branch}");
         let lease = format!("--force-with-lease={reference}:{expected}");
         let refspec = format!("{source}:{reference}");
@@ -1024,17 +1088,17 @@ impl Writing<'_> {
 
     /// The name of the bot that is the author of this server's commits.
     pub(super) fn author(&self) -> String {
-        match &self.workspace.app {
-            Some(app) => app.bot(),
-            None => "story-time[bot]".into(),
+        match (&self.repo().forge, &self.workspace.app) {
+            (Forge::GitHub, Some(app)) => app.bot(),
+            (Forge::GitHub, None) => "story-time[bot]".into(),
+            (Forge::Gitea, _) => "story-time".into(),
         }
     }
 
     /// The URL of the open pull request of `branch`, asked of the forge now.
     pub(super) fn open_pull(&self, branch: &str) -> Result<Option<String>, String> {
         let access = self.workspace.forge_access(self.index)?;
-        let forge = self.workspace.forge.as_ref().ok_or("no forge")?;
-        forge.open_pull(&access, branch)
+        self.workspace.rest(self.index)?.open_pull(&access, branch)
     }
 
     /// Opens the pull request of `branch` to the default branch, and returns its URL.
@@ -1045,8 +1109,13 @@ impl Writing<'_> {
         body: &str,
     ) -> Result<String, String> {
         let access = self.workspace.forge_access(self.index)?;
-        let forge = self.workspace.forge.as_ref().ok_or("no forge")?;
-        forge.create_pull(&access, branch, &self.default_branch, title, body)
+        self.workspace.rest(self.index)?.create_pull(
+            &access,
+            branch,
+            &self.default_branch,
+            title,
+            body,
+        )
     }
 
     /// Records the pull request of `branch` at `head`, so that the next read names it.
