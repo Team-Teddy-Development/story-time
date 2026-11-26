@@ -60,7 +60,7 @@ struct Rule {
     check: fn(&Js, &Context) -> Found,
 }
 
-const RULES: [Rule; 20] = [
+const RULES: [Rule; 21] = [
     rule("title.present", "N", title_present),
     rule("statement.format", "V", statement_format),
     rule("statement.benefit", "V", statement_benefit),
@@ -85,6 +85,7 @@ const RULES: [Rule; 20] = [
     rule("spike.question", "T", spike_question),
     rule("spike.unblocks", "V", spike_unblocks),
     rule("state_machine.exists", "T", state_machine_exists),
+    rule("sprint.format", "E", sprint_format),
 ];
 
 const fn rule(id: &'static str, invest: &'static str, check: fn(&Js, &Context) -> Found) -> Rule {
@@ -613,6 +614,17 @@ fn links_undeclared_prefix(s: &Js, ctx: &Context) -> Found {
             ),
         )]),
         _ => Ok(Vec::new()),
+    }
+}
+
+fn sprint_format(s: &Js, _: &Context) -> Found {
+    match s.get("sprint") {
+        Js::Undefined => none(),
+        Js::Str(id) if crate::sprint::valid_id(id) => none(),
+        other => err(format!(
+            "sprint must be YYYY-Snn (for example 2026-S23), got \"{}\".",
+            other.string()
+        )),
     }
 }
 

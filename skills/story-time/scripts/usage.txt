@@ -6,7 +6,7 @@ Commands:
   new    --title T [--type story|spike|bug|chore] [--statement S] [--ac A]... [--epic E]
          [--persona P] [--size N] [--value N] [--time-criticality N] [--risk-reduction N]
          [--timebox 2d] [--question Q] [--prefix ST]
-  list   [--status S]                      List stories
+  list   [--status S] [--sprint ID]        List stories
   show   <id>                              Print a story file
   lint   [id...]                           INVEST / Definition of Ready check (exit 1 on errors)
   rank   [--limit N] [--include-refined]   WSJF-ranked ready stories, with exclusions
@@ -39,7 +39,9 @@ Commands:
   issues --state open [--limit 200] [--json]
                                            Native: list open Gitea tracker issues (GET only; never prints the token)
   metrics --from YYYY-MM-DD --to YYYY-MM-DD [--json]
-                                           Native: throughput, WIP, and cycle time from changelog status events; read-only
+                                           Native: throughput, WIP, cycle time and velocity from changelog events; read-only
+  sprint show <YYYY-Snn> [--json]
+                                           Native: a sprint's dates, committed set, scope changes and done set; read-only
   check-pr [--body-file F] [--json]
                                            Native: check a PR's Stories: line, acceptance, and closing keywords (CI)
   sync-merge [--all] [--from SHA] [--workflow F] [--json]

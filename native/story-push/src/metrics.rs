@@ -1,20 +1,22 @@
 //! `story metrics --from YYYY-MM-DD --to YYYY-MM-DD [--json]`: read-only delivery figures from changelog status events.
 
+use crate::sprint::{self, Calendar, StoryLog};
 use crate::{config, lenient_story, list, Failure};
 use chrono::NaiveDate;
 use serde_json::{json, Value};
-use std::{fs, path::Path};
+use std::{collections::BTreeSet, fs, path::Path};
 
 const SOURCE: &str =
     "changelog `set status=` and `split into` lines in the backlog story files, day resolution";
-const NO_SPRINT: &str = "no sprint record is stored";
+const SPRINT_SOURCE: &str = "changelog `set sprint=`, `set size=` and `set status=` lines in the backlog story files, day resolution, with sprint dates from settings team.sprintAnchor and team.sprints";
+const NO_CALENDAR: &str = "no sprint calendar in settings (team.sprintAnchor or team.sprints)";
 const USAGE: &str = "Usage: story metrics --from YYYY-MM-DD --to YYYY-MM-DD [--json]";
 
-/// A story's status events in changelog order, or the reason its history cannot be trusted.
-struct History {
-    id: String,
-    events: Vec<(NaiveDate, String)>,
-    gap: Option<String>,
+/// A story's changelog events in file order, or the reason its history cannot be trusted.
+pub(crate) struct History {
+    pub(crate) id: String,
+    pub(crate) log: StoryLog,
+    pub(crate) gap: Option<String>,
 }
 
 pub fn run(args: &[String]) -> Result<String, Failure> {
@@ -40,7 +42,8 @@ pub fn run(args: &[String]) -> Result<String, Failure> {
     let settings =
         config::parse(&loaded.raw).map_err(|e| format!("{}: {e}", loaded.path.display()))?;
     let dir = list::backlog_dir(flags.value("dir"), &loaded.root, &settings)?;
-    let report = report(&histories(&dir)?, from, to);
+    let calendar = Calendar::from_settings(&settings);
+    let report = report(&histories(&dir)?, calendar.as_ref(), from, to);
     Ok(if flags.has("json") {
         format!("{}\n", serde_json::to_string_pretty(&report).unwrap())
     } else {
@@ -48,7 +51,7 @@ pub fn run(args: &[String]) -> Result<String, Failure> {
     })
 }
 
-fn histories(dir: &Path) -> Result<Vec<History>, String> {
+pub(crate) fn histories(dir: &Path) -> Result<Vec<History>, String> {
     let mut ids: Vec<String> = fs::read_dir(dir)
         .map_err(|e| format!("{}: {e}", dir.display()))?
         .filter_map(|entry| {
@@ -65,7 +68,7 @@ fn histories(dir: &Path) -> Result<Vec<History>, String> {
                 Ok(parsed) => history(id, &parsed.to_value()),
                 Err(e) => History {
                     id,
-                    events: Vec::new(),
+                    log: StoryLog::default(),
                     gap: Some(format!("story file does not parse: {e}")),
                 },
             })
@@ -73,37 +76,61 @@ fn histories(dir: &Path) -> Result<Vec<History>, String> {
         .collect()
 }
 
-/// Reads `- DATE set k=v, status=S — note` and `- DATE split into ...` lines; a status named only in the note is not an event.
+/// Reads `- DATE set k=v, status=S — note` and `- DATE split into ...` lines. A status named only
+/// in the note is not an event. `sprint=` and `size=` are read from the same assignments.
 fn history(id: String, parsed: &Value) -> History {
-    let log = parsed["sections"]["Changelog"].as_str().unwrap_or("");
-    let events: Vec<(NaiveDate, String)> = log
-        .lines()
-        .filter_map(|line| {
-            let (date, rest) = line.strip_prefix("- ")?.split_once(' ')?;
-            let date = NaiveDate::parse_from_str(date, "%Y-%m-%d").ok()?;
-            if rest.starts_with("split into ") {
-                return Some((date, "split".to_owned()));
+    let text = parsed["sections"]["Changelog"].as_str().unwrap_or("");
+    let mut log = StoryLog::default();
+    for line in text.lines() {
+        let Some((date, rest)) = line.strip_prefix("- ").and_then(|l| l.split_once(' ')) else {
+            continue;
+        };
+        let Ok(date) = NaiveDate::parse_from_str(date, "%Y-%m-%d") else {
+            continue;
+        };
+        if rest.starts_with("split into ") {
+            log.status.push((date, "split".to_owned()));
+            continue;
+        }
+        let Some(assignments) = rest
+            .strip_prefix("set ")
+            .and_then(|r| r.split(" \u{2014} ").next())
+        else {
+            continue;
+        };
+        for pair in assignments.split(", ") {
+            let pair = pair.trim();
+            if let Some(status) = pair.strip_prefix("status=") {
+                log.status.push((date, status.to_owned()));
+            } else if let Some(sprint) = pair.strip_prefix("sprint=") {
+                log.sprint.push((
+                    date,
+                    Some(sprint).filter(|s| !s.is_empty()).map(str::to_owned),
+                ));
+            } else if let Some(size) = pair.strip_prefix("size=") {
+                log.size
+                    .push((date, size.parse::<f64>().ok().filter(|n| n.is_finite())));
             }
-            let assignments = rest.strip_prefix("set ")?.split(" \u{2014} ").next()?;
-            let status = assignments
-                .split(", ")
-                .find_map(|pair| pair.trim().strip_prefix("status="))?;
-            Some((date, status.to_owned()))
-        })
-        .collect();
+        }
+    }
     let status = parsed["status"].as_str().unwrap_or("");
-    let consistent = match events.last() {
+    let consistent = match log.status.last() {
         Some((_, last)) => last == status,
         None => status == "draft",
     };
     History {
         id,
-        events,
+        log,
         gap: (!consistent).then(|| format!("status {status} has no matching changelog event")),
     }
 }
 
-fn report(stories: &[History], from: NaiveDate, to: NaiveDate) -> Value {
+fn report(
+    stories: &[History],
+    calendar: Option<&Calendar>,
+    from: NaiveDate,
+    to: NaiveDate,
+) -> Value {
     let window = format!("{from}..{to}");
     let in_window = |d: &NaiveDate| (from..=to).contains(d);
     let gaps: Vec<Value> = stories
@@ -116,7 +143,8 @@ fn report(stories: &[History], from: NaiveDate, to: NaiveDate) -> Value {
         .iter()
         .filter_map(|s| {
             let at = s
-                .events
+                .log
+                .status
                 .iter()
                 .position(|(d, st)| st == "done" && in_window(d))?;
             Some((*s, at))
@@ -125,7 +153,8 @@ fn report(stories: &[History], from: NaiveDate, to: NaiveDate) -> Value {
     let wip: Vec<&str> = trusted
         .iter()
         .filter(|s| {
-            s.events
+            s.log
+                .status
                 .iter()
                 .rev()
                 .find(|(d, _)| *d <= to)
@@ -139,8 +168,10 @@ fn report(stories: &[History], from: NaiveDate, to: NaiveDate) -> Value {
     let per_story: Vec<Value> = done
         .iter()
         .map(|(s, at)| {
-            let (finished, _) = s.events[*at];
-            let started = s.events[..*at].iter().find(|(_, st)| st == "in-progress");
+            let (finished, _) = s.log.status[*at];
+            let started = s.log.status[..*at]
+                .iter()
+                .find(|(_, st)| st == "in-progress");
             match started {
                 Some((started, _)) => {
                     let days = (finished - *started).num_days();
@@ -191,20 +222,111 @@ fn report(stories: &[History], from: NaiveDate, to: NaiveDate) -> Value {
     );
     cycle["per_story"] = json!(per_story);
     cycle["unknown"] = json!(cycle_unknown);
-    let mut velocity = figure(
-        "velocity",
-        json!("unknown"),
-        "points per sprint",
-        "completed points per sprint",
-    );
-    velocity["source"] = json!(NO_SPRINT);
-    velocity["unknown"] = json!([{"id": null, "reason": NO_SPRINT}]);
+    let velocity = velocity(stories, calendar, from, to);
 
     json!({
         "window": window,
         "source": SOURCE,
         "figures": [throughput, in_progress, cycle, velocity],
     })
+}
+
+/// Completed points per closed sprint. A sprint is closed when its end is on or before `to`, and
+/// the window start does not apply: the figure looks back over every closed sprint. Each sprint
+/// counts the points its stories had when they entered it, so a re-estimate never rewrites it.
+fn velocity(
+    stories: &[History],
+    calendar: Option<&Calendar>,
+    from: NaiveDate,
+    to: NaiveDate,
+) -> Value {
+    let mut figure = json!({
+        "metric": "velocity",
+        "value": "unknown",
+        "units": "points per sprint",
+        "window": format!("{from}..{to}"),
+        "source": SPRINT_SOURCE,
+        "definition": "mean completed points per closed sprint over the last 3 closed sprints (closed: sprint end on or before the window end; points: size when the story entered the sprint; done: a status=done event inside the sprint dates), with min and max, and the same over the last 6",
+    });
+    let mut sprint_unknown: Vec<Value> = Vec::new();
+    let mut known: Vec<(sprint::Sprint, f64)> = Vec::new();
+    let trusted: Vec<&History> = stories.iter().filter(|s| s.gap.is_none()).collect();
+    if let Some(calendar) = calendar {
+        let ids: BTreeSet<&str> = trusted
+            .iter()
+            .flat_map(|s| s.log.sprint.iter().filter_map(|(_, id)| id.as_deref()))
+            .collect();
+        let mut closed = Vec::new();
+        for id in ids {
+            match calendar.resolve(id) {
+                Ok(sprint) if sprint.end <= to => closed.push(sprint),
+                Ok(_) => {}
+                Err(reason) => sprint_unknown.push(json!({"id": id, "reason": reason})),
+            }
+        }
+        closed.sort_by(|a, b| (a.start, &a.id).cmp(&(b.start, &b.id)));
+        for sprint in closed {
+            let derived = sprint::derive(&sprint, trusted.iter().map(|s| (s.id.as_str(), &s.log)));
+            let reason = if !derived.had_members() {
+                "no story was in the sprint by its end".to_owned()
+            } else {
+                match derived.completed() {
+                    Ok(points) => {
+                        known.push((sprint, points));
+                        continue;
+                    }
+                    Err(ids) => format!(
+                        "completed stories have no size at commitment: {}",
+                        ids.join(", ")
+                    ),
+                }
+            };
+            sprint_unknown.push(json!({"id": sprint.id, "reason": reason}));
+        }
+    }
+    let count = known.len();
+    let points: Vec<f64> = known.iter().map(|(_, p)| *p).collect();
+    let stat = |n: usize| match sprint::stat(&points, n) {
+        Some(s) => {
+            json!({"sprints": s.sprints, "mean": number(s.mean), "min": number(s.min), "max": number(s.max)})
+        }
+        None => json!("unknown"),
+    };
+    figure["closed_sprints"] = json!(count);
+    figure["sprints"] = json!(known
+        .iter()
+        .map(|(s, p)| json!({"id": s.id, "start": s.start.to_string(), "end": s.end.to_string(), "completed_points": number(*p)}))
+        .collect::<Vec<_>>());
+    figure["last_3"] = stat(3);
+    figure["last_6"] = stat(6);
+    if figure["last_3"] != json!("unknown") {
+        figure["value"] = figure["last_3"]["mean"].clone();
+    }
+    if let Some((first, _)) = known.first() {
+        figure["window"] = json!(format!("{}..{to}", first.start));
+    }
+    let mut unknown = Vec::new();
+    if calendar.is_none() {
+        unknown.push(json!({"id": null, "reason": NO_CALENDAR}));
+    } else if count < 3 {
+        let plural = if count == 1 { "" } else { "s" };
+        unknown.push(json!({"id": null, "reason": format!("{count} closed sprint{plural} with known points; velocity needs at least 3")}));
+    } else if count < 6 {
+        unknown.push(json!({"id": null, "reason": format!("last_6 needs 6 closed sprints with known points, found {count}")}));
+    }
+    unknown.extend(sprint_unknown);
+    figure["unknown"] = json!(unknown);
+    figure
+}
+
+/// A whole number as an integer, anything else rounded to two places.
+pub(crate) fn number(n: f64) -> Value {
+    let n = (n * 100.0).round() / 100.0;
+    if n.fract() == 0.0 {
+        json!(n as i64)
+    } else {
+        json!(n)
+    }
 }
 
 fn median(days: &mut [i64]) -> Value {
@@ -248,6 +370,26 @@ fn text(report: &Value) -> String {
         for row in f["per_story"].as_array().into_iter().flatten() {
             if row["days"].is_number() {
                 out += &format!("  {} {} days\n", plain(&row["id"]), row["days"]);
+            }
+        }
+        for row in f["sprints"].as_array().into_iter().flatten() {
+            out += &format!(
+                "  {} {} to {}: {} points\n",
+                plain(&row["id"]),
+                plain(&row["start"]),
+                plain(&row["end"]),
+                plain(&row["completed_points"]),
+            );
+        }
+        for key in ["last_3", "last_6"] {
+            if f[key].is_object() {
+                out += &format!(
+                    "  {key}: mean {}, min {}, max {} over {} sprints\n",
+                    plain(&f[key]["mean"]),
+                    plain(&f[key]["min"]),
+                    plain(&f[key]["max"]),
+                    plain(&f[key]["sprints"]),
+                );
             }
         }
         for gap in f["unknown"].as_array().into_iter().flatten() {

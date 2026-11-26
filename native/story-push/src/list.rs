@@ -170,7 +170,7 @@ pub(crate) fn collation_key(id: &str, numeric: bool) -> (Vec<Primary>, Vec<bool>
     (primary, tertiary)
 }
 
-/// `story list [--status S] [--dir D] [--config C] [--json]`.
+/// `story list [--status S] [--sprint ID] [--dir D] [--config C] [--json]`.
 pub fn run(args: &[String]) -> Result<String, Failure> {
     let flags = Flags::parse(args)?;
     let loaded = config::load(flags.value("config"))?;
@@ -178,7 +178,10 @@ pub fn run(args: &[String]) -> Result<String, Failure> {
         config::parse(&loaded.raw).map_err(|e| format!("{}: {e}", loaded.path.display()))?;
     let dir = backlog_dir(flags.value("dir"), &loaded.root, &settings)?;
     let status = flags.value("status").filter(|s| !s.is_empty());
-    let stories = stories(&dir, status)?;
+    let mut stories = stories(&dir, status)?;
+    if let Some(sprint) = flags.value("sprint").filter(|s| !s.is_empty()) {
+        stories.retain(|s| *s.get("sprint") == Js::Str(sprint.into()));
+    }
     if flags.has("json") {
         return Ok(format!("{}\n", Js::Arr(stories).json()));
     }
