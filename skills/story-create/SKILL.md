@@ -22,11 +22,33 @@ If the input doesn't give you persona or benefit, ask. Ask at most three
 short questions at once and offer your best guess for each so the user can
 just confirm. Do not invent a benefit to fill the slot.
 
-## 2. Check for duplicates
+## 2. Check for duplicates and shipped work
 
-Run `story list --json` and compare titles and statements. If an existing
-story covers the same need, hand off to the **story-edit** skill instead of
-creating a near-duplicate. Tell the user which story it is.
+Before running `story new` or calling `story_create`, check all three sources:
+
+1. Read `story config --json`. For a GitHub tracker, search the configured
+   repository for merged PRs with the request's keywords:
+   `gh pr list --state merged --search "$keywords" --repo "$tracker_repo"`.
+   If the tracker is not GitHub, `gh` is not signed in, or the search fails,
+   report **Merged PR search: not run** with the reason. Do not report no evidence.
+2. Run `story list --json` and compare titles and statements, including `done`
+   and `archived` stories. If an existing open story covers the same need,
+   name it and hand off to **story-edit** instead of creating a duplicate.
+3. Search the repository code for the route, screen, or command the request
+   names. Confirm that the code or merged PR implements the requested behavior.
+   A title match alone is not proof that work shipped.
+
+If the work shipped, cite the evidence and offer these three outcomes:
+
+- **Skip filing.** Create no story.
+- **File as `archived`.** Record the evidence in Notes. Recommend this outcome
+  when no choice has been made.
+- **File as `draft`.** Add a note with the evidence and why the request still
+  needs a draft.
+
+Wait for the person's choice before writing. For an archived outcome, set the
+card to `archived` before the first tracker push. Do not create a tracker issue
+for a new archived card.
 
 ## 3. Draft
 
@@ -90,9 +112,11 @@ then run `story set <id> remote=<n>`. The next push updates that issue,
 replacing its title and body, instead of creating a second one. Tell the user
 before that push.
 
-When creating several stories from one source, show the list of titles and
-statements first and wait for approval before writing. Rows the user already
-approved in a **gap-sweep** table count as that approval.
+When creating several stories from one source, show a table with one row per
+request. Include its title, statement, evidence links, and proposed outcome in
+each row. Wait for approval before writing. Rows the user already approved in
+a **gap-sweep** table count as that approval only when their evidence and
+proposed outcome have not changed.
 
 ## 5. Report
 
