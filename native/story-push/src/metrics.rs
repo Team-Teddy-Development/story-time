@@ -17,6 +17,9 @@ pub(crate) struct History {
     pub(crate) id: String,
     pub(crate) log: StoryLog,
     pub(crate) gap: Option<String>,
+    pub(crate) status: String,
+    pub(crate) size: Option<f64>,
+    pub(crate) epic: Option<String>,
 }
 
 pub fn run(args: &[String]) -> Result<String, Failure> {
@@ -70,6 +73,9 @@ pub(crate) fn histories(dir: &Path) -> Result<Vec<History>, String> {
                     id,
                     log: StoryLog::default(),
                     gap: Some(format!("story file does not parse: {e}")),
+                    status: String::new(),
+                    size: None,
+                    epic: None,
                 },
             })
         })
@@ -122,6 +128,9 @@ fn history(id: String, parsed: &Value) -> History {
         id,
         log,
         gap: (!consistent).then(|| format!("status {status} has no matching changelog event")),
+        status: status.to_owned(),
+        size: parsed["size"].as_f64().filter(|n| n.is_finite()),
+        epic: parsed["epic"].as_str().map(str::to_owned),
     }
 }
 
@@ -248,6 +257,49 @@ fn velocity(
         "source": SPRINT_SOURCE,
         "definition": "mean completed points per closed sprint over the last 3 closed sprints (closed: sprint end on or before the window end; points: size when the story entered the sprint; done: a status=done event inside the sprint dates), with min and max, and the same over the last 6",
     });
+    let (known, sprint_unknown) = closed_velocities(stories, calendar, to);
+    let count = known.len();
+    let points: Vec<f64> = known.iter().map(|(_, p)| *p).collect();
+    let stat = |n: usize| match sprint::stat(&points, n) {
+        Some(s) => {
+            json!({"sprints": s.sprints, "mean": number(s.mean), "min": number(s.min), "max": number(s.max)})
+        }
+        None => json!("unknown"),
+    };
+    figure["closed_sprints"] = json!(count);
+    figure["sprints"] = json!(known
+        .iter()
+        .map(|(s, p)| json!({"id": s.id, "start": s.start.to_string(), "end": s.end.to_string(), "completed_points": number(*p)}))
+        .collect::<Vec<_>>());
+    figure["last_3"] = stat(3);
+    figure["last_6"] = stat(6);
+    if figure["last_3"] != json!("unknown") {
+        figure["value"] = figure["last_3"]["mean"].clone();
+    }
+    if let Some((first, _)) = known.first() {
+        figure["window"] = json!(format!("{}..{to}", first.start));
+    }
+    let mut unknown = Vec::new();
+    if calendar.is_none() {
+        unknown.push(json!({"id": null, "reason": NO_CALENDAR}));
+    } else if count < 3 {
+        let plural = if count == 1 { "" } else { "s" };
+        unknown.push(json!({"id": null, "reason": format!("{count} closed sprint{plural} with known points; velocity needs at least 3")}));
+    } else if count < 6 {
+        unknown.push(json!({"id": null, "reason": format!("last_6 needs 6 closed sprints with known points, found {count}")}));
+    }
+    unknown.extend(sprint_unknown);
+    figure["unknown"] = json!(unknown);
+    figure
+}
+
+/// The closed sprints with known completed points, oldest first, and the sprints left out with
+/// the reason. A sprint is closed when its end is on or before `to`.
+pub(crate) fn closed_velocities(
+    stories: &[History],
+    calendar: Option<&Calendar>,
+    to: NaiveDate,
+) -> (Vec<(sprint::Sprint, f64)>, Vec<Value>) {
     let mut sprint_unknown: Vec<Value> = Vec::new();
     let mut known: Vec<(sprint::Sprint, f64)> = Vec::new();
     let trusted: Vec<&History> = stories.iter().filter(|s| s.gap.is_none()).collect();
@@ -284,39 +336,7 @@ fn velocity(
             sprint_unknown.push(json!({"id": sprint.id, "reason": reason}));
         }
     }
-    let count = known.len();
-    let points: Vec<f64> = known.iter().map(|(_, p)| *p).collect();
-    let stat = |n: usize| match sprint::stat(&points, n) {
-        Some(s) => {
-            json!({"sprints": s.sprints, "mean": number(s.mean), "min": number(s.min), "max": number(s.max)})
-        }
-        None => json!("unknown"),
-    };
-    figure["closed_sprints"] = json!(count);
-    figure["sprints"] = json!(known
-        .iter()
-        .map(|(s, p)| json!({"id": s.id, "start": s.start.to_string(), "end": s.end.to_string(), "completed_points": number(*p)}))
-        .collect::<Vec<_>>());
-    figure["last_3"] = stat(3);
-    figure["last_6"] = stat(6);
-    if figure["last_3"] != json!("unknown") {
-        figure["value"] = figure["last_3"]["mean"].clone();
-    }
-    if let Some((first, _)) = known.first() {
-        figure["window"] = json!(format!("{}..{to}", first.start));
-    }
-    let mut unknown = Vec::new();
-    if calendar.is_none() {
-        unknown.push(json!({"id": null, "reason": NO_CALENDAR}));
-    } else if count < 3 {
-        let plural = if count == 1 { "" } else { "s" };
-        unknown.push(json!({"id": null, "reason": format!("{count} closed sprint{plural} with known points; velocity needs at least 3")}));
-    } else if count < 6 {
-        unknown.push(json!({"id": null, "reason": format!("last_6 needs 6 closed sprints with known points, found {count}")}));
-    }
-    unknown.extend(sprint_unknown);
-    figure["unknown"] = json!(unknown);
-    figure
+    (known, sprint_unknown)
 }
 
 /// A whole number as an integer, anything else rounded to two places.
