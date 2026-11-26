@@ -17,7 +17,7 @@ local `story` CLI:
 
 | Work | Tool |
 |---|---|
-| Read | `story_show`, `story_list`, `story_lint`, `story_config` |
+| Read | `story_show`, `story_list`, `story_lint`, `story_config`, `story_velocity`, `story_burndown`, `story_forecast` |
 | Links between stories and repositories | `story_graph` |
 | Edit | `story_update`, `story_note`, `story_create` |
 | Tracker comments | `story_comments`, `story_resolve_comment` |
@@ -32,8 +32,8 @@ local `story` CLI:
 Use the local `story` CLI in these cases:
 
 - `story_repos` does not list the repository, or the server is not connected.
-- The command has no tool: `story push`, `split`, `rank`, `plan`, `metrics`,
-  `machine`, `table`, `judge`, and `init`.
+- The command has no tool: `story push`, `split`, `rank`, `plan`, `metrics`
+  (only its velocity figure has a tool), `machine`, `table`, `judge`, and `init`.
 - You publish to the tracker. Run `story push` from a checkout after the pull
   request of the edit merges.
 
@@ -58,7 +58,7 @@ flow-review reports blocked, aging, and over-WIP work and sends pulls to story-p
 sprint-review records the goal outcome, links feedback, and decides unfinished work; it marks no story done.
 release-planning writes a release manifest and uses only approved deployment capabilities; it can run before sprint review.
 retrospective revisits previous improvement actions and proposes at most three owned ones; it changes no policy.
-agile-metrics reports throughput, WIP, and cycle time from `story metrics`; missing history stays unknown.
+agile-metrics reports throughput, WIP, cycle time, and velocity from `story metrics`, plus the burndown and the completion forecast; missing history stays unknown.
 project-status writes a dated status report; every claim links to its record, and a claim with no record is unknown.
 story-edit changes any story at any stage.
 state-machine and decision-table write checked models that acceptance-criteria and story-kickoff build on.
@@ -82,7 +82,7 @@ state-machine and decision-table write checked models that acceptance-criteria a
 | "sprint review", "close the sprint" | **sprint-review** skill |
 | "plan a release", "what is in this release?" | **release-planning** skill |
 | "retrospective", "retro", "how do we work better?" | **retrospective** skill |
-| "metrics", "cycle time", "throughput", "velocity" | **agile-metrics** skill |
+| "metrics", "cycle time", "throughput", "velocity", "burndown", "forecast", "when will it be done" | **agile-metrics** skill |
 | "project status", "status report", "where are we?" | **project-status** skill |
 | "what should I work on next?" | **story-pick** skill |
 | "map out this epic / feature" | **story-map** skill |

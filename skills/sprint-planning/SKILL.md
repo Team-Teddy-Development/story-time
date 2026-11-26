@@ -8,7 +8,8 @@ description: Propose a goal-based fixed-sprint plan from ordered ready stories, 
 `story` means the CLI from the **story-time** skill. Run `story config --json`.
 Consume the **refinement** skill's ordered candidates and epic dispositions.
 If readiness or epic intent is unresolved, return that work to its existing owner.
-Planning proposes local artifacts; it does not start or close a sprint.
+Planning proposes local artifacts; it does not start or close a sprint. The
+chosen stories get `sprint` only after the lead approves the plan.
 
 ## Confirm the inputs
 
@@ -17,9 +18,16 @@ Planning proposes local artifacts; it does not start or close a sprint.
 2. Record start, end, and time zone from supplied calendar evidence. Configured
    `team.sprintDays` records duration only; it cannot establish dates or holidays.
 3. Obtain a point budget, reserve in the same unit, and the evidence source.
-   Velocity, working days, and availability are different quantities. If capacity
-   is missing, produce a provisional plan with no commitments. Zero capacity is
-   valid. Never create a velocity or availability metric from estimates.
+   Velocity, working days, and availability are different quantities. Read the
+   velocity from `story metrics --from D --to D --json` (the `velocity` figure) or
+   the `story_velocity` MCP tool, with `to` set to the planning day. When its
+   `last_3` is known, the budget comes from the velocity minimum to maximum over
+   the last 3 closed sprints, not the mean: commit up to the minimum, and name
+   the stories between the minimum and the maximum as stretch that is not
+   promised. When `last_3` is `unknown`, ask for a budget and keep the plan
+   provisional. If capacity is missing, produce a provisional plan with no
+   commitments. Zero capacity is valid. Never create a velocity or availability
+   metric from estimates.
 4. Review candidate order, source readiness, sizes, dependencies, and access.
    Dependencies must already be done, not merely planned earlier in this sprint.
    Missing sizes exclude selection. WIP is a per-person pull policy, not a cap
@@ -70,6 +78,12 @@ the plan provisional with `publication.tracker_sprint_fields` as a named reason.
 Record these limits rather than inventing tracker commands or synchronization.
 For missing permission or access, add an `exclusions` reason for that ID in the
 request. It blocks selection and records the provisional eligibility gap.
+
+Once the lead accepts the proposal, record each commitment by setting `sprint`
+through `story set`, one command per chosen story, as
+`story set <id> sprint=<YYYY-Snn>`. The changelog line it writes is what the
+sprint's burndown, `story sprint show` and the velocity read. Unchosen stretch stories get no `sprint`. Set it only after
+the lead's approval; the proposal itself still changes nothing.
 
 Hand a selected ready story to the **story-pick** skill. Recheck WIP and current
 source state before **story-kickoff** starts implementation. Completion belongs to

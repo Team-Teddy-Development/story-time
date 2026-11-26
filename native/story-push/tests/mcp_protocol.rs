@@ -351,7 +351,15 @@ fn read_tools_match_their_output_schemas_and_agree_with_the_cli() {
     let names: Vec<_> = schemas.keys().cloned().collect();
     assert_eq!(
         names,
-        ["story_config", "story_list", "story_show", "story_lint"]
+        [
+            "story_config",
+            "story_list",
+            "story_show",
+            "story_lint",
+            "story_velocity",
+            "story_burndown",
+            "story_forecast"
+        ]
     );
 
     let check = |name: &str, value: &Value| {
@@ -574,7 +582,7 @@ fn modern_and_legacy_clients_both_work_and_version_faults_use_their_codes() {
     );
     let tools = modern.modern("tools/list", json!({}));
     assert_eq!(tools["result"]["resultType"], "complete");
-    assert_eq!(tools["result"]["tools"].as_array().unwrap().len(), 4);
+    assert_eq!(tools["result"]["tools"].as_array().unwrap().len(), 7);
     assert!(tools["result"].get("nextCursor").is_none());
     for tool in tools["result"]["tools"].as_array().unwrap() {
         assert_eq!(
@@ -631,7 +639,7 @@ fn modern_and_legacy_clients_both_work_and_version_faults_use_their_codes() {
     assert_eq!(init["result"]["serverInfo"]["name"], "story-time");
     legacy.notify(&json!({"jsonrpc": "2.0", "method": "notifications/initialized"}));
     let tools = legacy.send(&request("tools/list", json!({})));
-    assert_eq!(tools["result"]["tools"].as_array().unwrap().len(), 4);
+    assert_eq!(tools["result"]["tools"].as_array().unwrap().len(), 7);
     assert!(tools["result"].get("resultType").is_none());
     let called = legacy.send(&request(
         "tools/call",
@@ -987,7 +995,15 @@ fn story_lint_reads_an_outside_machine_the_same_whether_it_exists() {
     server.finish();
 }
 
-const READ_TOOLS: [&str; 4] = ["story_config", "story_list", "story_show", "story_lint"];
+const READ_TOOLS: [&str; 7] = [
+    "story_config",
+    "story_list",
+    "story_show",
+    "story_lint",
+    "story_velocity",
+    "story_burndown",
+    "story_forecast",
+];
 
 fn tool_names(server: &mut Server) -> Vec<String> {
     let listed = server.modern("tools/list", json!({}));
@@ -1628,5 +1644,186 @@ fn write_tools_wait_for_a_writer_that_finishes() {
     let result = server.tool("story_create", json!({"title": "Filed after a wait"}));
     release.join().unwrap();
     assert_eq!(structured(&result)["status"], "created", "{result}");
+    server.finish();
+}
+
+const SPRINT_SETTINGS: &str = r#"{"tracker":"files","sync":"off","prefix":"ST","team":{"sprintDays":10,"wipLimit":2,"sprintAnchor":{"date":"2026-09-07","tz":"UTC"},"sprints":[
+{"id":"2026-S01","start":"2026-09-07","end":"2026-09-20"},
+{"id":"2026-S02","start":"2026-09-21","end":"2026-10-04"},
+{"id":"2026-S03","start":"2026-10-05","end":"2026-10-18"},
+{"id":"2026-S04","start":"2026-10-19","end":"2026-11-01"},
+{"id":"2026-S05","start":"2026-11-02","end":"2026-11-15"},
+{"id":"2026-S06","start":"2026-11-16","end":"2026-11-29"}]}}"#;
+
+fn dated_story(id: &str, status: &str, size: u32, log: &[String]) -> String {
+    let log: String = log.iter().map(|l| format!("- {l}\n")).collect();
+    format!("---\nid: {id}\ntitle: {id}\nstatus: {status}\ntype: story\nsize: {size}\ncreated: 2026-01-02\n---\n\n## Story\nAs a user, I want {id}.\n\n## Changelog\n- 2026-01-02 created\n{log}")
+}
+
+/// Three closed sprints of 8, 10 and 12 points, two open sized stories, and a burndown sprint.
+fn agile_fixture() -> Fixture {
+    let fixture = Fixture::new();
+    fixture.write(".story-time/settings.json", SPRINT_SETTINGS);
+    let closed = [
+        ("2026-S01", "2026-09-07", "2026-09-20", 8),
+        ("2026-S02", "2026-09-21", "2026-10-04", 10),
+        ("2026-S03", "2026-10-05", "2026-10-18", 12),
+    ];
+    for (n, (sprint, start, done, points)) in closed.iter().enumerate() {
+        let id = format!("ST-1{n:02}");
+        let text = dated_story(
+            &id,
+            "done",
+            *points,
+            &[
+                format!("2026-01-03 set size={points}, sprint={sprint}"),
+                format!("{start} set status=in-progress"),
+                format!("{done} set status=done"),
+            ],
+        );
+        fixture.write(&format!("backlog/{id}.md"), &text);
+    }
+    for (id, size) in [("ST-201", 12), ("ST-202", 8)] {
+        let text = dated_story(id, "ready", size, &["2026-01-04 set status=ready".into()]);
+        fixture.write(&format!("backlog/{id}.md"), &text);
+    }
+    let in_sprint = |id: &str, size: u32, done: Option<&str>| {
+        let mut log = vec![format!("2026-10-30 set size={size}, sprint=2026-S05")];
+        let status = match done {
+            Some(day) => {
+                log.push(format!("{day} set status=done"));
+                "done"
+            }
+            None => "draft",
+        };
+        dated_story(id, status, size, &log)
+    };
+    fixture.write("backlog/ST-301.md", &in_sprint("ST-301", 5, None));
+    fixture.write(
+        "backlog/ST-302.md",
+        &in_sprint("ST-302", 3, Some("2026-11-03")),
+    );
+    fixture
+}
+
+/// A tool result without the `redactions` count that the server adds to every result.
+fn report(result: &Value, schema: &Value, name: &str) -> Value {
+    let mut value = structured(result).clone();
+    conforms(schema, &value, name).unwrap_or_else(|e| panic!("{e}\n{value:#}"));
+    value.as_object_mut().unwrap().remove("redactions");
+    value
+}
+
+#[test]
+fn story_burndown_returns_the_json_of_story_burndown() {
+    let fixture = agile_fixture();
+    let mut server = fixture.server();
+    let schemas = output_schemas(&mut server);
+    let args = json!({"sprint": "2026-S05", "today": "2026-11-06"});
+    let result = server.tool("story_burndown", args);
+    let got = report(&result, &schemas["story_burndown"], "story_burndown");
+    let cli = fixture.cli(&[
+        "burndown",
+        "--sprint",
+        "2026-S05",
+        "--today",
+        "2026-11-06",
+        "--json",
+    ]);
+    assert_eq!(got, cli);
+    let day = cli["rows"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|r| r["day"] == "2026-11-03")
+        .unwrap();
+    assert_eq!(day["remaining"], 5);
+    server.finish();
+}
+
+#[test]
+fn story_forecast_returns_the_json_of_story_forecast() {
+    let fixture = agile_fixture();
+    let mut server = fixture.server();
+    let schemas = output_schemas(&mut server);
+    let args = json!({"ids": ["ST-201", "ST-202"], "today": "2026-11-15", "seed": 7});
+    let result = server.tool("story_forecast", args);
+    let got = report(&result, &schemas["story_forecast"], "story_forecast");
+    let cli = fixture.cli(&[
+        "forecast",
+        "--ids",
+        "ST-201,ST-202",
+        "--today",
+        "2026-11-15",
+        "--seed",
+        "7",
+        "--json",
+    ]);
+    assert_eq!(got, cli);
+    assert_eq!(got["seed"], 7);
+    assert_eq!(got["rows"].as_array().unwrap().len(), 2);
+    assert_ne!(got["rows"][0]["date"], "unknown");
+    server.finish();
+}
+
+#[test]
+fn story_velocity_returns_the_velocity_figure_of_story_metrics() {
+    let fixture = agile_fixture();
+    let mut server = fixture.server();
+    let schemas = output_schemas(&mut server);
+    let args = json!({"from": "2026-09-07", "to": "2026-11-15"});
+    let result = server.tool("story_velocity", args);
+    let got = report(&result, &schemas["story_velocity"], "story_velocity");
+    let cli = fixture.cli(&[
+        "metrics",
+        "--from",
+        "2026-09-07",
+        "--to",
+        "2026-11-15",
+        "--json",
+    ]);
+    let figure = cli["figures"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|f| f["metric"] == "velocity")
+        .unwrap();
+    assert_eq!(&got, figure);
+    assert_eq!(got["metric"], "velocity");
+    assert_ne!(got["value"], "unknown");
+    server.finish();
+}
+
+#[test]
+fn the_agile_tools_refuse_bad_arguments_and_a_repository_with_no_calendar() {
+    let fixture = Fixture::new().with_stories(2);
+    let mut server = fixture.server();
+    let bad = server.tool("story_burndown", json!({"sprint": "S1"}));
+    assert_eq!(tool_error(&bad)["code"], "invalid_argument");
+    let missing = server.tool("story_burndown", json!({}));
+    assert_eq!(tool_error(&missing)["code"], "invalid_argument");
+    let both = server.tool(
+        "story_forecast",
+        json!({"sprint": "2026-S05", "epic": "EP-1"}),
+    );
+    assert_eq!(tool_error(&both)["code"], "invalid_argument");
+    let none = server.tool("story_forecast", json!({}));
+    assert_eq!(tool_error(&none)["code"], "invalid_argument");
+    let backwards = server.tool(
+        "story_velocity",
+        json!({"from": "2026-11-15", "to": "2026-09-07"}),
+    );
+    assert_eq!(tool_error(&backwards)["code"], "invalid_argument");
+    let calendar = server.tool("story_burndown", json!({"sprint": "2026-S05"}));
+    let error = tool_error(&calendar);
+    assert_eq!(error["code"], "report_failed");
+    assert!(error["message"]
+        .as_str()
+        .unwrap()
+        .contains("no sprint calendar"));
+    assert!(!error["message"]
+        .as_str()
+        .unwrap()
+        .contains(fixture.root.to_str().unwrap()));
     server.finish();
 }

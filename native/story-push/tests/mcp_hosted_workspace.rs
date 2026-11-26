@@ -447,6 +447,68 @@ fn a_named_ref_reads_the_story_of_that_branch() {
     }
 }
 
+fn sprint_story(id: &str, size: u32) -> String {
+    format!(
+        "---\nid: {id}\ntitle: {id}\nstatus: draft\ntype: story\nsize: {size}\ncreated: 2026-09-01\n---\n\n## Story\nAs a user, I want {id}.\n\n## Changelog\n- 2026-09-01 created\n- 2026-09-07 set size={size}, sprint=2026-S01\n"
+    )
+}
+
+#[test]
+fn story_burndown_with_a_ref_reads_the_sprint_of_that_branch() {
+    let fixture = Fixture::new();
+    fixture.write(
+        "core",
+        ".story-time/settings.json",
+        r#"{"tracker": "files", "sync": "off", "prefix": "VC", "team": {"wipLimit": 2, "sprints": [{"id": "2026-S01", "start": "2026-09-07", "end": "2026-09-20"}]}}"#,
+    );
+    fixture.write("core", "backlog/VC-201.md", &sprint_story("VC-201", 5));
+    fixture.commit("core", "a sprint");
+    let core = fixture.upstream("core");
+    fixture.git(&core, &["checkout", "-q", "-b", "story-time/ST-001"]);
+    fixture.write("core", "backlog/VC-202.md", &sprint_story("VC-202", 3));
+    fixture.commit("core", "a story joins the sprint");
+    fixture.git(&core, &["checkout", "-q", "main"]);
+
+    let server = fixture.serve(&fixture.registry(""), &[]);
+    let args = |extra: Value| {
+        let mut args = json!({"repository": "core", "sprint": "2026-S01", "today": "2026-09-10"});
+        args.as_object_mut()
+            .unwrap()
+            .extend(extra.as_object().unwrap().clone());
+        args
+    };
+    let branch = server.ok("story_burndown", args(json!({"ref": "story-time/ST-001"})));
+    assert_eq!(
+        branch["sha"],
+        fixture.head("core", "story-time/ST-001").as_str()
+    );
+    assert_eq!(branch["rows"][0]["scope"], 8, "{branch}");
+    let default = server.ok("story_burndown", args(json!({})));
+    assert_eq!(default["sha"], fixture.head("core", "main").as_str());
+    assert_eq!(default["rows"][0]["scope"], 5, "{default}");
+
+    let missing = server.call("story_burndown", args(json!({"ref": "no-such-branch"})));
+    assert_eq!(missing["error"]["code"], "ref_not_found", "{missing}");
+
+    for name in ["story_velocity", "story_burndown", "story_forecast"] {
+        let tool = server
+            .tools(READER)
+            .into_iter()
+            .find(|tool| tool["name"] == name)
+            .unwrap_or_else(|| panic!("{name} is not listed"));
+        assert!(
+            tool["inputSchema"]["properties"]["ref"].is_object(),
+            "{name}"
+        );
+        for key in ["sha", "fetched_at"] {
+            assert!(
+                tool["outputSchema"]["properties"][key].is_object(),
+                "{name} {key}"
+            );
+        }
+    }
+}
+
 #[test]
 fn a_repository_that_cannot_be_reached_is_unavailable_and_the_rest_keep_working() {
     let fixture = Fixture::new();
