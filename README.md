@@ -57,7 +57,7 @@ of them.
 ## Install
 
 Native `story init`, `story push`, `story adopt preview`, `story plan`,
-`story config`, `story show`, `story list`, `story lint`, `story stats`, `story secret`, `story issues`, `story note`, `story set`, `story split`, `story sprint`, `story forecast`, `story burndown`, `story burnup`, `story new`, `story rank`, `story assignment`, `story machine`, `story mcp`, `story export`, `story table`, `story judge`, `story check-pr`, `story sync-merge`, `story help`, and `story metrics` require Rust and Cargo. No command requires Node.
+`story config`, `story show`, `story list`, `story lint`, `story stats`, `story secret`, `story issues`, `story note`, `story set`, `story split`, `story sprint`, `story forecast`, `story estimates`, `story burndown`, `story burnup`, `story new`, `story rank`, `story assignment`, `story machine`, `story mcp`, `story export`, `story table`, `story judge`, `story check-pr`, `story sync-merge`, `story help`, and `story metrics` require Rust and Cargo. No command requires Node.
 
 To install a release on a machine in one step, run this from the repository root:
 
@@ -475,8 +475,8 @@ One server can hold several orgs. A repository names its `org`, or takes the top
 
 The server refuses to start when an entry names a `forge` other than `github` and `gitea`, when a `gitea` entry has a plain `http://` clone to a host that is not loopback and no `allow_http = true`, when a `github` entry sets `allow_http`, when two repositories of one org declare one prefix, when two entries have one key, when an org is not a lowercase key, or when it cannot write the data directory. What a client sees:
 
-- A read fetches the repository when its last fetch is older than `fetch_ttl_seconds`. `story_list`, `story_show`, and `story_lint` name the commit they read in `sha` and the time of the fetch in `fetched_at`.
-- The same three tools take `ref`, the name of a branch, and read the head of that branch.
+- A read fetches the repository when its last fetch is older than `fetch_ttl_seconds`. `story_list`, `story_show`, `story_lint`, `story_velocity`, `story_burndown`, and `story_forecast` name the commit they read in `sha` and the time of the fetch in `fetched_at`.
+- The same tools take `ref`, the name of a branch, and read the head of that branch.
 - `story_repos` lists each repository with its `org`, its `forge`, and its `state`: `ready`, `cloning`, or `unavailable` with `last_error`. A `ready` entry with a `last_error` means the last fetch failed: reads serve the commit of the last fetch that worked, and `sha` names it. The server fetches each repository again once per `fetch_ttl_seconds`, with or without reads, and `last_error` returns to null when a fetch works.
 - A repository that the server cannot reach returns the retryable error `repository_unavailable`. The other repositories keep working, and `/readyz` stays 200.
 - `story_lint` checks links across every registered repository, and reports `links.undeclared_prefix` for a story whose prefix the registry does not declare for its repository.

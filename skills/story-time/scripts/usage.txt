@@ -48,6 +48,7 @@ Commands:
                                            Native: cumulative points done against scope for an epic or a set of stories; read-only
   forecast (--sprint ID | --epic ID | --ids A,B) [--today YYYY-MM-DD] [--seed N] [--json]
                                            Native: 50% and 85% completion dates from closed-sprint velocity; read-only
+  estimates [--json]                       Native: each done story's estimate against its shipped days, with calibration groups; read-only
   check-pr [--body-file F] [--json]
                                            Native: check a PR's Stories: line, acceptance, and closing keywords (CI)
   sync-merge [--all] [--from SHA] [--workflow F] [--json]

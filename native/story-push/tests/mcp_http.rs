@@ -555,7 +555,10 @@ fn a_header_that_does_not_match_the_body_gets_minus_32020() {
         ("Mcp-Name", "story_show"),
     ]);
     assert_eq!(matching["result"]["isError"], false, "{matching}");
-    let ran = server.audit_lines().len();
+    // Wait for the matching call's audit line; the stderr reader can lag the answer (ST-159).
+    let ran = server
+        .audit_when(|lines| lines.iter().any(|l| l["tool"] == "story_show"))
+        .len();
 
     for headers in [
         [("Mcp-Method", "tools/list")],
@@ -688,4 +691,21 @@ fn a_client_with_orgs_needs_a_registry() {
         stderr.contains("client scoped") && stderr.contains("org varsity"),
         "{stderr}"
     );
+}
+
+#[test]
+fn a_client_whose_only_scope_is_read_lists_and_calls_the_agile_tools() {
+    let fixture = Fixture::new();
+    let server = fixture.http();
+    let reader_tools = server.tools(READER);
+    for name in ["story_velocity", "story_burndown", "story_forecast"] {
+        assert!(reader_tools.contains(&name.to_owned()), "{name}");
+    }
+    let velocity = server.call(
+        READER,
+        "story_velocity",
+        json!({"from": "2026-09-07", "to": "2026-11-15"}),
+    );
+    assert_eq!(velocity["isError"], false, "{velocity}");
+    assert_eq!(velocity["structuredContent"]["metric"], "velocity");
 }

@@ -5,6 +5,7 @@ mod blocked;
 pub mod burndown;
 mod check_pr;
 pub mod config;
+pub mod estimates;
 pub mod export;
 pub mod forecast;
 pub mod gateway;
@@ -26,6 +27,7 @@ mod org_index;
 pub mod otlp;
 pub mod planning;
 pub mod rank;
+pub(crate) mod refined;
 pub mod secret;
 pub mod set;
 pub mod show;
@@ -78,6 +80,7 @@ pub const NATIVE_COMMANDS: &[(&str, Native)] = &[
     }),
     ("sprint", |args| sprint_cmd::run(args).map(|out| (out, 0))),
     ("forecast", |args| forecast::run(args).map(|out| (out, 0))),
+    ("estimates", |args| estimates::run(args).map(|out| (out, 0))),
     ("export", |args| export::run(args).map(|out| (out, 0))),
     ("note", |args| note::run(args).map(|out| (out, 0))),
     ("new", |args| new_story::run(args).map(|out| (out, 0))),
