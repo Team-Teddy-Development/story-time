@@ -15,6 +15,7 @@ time_criticality: 5        # cost of waiting               (1 2 3 5 8 13 20)
 risk_reduction: 3          # risk reduction / enablement   (1 2 3 5 8 13 20)
 size: 3                    # relative effort               (1 2 3 5 8 13 20)
 sprint: 2026-S23           # optional: the sprint the story is in (YYYY-Snn)
+built_by: factory          # optional: factory | person, written by the merge hooks
 depends_on: [ST-010]
 relates_to: [VC-109]      # optional: related stories that do not block this one
 state_machine: model/state/enrollment.toml   # optional, see below
@@ -56,6 +57,11 @@ weekday the first sprint starts; each sprint runs `sprintDays` working days and
 numbering restarts at `S01` for the first sprint that starts in each year) and an optional
 `team.sprints` list of `{id, start, end, goal}` that overrides single sprints.
 `story lint` reports `sprint.format` as an error when `sprint` is not `YYYY-Snn`.
+
+`built_by:` says who built a done story: `factory` or `person`. The merge hooks
+write it; `story set <id> built_by=robot` exits 1 with `built_by must be factory
+or person`, and `story lint` reports `built_by.value` as an error for any other
+value. `story estimates` reads it, and a story without it counts as `unknown`.
 
 `state_machine:` names the lifecycle model the story moves an entity
 through, relative to the repo root (see the **state-machine** skill).

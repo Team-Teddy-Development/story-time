@@ -57,7 +57,7 @@ of them.
 ## Install
 
 Native `story init`, `story push`, `story adopt preview`, `story plan`,
-`story config`, `story show`, `story list`, `story lint`, `story stats`, `story secret`, `story issues`, `story note`, `story set`, `story split`, `story sprint`, `story forecast`, `story burndown`, `story burnup`, `story new`, `story rank`, `story assignment`, `story machine`, `story mcp`, `story export`, `story table`, `story judge`, `story check-pr`, `story sync-merge`, `story help`, and `story metrics` require Rust and Cargo. No command requires Node.
+`story config`, `story show`, `story list`, `story lint`, `story stats`, `story secret`, `story issues`, `story note`, `story set`, `story split`, `story sprint`, `story forecast`, `story estimates`, `story burndown`, `story burnup`, `story new`, `story rank`, `story assignment`, `story machine`, `story mcp`, `story export`, `story table`, `story judge`, `story check-pr`, `story sync-merge`, `story help`, and `story metrics` require Rust and Cargo. No command requires Node.
 
 To install a release on a machine in one step, run this from the repository root:
 

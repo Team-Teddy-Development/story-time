@@ -96,7 +96,7 @@ The **principle-invest** skill holds the quality bar all of them apply.
 
 ## The `story` tool
 
-Use installed Rust `story` for `init`, `push`, `adopt preview`, `plan`, `config`, `show`, `list`, `lint`, `stats`, `secret`, `issues`, `note`, `machine`, `mcp`, `export`, `new`, `rank`, `assignment`, `set`, `split`, `sprint`, `forecast`, `burndown`, `burnup`, `table`, `judge`, `check-pr`, `sync-merge`, `help`, and `metrics`.
+Use installed Rust `story` for `init`, `push`, `adopt preview`, `plan`, `config`, `show`, `list`, `lint`, `stats`, `secret`, `issues`, `note`, `machine`, `mcp`, `export`, `new`, `rank`, `assignment`, `set`, `split`, `sprint`, `forecast`, `estimates`, `burndown`, `burnup`, `table`, `judge`, `check-pr`, `sync-merge`, `help`, and `metrics`.
 The skill installer copies skills only; install the executable separately.
 Read `.story-time/settings.json` before selecting a tracker. Install the native
 command from the repository root:
@@ -106,7 +106,7 @@ cargo install --path native/story-push --locked
 ```
 
 `story push` runs entirely in Rust. Do not invoke the historical Node push
-handler. `story init`, `story adopt preview`, `story plan`, `story config`, `story show`, `story list`, `story lint`, `story stats`, `story secret`, `story issues`, `story note`, `story machine`, `story mcp`, `story export`, `story new`, `story rank`, `story assignment`, `story set`, `story split`, `story sprint`, `story forecast`, `story burndown`, `story burnup`, `story table`, `story judge`, `story check-pr`, `story sync-merge`, `story help`, and `story metrics` also run entirely in Rust. No command needs Node.
+handler. `story init`, `story adopt preview`, `story plan`, `story config`, `story show`, `story list`, `story lint`, `story stats`, `story secret`, `story issues`, `story note`, `story machine`, `story mcp`, `story export`, `story new`, `story rank`, `story assignment`, `story set`, `story split`, `story sprint`, `story forecast`, `story estimates`, `story burndown`, `story burnup`, `story table`, `story judge`, `story check-pr`, `story sync-merge`, `story help`, and `story metrics` also run entirely in Rust. No command needs Node.
 Plan JSON is the default output; other commands use `--json`.
 
 The separate Rust `gitea-gateway story-push` interface remains available in

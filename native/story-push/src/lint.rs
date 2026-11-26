@@ -62,7 +62,7 @@ struct Rule {
     check: fn(&Js, &Context) -> Found,
 }
 
-const RULES: [Rule; 22] = [
+const RULES: [Rule; 23] = [
     rule("title.present", "N", title_present),
     rule("statement.format", "V", statement_format),
     rule("statement.benefit", "V", statement_benefit),
@@ -88,6 +88,7 @@ const RULES: [Rule; 22] = [
     rule("spike.unblocks", "V", spike_unblocks),
     rule("state_machine.exists", "T", state_machine_exists),
     rule("sprint.format", "E", sprint_format),
+    rule("built_by.value", "E", built_by_value),
     rule("refined.stale", "N", refined_stale),
 ];
 
@@ -638,6 +639,14 @@ fn sprint_format(s: &Js, _: &Context) -> Found {
             "sprint must be YYYY-Snn (for example 2026-S23), got \"{}\".",
             other.string()
         )),
+    }
+}
+
+fn built_by_value(s: &Js, _: &Context) -> Found {
+    match s.get("built_by") {
+        Js::Undefined => none(),
+        Js::Str(kind) if crate::set::BUILDERS.contains(&kind.as_str()) => none(),
+        _ => err(crate::set::BUILT_BY),
     }
 }
 
