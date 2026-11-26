@@ -242,7 +242,7 @@ impl Http {
     /// The audit lines of every request answered before this call, for a check that no tool
     /// ran. It sends a sentinel call and waits for its line: the server writes each line before
     /// it answers and the reader keeps stderr's order, so a lagging line of an earlier request
-    /// has arrived by then and cannot hide a tool that ran (ST-159, ST-211).
+    /// has arrived by then and cannot hide a tool that ran (ST-159, ST-212).
     fn audit_settled(&self) -> Vec<Value> {
         let shown = self.call(WRITER, "story_show", json!({"id": SENTINEL}));
         assert_eq!(shown["isError"], false, "{shown}");
