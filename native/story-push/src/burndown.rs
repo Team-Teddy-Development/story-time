@@ -63,19 +63,15 @@ pub fn run_burndown(args: &[String]) -> Result<String, Failure> {
         config::parse(&loaded.raw).map_err(|e| format!("{}: {e}", loaded.path.display()))?;
     let calendar = Calendar::from_settings(&settings)
         .ok_or("no sprint calendar in settings (team.sprintAnchor or team.sprints).")?;
+    let sprint = resolve(&calendar, id)?;
     let today = given.unwrap_or_else(|| today_in(calendar.tz()));
     let dir = list::backlog_dir(flags.value("dir"), &loaded.root, &settings)?;
     let stories = metrics::histories(&dir)?;
-    let report = report(&stories, &calendar, id, today)?;
+    let report = report(&stories, &calendar, &sprint, today);
     Ok(render(&report, &flags, burndown_text))
 }
 
-pub(crate) fn report(
-    stories: &[History],
-    calendar: &Calendar,
-    id: &str,
-    today: NaiveDate,
-) -> Result<Value, String> {
+pub(crate) fn resolve(calendar: &Calendar, id: &str) -> Result<sprint::Sprint, String> {
     let sprint = calendar.resolve(id)?;
     if sprint.end < sprint.start {
         return Err(format!(
@@ -83,7 +79,7 @@ pub(crate) fn report(
             sprint.end, sprint.start
         ));
     }
-    Ok(burndown(stories, calendar, &sprint, today))
+    Ok(sprint)
 }
 
 pub(crate) fn today_in(tz: Option<&str>) -> NaiveDate {
@@ -95,7 +91,7 @@ pub(crate) fn today_in(tz: Option<&str>) -> NaiveDate {
     }
 }
 
-fn burndown(
+pub(crate) fn report(
     stories: &[History],
     calendar: &Calendar,
     sprint: &sprint::Sprint,

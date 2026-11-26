@@ -94,7 +94,7 @@ fn sprint_review_marks_no_story_done() {
 #[test]
 fn sprint_review_reports_missing_sprint_data_as_unknown() {
     let text = skill("sprint-review");
-    position(&text, "No sprint record is stored");
+    position(&text, "If the sprint calendar or goal is missing");
     position(&text, "Report a missing value as `unknown`");
 }
 

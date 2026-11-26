@@ -317,7 +317,7 @@ fn planning_tools_match_native_cli_json() {
         ),
         (
             "story_forecast",
-            json!({"ids":["ST-003","ST-004"],"today":"2026-11-15","seed":7}),
+            json!({"ids":[" ST-003 ","", "ST-004","ST-003"],"today":"2026-11-15","seed":7}),
             &forecast,
         ),
         (
@@ -331,6 +331,25 @@ fn planning_tools_match_native_cli_json() {
         assert_eq!(actual, expected, "{name}");
         conforms(&schemas[name], actual, name).unwrap();
     }
+    assert_eq!(mcp.finish().0, Some(0));
+}
+
+#[test]
+fn planning_burndown_refuses_a_sprint_longer_than_one_year() {
+    let fixture = Fixture::new();
+    fixture.write(
+        ".story-time/settings.json",
+        r#"{"tracker":"files","sync":"off","team":{"sprints":[{"id":"2026-S01","start":"2026-01-01","end":"2027-01-02"}]}}"#,
+    );
+    let mut mcp = fixture.server();
+    let result = mcp.tool(
+        "story_burndown",
+        json!({"sprint":"2026-S01", "today":"2026-01-01"}),
+    );
+    assert_eq!(
+        tool_error(&result)["message"],
+        "MCP burndown supports at most 366 days."
+    );
     assert_eq!(mcp.finish().0, Some(0));
 }
 

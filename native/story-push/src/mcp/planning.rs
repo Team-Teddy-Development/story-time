@@ -30,7 +30,7 @@ const EPIC: Field = Field {
 };
 const IDS: Field = Field {
     name: "ids",
-    kind: Kind::List(&Kind::NonEmpty(64), 100),
+    kind: Kind::List(&Kind::Text(64), 100),
 };
 const SEED: Field = Field {
     name: "seed",
@@ -53,7 +53,7 @@ pub(super) const VELOCITY: Tool = Tool {
 pub(super) const BURNDOWN: Tool = Tool {
     name: "story_burndown",
     description:
-        "Remaining points and scope by day for one sprint. Pass today to reproduce a previous view.",
+        "Remaining points and scope by day for a sprint of up to 366 days. Pass today to reproduce a previous view.",
     hints: READ,
     fields: &[REPOSITORY, SPRINT, TODAY],
     required: &["sprint"],
@@ -141,9 +141,15 @@ fn burndown(server: &Server, args: &Args) -> Result<Value, ToolError> {
     let given = date(args, "today")?;
     let repo = server.open(args)?;
     let calendar = calendar(&repo)?;
+    let sprint = burndown::resolve(&calendar, id).map_err(|message| invalid("/sprint", message))?;
+    if (sprint.end - sprint.start).num_days() >= 366 {
+        return Err(invalid(
+            "/sprint",
+            "MCP burndown supports at most 366 days.".into(),
+        ));
+    }
     let today = given.unwrap_or_else(|| burndown::today_in(calendar.tz()));
-    let report = burndown::report(&histories(&repo)?, &calendar, id, today)
-        .map_err(|message| invalid("/sprint", message))?;
+    let report = burndown::report(&histories(&repo)?, &calendar, &sprint, today);
     Ok(repo.at(report))
 }
 
@@ -155,13 +161,9 @@ fn forecast(server: &Server, args: &Args) -> Result<Value, ToolError> {
     ) {
         (Some(id), None, None) => forecast::Target::Sprint(sprint_id(id)?.into()),
         (None, Some(epic), None) => forecast::Target::Epic(epic.into()),
-        (None, None, Some(ids)) if !ids.is_empty() && ids.iter().all(|id| !id.contains(',')) => {
-            let mut seen = std::collections::BTreeSet::new();
-            forecast::Target::Ids(
-                ids.into_iter()
-                    .filter(|id| seen.insert(id.clone()))
-                    .collect(),
-            )
+        (None, None, Some(ids)) if ids.iter().all(|id| !id.contains(',')) => {
+            forecast::ids_target(ids.iter().map(String::as_str))
+                .map_err(|_| invalid("/ids", "/ids names no story.".into()))?
         }
         _ => {
             return Err(invalid(

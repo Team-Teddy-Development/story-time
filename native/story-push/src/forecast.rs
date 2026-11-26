@@ -263,20 +263,23 @@ fn parse_target(flags: &config::Flags) -> Result<Target, String> {
         (Some(id), None, None) if sprint::valid_id(id) => Ok(Target::Sprint(id.to_owned())),
         (Some(id), None, None) => Err(format!("sprint must be YYYY-Snn, got \"{id}\".")),
         (None, Some(id), None) => Ok(Target::Epic(id.to_owned())),
-        (None, None, Some(list)) => {
-            let mut ids: Vec<String> = Vec::new();
-            for id in list.split(',').map(str::trim).filter(|id| !id.is_empty()) {
-                if !ids.iter().any(|seen| seen == id) {
-                    ids.push(id.to_owned());
-                }
-            }
-            if ids.is_empty() {
-                Err("--ids names no story.".to_owned())
-            } else {
-                Ok(Target::Ids(ids))
-            }
-        }
+        (None, None, Some(list)) => ids_target(list.split(',')),
         _ => Err("Give exactly one of --sprint, --epic or --ids.".to_owned()),
+    }
+}
+
+pub(crate) fn ids_target<'a>(ids: impl IntoIterator<Item = &'a str>) -> Result<Target, String> {
+    let mut seen = std::collections::BTreeSet::new();
+    let ids: Vec<_> = ids
+        .into_iter()
+        .map(str::trim)
+        .filter(|id| !id.is_empty() && seen.insert(*id))
+        .map(str::to_owned)
+        .collect();
+    if ids.is_empty() {
+        Err("--ids names no story.".into())
+    } else {
+        Ok(Target::Ids(ids))
     }
 }
 
