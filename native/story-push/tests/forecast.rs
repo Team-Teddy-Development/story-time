@@ -259,6 +259,30 @@ fn a_sprint_target_is_committed_plus_adds_minus_drops_minus_done() {
 }
 
 #[test]
+fn a_sprint_forecast_ignores_membership_and_status_events_after_today() {
+    let p = Project::new();
+    p.closed(&[10; 5]);
+    for (id, status, later) in [
+        ("ST-301", "done", "2026-11-22 set sprint=2026-S07"),
+        ("ST-302", "in-progress", "2026-11-22 set status=in-progress"),
+    ] {
+        p.write(
+            id,
+            status,
+            "size: 4\n",
+            &[
+                "2026-11-10 set size=4, sprint=2026-S06".to_owned(),
+                "2026-11-18 set status=done".to_owned(),
+                later.to_owned(),
+            ],
+        );
+    }
+    let report = p.forecast(&["--sprint", "2026-S06", "--today", "2026-11-20"]);
+    assert_eq!(report["remaining_points"], 0);
+    assert_eq!(dates(&report), ["2026-11-20", "2026-11-20"]);
+}
+
+#[test]
 fn fewer_than_three_closed_sprints_give_unknown_dates_with_the_count() {
     let p = Project::new();
     p.closed(&[10, 10]).open("ST-201", Some(5), "");

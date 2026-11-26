@@ -151,8 +151,13 @@ fn open_stories(stories: Vec<&History>) -> Scope {
 /// A sprint's remaining scope on `today`: committed, plus adds and minus drops dated on or
 /// before `today`, minus what is done by `today`. Points are as sized on entry to the sprint.
 fn sprint_scope(sprint: &sprint::Sprint, stories: &[History], today: NaiveDate) -> Scope {
-    let trusted: Vec<&History> = stories.iter().filter(|s| s.gap.is_none()).collect();
-    let derived = sprint::derive(sprint, trusted.iter().map(|s| (s.id.as_str(), &s.log)));
+    let mut snapshot = sprint.clone();
+    snapshot.end = sprint.end.min(today);
+    let trusted = stories
+        .iter()
+        .filter(|s| s.gap.is_none())
+        .map(|s| (s.id.as_str(), &s.log));
+    let derived = sprint::derive(&snapshot, trusted);
     let mut open: Vec<(&str, Option<f64>)> = derived
         .committed
         .iter()
