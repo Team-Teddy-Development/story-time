@@ -55,7 +55,9 @@ pub(crate) struct Ahead {
 }
 
 /// The sprints a run draws for, in order, from the one holding `today`. That sprint counts the
-/// share of its calendar days after `today`, so a sprint with none left is skipped.
+/// share of its calendar days after `today`, so a sprint with none left is skipped. A sprint
+/// that starts before the previous one ends is left out, so overlapping `team.sprints` entries
+/// never give a run two draws for the same days.
 pub(crate) fn sprints_ahead(calendar: &Calendar, today: NaiveDate) -> Vec<Ahead> {
     let mut found: Vec<sprint::Sprint> = (today.year() - 1..=today.year() + 5)
         .flat_map(|year| (1..=99).map(move |n| format!("{year}-S{n:02}")))
@@ -63,8 +65,13 @@ pub(crate) fn sprints_ahead(calendar: &Calendar, today: NaiveDate) -> Vec<Ahead>
         .filter(|s| s.end > today)
         .collect();
     found.sort_by(|a, b| (a.start, &a.id).cmp(&(b.start, &b.id)));
-    found
-        .into_iter()
+    let mut kept: Vec<sprint::Sprint> = Vec::new();
+    for sprint in found {
+        if kept.last().is_none_or(|last| sprint.start > last.end) {
+            kept.push(sprint);
+        }
+    }
+    kept.into_iter()
         .map(|s| {
             let share = if s.start > today {
                 1.0
@@ -108,6 +115,7 @@ pub(crate) fn simulate(
 
 /// The nearest-rank percentile of `sorted`: the `ceil(p * n / 100)`th value, counting from one.
 pub(crate) fn nearest_rank<T>(sorted: &[T], percentile: usize) -> &T {
+    assert!(!sorted.is_empty(), "no runs to rank");
     &sorted[(percentile * sorted.len()).div_ceil(100).max(1) - 1]
 }
 
@@ -132,24 +140,40 @@ fn is_open(status: &str) -> bool {
     !matches!(status, "done" | "split" | "archived")
 }
 
+/// A story's status on `date`: its last status event on or before that day.
+fn status_on(story: &History, date: NaiveDate) -> Option<&str> {
+    story
+        .log
+        .status
+        .iter()
+        .rfind(|(d, _)| *d <= date)
+        .map(|(_, status)| status.as_str())
+}
+
 fn open_stories(stories: Vec<&History>) -> Scope {
     let mut scope = Scope {
         remaining: 0.0,
         unknown: Vec::new(),
     };
-    for story in stories.into_iter().filter(|s| is_open(&s.status)) {
-        match story.size {
-            Some(points) => scope.remaining += points,
-            None => scope
-                .unknown
-                .push(json!({"id": story.id, "reason": "not sized"})),
+    for story in stories {
+        if let Some(gap) = story.gap.as_ref().filter(|_| story.status.is_empty()) {
+            scope.unknown.push(json!({"id": story.id, "reason": gap}));
+        } else if is_open(&story.status) {
+            match story.size {
+                Some(points) => scope.remaining += points,
+                None => scope
+                    .unknown
+                    .push(json!({"id": story.id, "reason": "not sized"})),
+            }
         }
     }
     scope
 }
 
 /// A sprint's remaining scope on `today`: committed, plus adds and minus drops dated on or
-/// before `today`, minus what is done by `today`. Points are as sized on entry to the sprint.
+/// before `today`, minus the stories that are done, split or archived on `today` by their own
+/// status history, so a replay with a past `--today` ignores what happened later. Points are as
+/// sized on entry to the sprint.
 fn sprint_scope(sprint: &sprint::Sprint, stories: &[History], today: NaiveDate) -> Scope {
     let mut snapshot = sprint.clone();
     snapshot.end = sprint.end.min(today);
@@ -169,9 +193,13 @@ fn sprint_scope(sprint: &sprint::Sprint, stories: &[History], today: NaiveDate) 
             Move::Drop { .. } => open.retain(|(id, _)| *id != change.id),
         }
     }
-    for done in derived.done.iter().filter(|d| d.date <= today) {
-        open.retain(|(id, _)| *id != done.id);
-    }
+    open.retain(|(id, _)| {
+        let status = stories
+            .iter()
+            .find(|s| s.id == *id)
+            .and_then(|s| status_on(s, today));
+        status.is_none_or(is_open)
+    });
     let mut scope = Scope {
         remaining: open.iter().filter_map(|(_, p)| *p).sum(),
         unknown: open
@@ -236,12 +264,12 @@ fn parse_target(flags: &config::Flags) -> Result<Target, String> {
         (Some(id), None, None) => Err(format!("sprint must be YYYY-Snn, got \"{id}\".")),
         (None, Some(id), None) => Ok(Target::Epic(id.to_owned())),
         (None, None, Some(list)) => {
-            let ids: Vec<String> = list
-                .split(',')
-                .map(str::trim)
-                .filter(|id| !id.is_empty())
-                .map(str::to_owned)
-                .collect();
+            let mut ids: Vec<String> = Vec::new();
+            for id in list.split(',').map(str::trim).filter(|id| !id.is_empty()) {
+                if !ids.iter().any(|seen| seen == id) {
+                    ids.push(id.to_owned());
+                }
+            }
             if ids.is_empty() {
                 Err("--ids names no story.".to_owned())
             } else {
@@ -289,7 +317,7 @@ pub fn run(args: &[String]) -> Result<String, Failure> {
         );
         unknown_rows(&reason)
     } else if scope.remaining <= EPSILON && !scope.unknown.is_empty() {
-        unknown_rows("every story in the target is unsized, so no points remain to forecast")
+        unknown_rows("no sized points remain in the target, so there is nothing to forecast")
     } else {
         let ahead = sprints_ahead(&calendar, today);
         let mut rng = SplitMix64::new(seed);
@@ -306,7 +334,7 @@ pub fn run(args: &[String]) -> Result<String, Failure> {
             .map(|&p| match nearest_rank(&runs, p) {
                 Some(date) => json!({"percentile": p, "date": date.to_string()}),
                 None => json!({"percentile": p, "date": "unknown", "reason": format!(
-                    "{p}% of runs do not finish before the sprint calendar ends{}",
+                    "the {p}th-percentile run does not finish before the sprint calendar ends{}",
                     ahead.last().map_or(String::new(), |a| format!(" on {}", a.end)),
                 )}),
             })
@@ -506,6 +534,54 @@ mod tests {
         assert!(none.iter().all(|r| *r == Some(d("2026-11-13"))));
         let never = simulate(1e9, d("2026-11-13"), &ahead[..2], 5, &mut rng, |_| 10.0);
         assert!(never.iter().all(Option::is_none));
+    }
+
+    #[test]
+    fn the_default_seed_splits_ten_thousand_runs_by_the_pairs_it_draws() {
+        // Counts from an independent Python re-implementation of the generator and the draw.
+        let ends = [
+            d("2026-11-29"),
+            d("2026-12-13"),
+            d("2026-12-25"),
+            d("2027-01-08"),
+        ];
+        let ahead: Vec<Ahead> = ends.iter().map(|&end| Ahead { end, share: 1.0 }).collect();
+        let points = [8.0, 10.0, 12.0, 9.0, 11.0];
+        let mut rng = SplitMix64::new(1);
+        let runs = simulate(
+            20.0,
+            d("2026-11-15"),
+            &ahead,
+            RUNS,
+            &mut rng,
+            velocity_sample(&points),
+        );
+        let on = |end: &str| runs.iter().filter(|r| **r == Some(d(end))).count();
+        assert_eq!((on("2026-12-13"), on("2026-12-25")), (5_918, 4_082));
+        assert_eq!(*nearest_rank(&runs, 50), Some(d("2026-12-13")));
+        assert_eq!(*nearest_rank(&runs, 85), Some(d("2026-12-25")));
+    }
+
+    #[test]
+    fn overlapping_sprints_give_one_draw_for_the_days_they_share() {
+        let c = Calendar::from_settings(&serde_json::json!({"team": {
+            "sprintDays": 10,
+            "sprintAnchor": {"date": "2026-11-02", "tz": "UTC"},
+            "sprints": [{"id": "2026-S02", "start": "2026-11-16", "end": "2026-12-04"}],
+        }}))
+        .unwrap();
+        let ends: Vec<NaiveDate> = sprints_ahead(&c, d("2026-11-13"))
+            .iter()
+            .take(3)
+            .map(|a| a.end)
+            .collect();
+        assert_eq!(ends, [d("2026-12-04"), d("2026-12-25"), d("2027-01-08")]);
+    }
+
+    #[test]
+    #[should_panic(expected = "no runs to rank")]
+    fn ranking_no_runs_is_a_bug() {
+        nearest_rank::<u8>(&[], 50);
     }
 
     #[test]

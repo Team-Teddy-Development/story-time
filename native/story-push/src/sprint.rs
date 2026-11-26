@@ -134,6 +134,10 @@ impl Calendar {
     }
 }
 
+pub(crate) fn is_weekend(d: NaiveDate) -> bool {
+    weekend(d)
+}
+
 fn weekend(d: NaiveDate) -> bool {
     matches!(d.weekday(), Weekday::Sat | Weekday::Sun)
 }
@@ -221,7 +225,7 @@ fn by_date<T: Clone>(events: &[(NaiveDate, T)]) -> Vec<(NaiveDate, T)> {
 }
 
 /// The last `set size=` on or before `date`. A size set later never reaches back.
-fn points_at(log: &StoryLog, date: NaiveDate) -> Option<f64> {
+pub(crate) fn points_at(log: &StoryLog, date: NaiveDate) -> Option<f64> {
     by_date(&log.size)
         .into_iter()
         .rfind(|(d, _)| *d <= date)
