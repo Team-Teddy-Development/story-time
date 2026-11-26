@@ -114,8 +114,9 @@ before that push.
 
 When creating several stories from one source, show a table with one row per
 request. Include its title, statement, evidence links, and proposed outcome in
-each row. Wait for approval before writing. Prior **gap-sweep** approval counts
-only for rows whose evidence and proposed outcome have not changed.
+each row. Wait for approval before writing. Rows the user already approved in
+a **gap-sweep** table count as that approval only when their evidence and
+proposed outcome have not changed.
 
 ## 5. Report
 
