@@ -972,7 +972,7 @@ fn summary(story: &Js, digest: Option<&String>) -> Value {
         "size": size,
         "epic": text(story.get("epic")),
         "depends_on": depends_on,
-        "labels": blocked::labels(story),
+        "labels": crate::blocked::labels(story),
         "remote_url": text(story.get("remote_url")),
         "updated": text(story.get("updated")),
         "sha256": digest,
@@ -1060,7 +1060,7 @@ impl Filter {
                 .as_deref()
                 .is_none_or(|e| field("epic") == Some(e))
             && self.labels.as_ref().is_none_or(|wanted| {
-                let have = blocked::labels(story);
+                let have = crate::blocked::labels(story);
                 wanted.iter().all(|w| have.iter().any(|h| h == w))
             })
     }
@@ -1334,6 +1334,18 @@ impl Repo {
         Ok(sha(lenient_story::serialize(story).as_bytes()))
     }
 
+    /// Saves the blocked stories that a move to done cleared, and names them in `result`.
+    fn save_unblocked(&self, unblocked: &[Js], result: &mut Value) -> Result<(), ToolError> {
+        for story in unblocked {
+            self.save(story)?;
+        }
+        if !unblocked.is_empty() {
+            let ids: Vec<String> = unblocked.iter().map(|s| s.get("id").string()).collect();
+            result["auto_cleared_blocked"] = json!(ids);
+        }
+        Ok(())
+    }
+
     #[allow(clippy::too_many_arguments)]
     fn written(
         &self,
@@ -1457,8 +1469,14 @@ fn update_in(server: &Server, repo: &Repo, args: &Map<String, Value>) -> Result<
         },
         set::Refusal::Other(message) => repo.malformed(&message),
     })?;
+    let done = |s: &Js| s.get("status").string() == "done";
+    let unblocked = if done(&change.story) && !done(&current) {
+        crate::blocked::unblocked(&repo.stories()?.0, id)
+    } else {
+        Vec::new()
+    };
     let after = repo.save(&change.story)?;
-    Ok(repo.written(
+    let mut result = repo.written(
         "story_update",
         "updated",
         &change.story,
@@ -1466,7 +1484,9 @@ fn update_in(server: &Server, repo: &Repo, args: &Map<String, Value>) -> Result<
         &after,
         fields,
         Some(change.line),
-    ))
+    );
+    repo.save_unblocked(&unblocked, &mut result)?;
+    Ok(result)
 }
 
 /// What `story-accept` leaves behind that a story still lacks: every criterion checkbox ticked
@@ -1577,8 +1597,8 @@ fn accept_in(repo: &Repo, args: &Map<String, Value>) -> Result<Value, ToolError>
     let line = "accepted with evidence for every criterion";
     let date = chrono::Utc::now().format("%Y-%m-%d").to_string();
     let next = lenient_story::append_changelog(&Js::Obj(next), line, &date);
+    let unblocked = crate::blocked::unblocked(&repo.stories()?.0, id);
     let after = repo.save(&next)?;
-    let cleared = blocked::auto_clear_after_done(repo, id)?;
     let mut result = repo.written(
         "story_accept",
         "updated",
@@ -1588,9 +1608,7 @@ fn accept_in(repo: &Repo, args: &Map<String, Value>) -> Result<Value, ToolError>
         vec!["status".into(), heading.into(), "Evidence".into()],
         Some(line.into()),
     );
-    if !cleared.is_empty() {
-        result["auto_cleared_blocked"] = json!(cleared);
-    }
+    repo.save_unblocked(&unblocked, &mut result)?;
     Ok(result)
 }
 
@@ -1703,7 +1721,7 @@ fn create_in(repo: &Repo, args: &Map<String, Value>, floor: f64) -> Result<Value
 }
 
 enum Kind {
-    Flag,
+    Flag(bool),
     Text(usize),
     Choice(&'static [&'static str]),
     List(&'static Kind, usize),
@@ -1717,7 +1735,7 @@ enum Kind {
 impl Kind {
     fn schema(&self) -> Value {
         match self {
-            Kind::Flag => json!({"type": "boolean", "default": false}),
+            Kind::Flag(default) => json!({"type": "boolean", "default": default}),
             Kind::Text(max) => json!({"type": "string", "maxLength": max}),
             Kind::Choice(choices) => json!({"type": "string", "enum": choices}),
             Kind::List(item, max) => {
@@ -1747,7 +1765,7 @@ impl Kind {
             Kind::UnblockEntries => json!({
                 "type": "array",
                 "minItems": 1,
-                "maxItems": 5,
+                "maxItems": 20,
                 "items": object(
                     &["title", "acceptance_criteria"],
                     json!({
@@ -1768,7 +1786,7 @@ impl Kind {
     }
     fn check(&self, value: &Value, pointer: &str) -> Result<(), ToolError> {
         let ok = match (self, value) {
-            (Kind::Flag, Value::Bool(_)) => true,
+            (Kind::Flag(_), Value::Bool(_)) => true,
             (Kind::Text(max), Value::String(s)) => s.chars().count() <= *max,
             (Kind::Choice(choices), Value::String(s)) => choices.contains(&s.as_str()),
             (Kind::List(item, max), Value::Array(items)) => {
@@ -1811,7 +1829,7 @@ impl Kind {
                     })
             }
             (Kind::UnblockEntries, Value::Array(entries)) => {
-                (1..=5).contains(&entries.len())
+                (1..=20).contains(&entries.len())
                     && entries.iter().all(|entry| {
                         let Some(fields) = entry.as_object() else {
                             return false;
@@ -2065,7 +2083,7 @@ const TOOLS: [Tool; 11] = [
             },
             Field {
                 name: "allow_duplicate_title",
-                kind: Kind::Flag,
+                kind: Kind::Flag(false),
             },
         ],
         required: &["title"],
@@ -2095,7 +2113,7 @@ const TOOLS: [Tool; 11] = [
             },
             Field {
                 name: "release_wip",
-                kind: Kind::Flag,
+                kind: Kind::Flag(true),
             },
         ],
         required: &["id", "expected_sha256", "reason", "blocker_kind"],
@@ -2129,7 +2147,7 @@ const TOOLS: [Tool; 11] = [
             },
             Field {
                 name: "replace_existing_unblocks",
-                kind: Kind::Flag,
+                kind: Kind::Flag(false),
             },
         ],
         required: &["id", "expected_sha256", "unblocks"],
@@ -2155,7 +2173,7 @@ const TOOLS: [Tool; 11] = [
             },
             Field {
                 name: "force",
-                kind: Kind::Flag,
+                kind: Kind::Flag(false),
             },
         ],
         required: &["id", "expected_sha256"],
