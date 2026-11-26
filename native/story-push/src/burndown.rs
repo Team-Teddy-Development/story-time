@@ -57,18 +57,34 @@ pub fn run_burndown(args: &[String]) -> Result<String, Failure> {
             BURNDOWN_USAGE,
         ));
     }
-    let today = date_flag(&flags, "today", BURNDOWN_USAGE)?
-        .unwrap_or_else(|| chrono::Local::now().date_naive());
+    let given = date_flag(&flags, "today", BURNDOWN_USAGE)?;
     let loaded = config::load(flags.value("config"))?;
     let settings =
         config::parse(&loaded.raw).map_err(|e| format!("{}: {e}", loaded.path.display()))?;
     let calendar = Calendar::from_settings(&settings)
         .ok_or("no sprint calendar in settings (team.sprintAnchor or team.sprints).")?;
     let sprint = calendar.resolve(id)?;
+    if sprint.end < sprint.start {
+        return Err(format!(
+            "{id} ends ({}) before it starts ({}).",
+            sprint.end, sprint.start
+        )
+        .into());
+    }
+    let today = given.unwrap_or_else(|| today_in(calendar.tz()));
     let dir = list::backlog_dir(flags.value("dir"), &loaded.root, &settings)?;
     let stories = metrics::histories(&dir)?;
     let report = burndown(&stories, &calendar, &sprint, today);
     Ok(render(&report, &flags, burndown_text))
+}
+
+/// The date now in the calendar's zone. The zone is applied through `TZ`, which the platform
+/// clock reads, and an unknown zone name reads as UTC.
+fn today_in(tz: Option<&str>) -> NaiveDate {
+    if let Some(tz) = tz {
+        std::env::set_var("TZ", tz);
+    }
+    chrono::Local::now().date_naive()
 }
 
 fn burndown(
@@ -121,7 +137,7 @@ fn burndown(
     let done_steps: Vec<(NaiveDate, f64)> = derived
         .done
         .iter()
-        .filter_map(|d| Some((d.date.max(entered[d.id.as_str()]), d.points?)))
+        .filter_map(|d| Some((d.date.max(*entered.get(d.id.as_str())?), d.points?)))
         .collect();
 
     let sum_to = |steps: &[(NaiveDate, f64)], day: NaiveDate| -> f64 {

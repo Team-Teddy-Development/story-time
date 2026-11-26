@@ -27,11 +27,11 @@ impl Project {
     }
 
     fn story(&self, id: &str, front: &str, changelog: &[&str]) -> &Self {
-        let status = if changelog.iter().any(|l| l.contains("status=done")) {
-            "done"
-        } else {
-            "draft"
-        };
+        let status = changelog
+            .iter()
+            .rev()
+            .find_map(|l| l.split("status=").nth(1))
+            .unwrap_or("draft");
         let log: String = changelog.iter().map(|l| format!("- {l}\n")).collect();
         fs::write(
             self.0.join("backlog").join(format!("{id}.md")),
@@ -178,15 +178,16 @@ fn rows_cover_every_day_with_ideal_weekends_today_and_future_null() {
     for r in rows {
         let after = r["day"].as_str().unwrap() > "2026-11-06";
         assert_eq!(r["remaining"].is_null(), after, "{r}");
-        assert!(r["scope"].is_number() || after, "{r}");
+        assert_eq!(r["scope"], json!(10), "{r}");
     }
     assert_eq!(report["metric"], "burndown");
     assert_eq!(report["units"], "points");
     assert_eq!(report["window"], "2026-11-02..2026-11-15");
-    assert!(report["source"].as_str().unwrap().contains("changelog"));
-    assert!(report["definition"].is_string());
+    assert_eq!(report["rows"][1]["ideal"], json!(9.23));
+    assert_eq!(report["rows"][12]["ideal"], json!(0.77));
     assert_eq!(report["unknown"], json!([]));
     assert_eq!(report["sprint"]["id"], "2026-S01");
+    assert_eq!(report["as_of"], "2026-11-06");
 }
 
 #[test]
@@ -195,6 +196,7 @@ fn an_unsized_story_is_unknown_and_adds_nothing_to_scope() {
     p.story("ST-005", "", &["2026-11-01 set sprint=2026-S01"]);
     let report = p.burndown("2026-11-06");
     assert_eq!(row(&report, "2026-11-02")["scope"], json!(10));
+    assert_eq!(row(&report, "2026-11-06")["remaining"], json!(10));
     assert_eq!(
         report["unknown"],
         json!([{"id": "ST-005", "reason": "no size when it entered the sprint"}])
@@ -405,4 +407,101 @@ fn an_unknown_epic_or_id_is_refused() {
         "2026-11-08",
     ]);
     assert_eq!(out.status.code(), Some(1));
+}
+
+#[test]
+fn a_story_done_and_then_moved_out_leaves_scope_without_counting_done_twice() {
+    let p = Project::fixture();
+    p.story(
+        "ST-001",
+        "",
+        &[
+            "2026-11-01 set size=5, sprint=2026-S01",
+            "2026-11-03 set status=done",
+            "2026-11-05 set sprint=2026-S02",
+        ],
+    );
+    let report = p.burndown("2026-11-06");
+    let before = row(&report, "2026-11-04");
+    assert_eq!(
+        (before["scope"].clone(), before["remaining"].clone()),
+        (json!(10), json!(10))
+    );
+    let after = row(&report, "2026-11-05");
+    assert_eq!(
+        (after["scope"].clone(), after["remaining"].clone()),
+        (json!(5), json!(5))
+    );
+}
+
+#[test]
+fn a_story_already_done_when_it_joins_adds_scope_and_done_the_same_day() {
+    let p = Project::fixture();
+    p.story(
+        "ST-004",
+        "",
+        &[
+            "2026-11-01 set size=2",
+            "2026-11-03 set status=done",
+            "2026-11-05 set sprint=2026-S01",
+        ],
+    );
+    let report = p.burndown("2026-11-06");
+    let day = row(&report, "2026-11-05");
+    assert_eq!(
+        (day["scope"].clone(), day["remaining"].clone()),
+        (json!(12), json!(10))
+    );
+    assert_eq!(row(&report, "2026-11-04")["remaining"], json!(10));
+}
+
+#[test]
+fn the_default_today_follows_the_calendar_time_zone() {
+    if !std::path::Path::new("/usr/share/zoneinfo/Pacific/Kiritimati").exists() {
+        return;
+    }
+    let as_of = |tz: &str| {
+        let p = Project::new();
+        fs::write(
+            p.0.join(".story-time/settings.json"),
+            format!(r#"{{"tracker":"files","sync":"off","team":{{"sprintDays":10,"sprintAnchor":{{"date":"2026-11-02","tz":"{tz}"}}}}}}"#),
+        )
+        .unwrap();
+        p.json(&["burndown", "--sprint", "2026-S01", "--json"])["as_of"]
+            .as_str()
+            .unwrap()
+            .to_owned()
+    };
+    assert_ne!(as_of("Pacific/Kiritimati"), as_of("Pacific/Pago_Pago"));
+}
+
+#[test]
+fn burnup_stops_counting_a_story_done_after_it_is_reopened() {
+    let p = Project::new();
+    p.story(
+        "ST-011",
+        "epic: EP-1\n",
+        &[
+            "2026-11-01 set size=3",
+            "2026-11-03 set status=done",
+            "2026-11-05 set status=in-progress",
+        ],
+    );
+    let report = p.json(&[
+        "burnup",
+        "--epic",
+        "EP-1",
+        "--from",
+        "2026-11-02",
+        "--to",
+        "2026-11-06",
+        "--json",
+    ]);
+    let done: Vec<Value> = report["rows"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|r| r["done"].clone())
+        .collect();
+    assert_eq!(done, [json!(0), json!(3), json!(3), json!(0), json!(0)]);
 }
