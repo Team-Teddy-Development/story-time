@@ -2342,19 +2342,6 @@ impl Tool {
                 format!("/{missing} is required."),
             ));
         }
-        if let Some(workspace) = &server.workspace {
-            let on_gitea = server
-                .key(args)
-                .ok()
-                .and_then(|key| workspace.repository(&key))
-                .is_some_and(|repo| repo.forge == registry::Forge::Gitea);
-            if propose::handles(self.name) && on_gitea {
-                return Err(fail(
-                    "forge_not_supported",
-                    "Proposals on a Gitea repository are not supported yet.",
-                ));
-            }
-        }
         match &server.workspace {
             Some(workspace) if propose::handles(self.name) => {
                 propose::run(server, workspace, caller, self.name, args)
