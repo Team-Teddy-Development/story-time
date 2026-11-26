@@ -8,6 +8,19 @@ description: Run the Definition of Ready gate on one or more stories — the aut
 `story` means the CLI from the **story-time** skill. Only this skill moves a
 story to `ready`.
 
+## 0. Take the refined review queue first
+
+With no story named, start from the refined review queue. It holds stories
+that failed or skipped an earlier review and now wait in `refined`.
+
+```bash
+story rank --json
+```
+
+`refinedQueue` lists them oldest first, with `days` in refined (absent when
+unknown). Review each one through steps 1 to 3 before any draft. Every review
+ends one of two ways: promote the story to `ready`, or name the remaining gap.
+
 ## 1. Automated checks
 
 ```bash
@@ -30,6 +43,7 @@ Every `error` blocks. Route each one to the skill that fixes it:
 | `spike.unblocks` | Link the waiting story (`story set <story> depends_on=<spike>`), or archive the spike. A spike nobody waits on buys nothing |
 | `spike.*` | **spike** skill |
 | `state_machine.exists` | **state-machine** skill |
+| `refined.stale` | A warning: the story has waited in `refined` past `team.refinedStaleDays`. Review it now |
 
 Spikes and chores with exactly one acceptance criterion need no size.
 Warnings don't block, but report them.
@@ -67,6 +81,9 @@ each item below and give a one-line reason:
   re-runs lint and refuses if anything regressed.
 - **Fail:** set `status=refined` if it was `draft` and only small gaps remain,
   and list the gaps.
+- **Fail on a refined story:** `story set <id> status=refined --note "Gap: <what remains>"`.
+  The note names the remaining gap, and the new changelog line restarts its
+  clock in the refined review queue.
 
 Never use `--force`. If the user wants to pull an unready story anyway, they
 can say so explicitly. Record their reason in the note.

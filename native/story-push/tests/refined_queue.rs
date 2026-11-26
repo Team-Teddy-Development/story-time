@@ -114,7 +114,13 @@ fn stale(lint: &Value, id: &str) -> Vec<String> {
         .unwrap()
         .iter()
         .filter(|f| f["rule"] == "refined.stale")
-        .map(|f| format!("{}: {}", f["severity"].as_str().unwrap(), f["message"].as_str().unwrap()))
+        .map(|f| {
+            format!(
+                "{}: {}",
+                f["severity"].as_str().unwrap(),
+                f["message"].as_str().unwrap()
+            )
+        })
         .collect()
 }
 
@@ -141,7 +147,7 @@ fn rank_lists_the_refined_review_queue_oldest_first_with_ages() {
     assert_eq!(
         rank["refinedQueue"],
         json!([
-            {"id": "ST-005", "title": "No date", "refinedSince": null, "days": null},
+            {"id": "ST-005", "title": "No date"},
             {"id": "ST-002", "title": "Thirty", "refinedSince": ago(30), "days": 30},
             {"id": "ST-004", "title": "No event", "refinedSince": ago(20), "days": 20},
             {"id": "ST-001", "title": "Ten", "refinedSince": ago(10), "days": 10},
@@ -220,8 +226,14 @@ fn the_skills_take_the_refined_queue_first() {
         .find("refined review queue")
         .expect("story-ready names the refined review queue");
     let decide = ready.find("## 3. Decide").expect("story-ready decide step");
-    assert!(queue < decide, "story-ready reads the queue before deciding");
-    assert!(ready.contains("`story rank --json`"), "story-ready names the command");
+    assert!(
+        queue < decide,
+        "story-ready reads the queue before deciding"
+    );
+    assert!(
+        ready.contains("story rank --json"),
+        "story-ready names the command"
+    );
     assert!(
         ready.contains("name the remaining gap"),
         "story-ready ends each review with ready or a named gap"
@@ -234,7 +246,10 @@ fn the_skills_take_the_refined_queue_first() {
     let review = refinement
         .find("Review stale requests")
         .expect("refinement reviews the inventory");
-    assert!(queue < review, "refinement takes the refined queue before the wider review");
+    assert!(
+        queue < review,
+        "refinement takes the refined queue before the wider review"
+    );
     assert!(
         ready.contains("restarts its clock") && refinement.contains("story-ready"),
         "a re-review that fails records the gap"

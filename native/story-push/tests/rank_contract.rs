@@ -81,7 +81,7 @@ impl Sandbox {
         let native = self.run(true, args);
         assert_eq!(before, self.files(), "native changed files for {args:?}");
         assert_eq!(
-            String::from_utf8_lossy(&native.stdout),
+            without_refined_queue(&String::from_utf8_lossy(&native.stdout)),
             String::from_utf8_lossy(&node.stdout),
             "stdout differs for {args:?}; native stderr: {}; node stderr: {}",
             String::from_utf8_lossy(&native.stderr),
@@ -117,6 +117,17 @@ impl Sandbox {
 impl Drop for Sandbox {
     fn drop(&mut self) {
         let _ = fs::remove_dir_all(&self.0);
+    }
+}
+
+/// Native output without the refined review queue (ST-209), which Node never printed.
+fn without_refined_queue(out: &str) -> String {
+    if let Some(start) = out.find(",\n  \"refinedQueue\": ") {
+        return format!("{}\n}}\n", &out[..start]);
+    }
+    match out.find("\nRefined review queue") {
+        Some(start) => out[..start].to_owned(),
+        None => out.to_owned(),
     }
 }
 
@@ -221,6 +232,12 @@ fn every_argument_form_matches_node() {
     mixed(&s);
     let plain = s.both_forms(&[], 0);
     assert!(plain.contains("Excluded:"), "{plain}");
+    assert!(
+        plain.ends_with(
+            "\nRefined review queue (oldest first; run story-ready on each):\n  ST-006  age unknown  Refined\n  ST-018  age unknown  Refined blocked\n"
+        ),
+        "{plain}"
+    );
     for args in [
         &["--include-refined"][..],
         &["--limit", "2"],

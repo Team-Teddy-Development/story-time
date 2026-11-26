@@ -84,7 +84,7 @@ pub(crate) fn histories(dir: &Path) -> Result<Vec<History>, String> {
 
 /// Reads `- DATE set k=v, status=S — note` and `- DATE split into ...` lines. A status named only
 /// in the note is not an event. `sprint=` and `size=` are read from the same assignments.
-fn history(id: String, parsed: &Value) -> History {
+pub(crate) fn history(id: String, parsed: &Value) -> History {
     let text = parsed["sections"]["Changelog"].as_str().unwrap_or("");
     let mut log = StoryLog::default();
     for line in text.lines() {

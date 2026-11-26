@@ -25,6 +25,9 @@ evidence for dependencies; they do not reenter refinement.
 1. Run `story list --json`, `story stats --json`, `story lint --json`, and
    `story rank --include-refined --json`. Read findings even when lint exits 1.
    Use the configured backlog, not an assumed `backlog/` or `ST` prefix.
+   In backlog mode, take the refined review queue first: `refinedQueue` in the
+   rank output lists refined stories oldest first. Run the **story-ready** skill
+   on each, which promotes it to `ready` or names the remaining gap.
 2. Review stale requests, duplicates, unclear criteria, oversized stories,
    missing estimates, and blocked dependencies. Record the source evidence and
    proposed action for each affected ID. Route ambiguous intent to a question;
