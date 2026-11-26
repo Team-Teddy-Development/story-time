@@ -603,7 +603,35 @@ fn a_write_is_one_commit_on_the_story_branch_and_one_pull_request() {
     assert_eq!(pulls[0].head, "story-time/VC-109");
     assert_eq!(pulls[0].base, "main");
     assert!(pulls[0].title.contains("VC-109") && pulls[0].title.contains("Roster API v2"));
-    assert_eq!(pulls[0].body.lines().next().unwrap(), "Stories: VC-109");
+    let body = &pulls[0].body;
+    assert_eq!(body.lines().next(), Some("Stories: VC-109"));
+    assert_eq!(
+        body.lines()
+            .filter(|line| line.starts_with("Stories:"))
+            .count(),
+        1
+    );
+    let headings = |body: &str| {
+        body.lines()
+            .filter_map(|line| line.strip_prefix("## "))
+            .map(str::to_owned)
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(headings(body), ["Change", "Verification"], "{body}");
+
+    let template_path =
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../../.github/PULL_REQUEST_TEMPLATE.md");
+    let template = fs::read_to_string(&template_path)
+        .unwrap_or_else(|error| panic!("{}: {error}", template_path.display()));
+    assert!(template.starts_with("Stories: "));
+    assert_eq!(
+        template
+            .lines()
+            .filter(|line| line.starts_with("Stories:"))
+            .count(),
+        1
+    );
+    assert_eq!(headings(&template), headings(body));
 
     // A read of the story now names the proposal. A read of the branch returns its content.
     let shown = server.show("VC-109");
