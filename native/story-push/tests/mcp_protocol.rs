@@ -1343,7 +1343,10 @@ fn story_accept_records_evidence_and_preserves_criterion_wording() {
     let second = "Given two, when run, then it passes";
     fixture.write(
         "backlog/ST-009.md",
-        &accepting("story", &format!("- [ ] {first}\n- [ ] {second}"), None),
+        &format!(
+            "{}\n## Changelog\n- 2026-11-14 set status=in-progress\n",
+            accepting("story", &format!("- [ ] {first}\n- [ ] {second}"), None)
+        ),
     );
     let before = sha256(&fixture, "ST-009");
     let mut server = fixture.writer();
@@ -1364,6 +1367,21 @@ fn story_accept_records_evidence_and_preserves_criterion_wording() {
     assert!(saved.contains("First integration test passed."));
     assert!(saved.contains("Second integration test passed."));
     server.finish();
+
+    let today = chrono::Utc::now().format("%Y-%m-%d").to_string();
+    assert!(saved.contains(&format!(
+        "- {today} set status=done \u{2014} accepted with evidence for every criterion"
+    )));
+    let metrics = fixture.cli(&["metrics", "--from", &today, "--to", &today, "--json"]);
+    let throughput = metrics["figures"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|f| f["metric"] == "throughput")
+        .unwrap();
+    assert_eq!(throughput["stories"], json!(["ST-009"]), "{metrics}");
+    let gaps = throughput["unknown"].as_array().unwrap();
+    assert!(gaps.iter().all(|g| g["id"] != "ST-009"), "{metrics}");
 }
 
 #[test]
