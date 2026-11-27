@@ -1,0 +1,67 @@
+# Daily taxonomy upkeep (ST-215). Copy to .github/workflows/taxonomy-propose.yml in a
+# repository that has .story-time/taxonomy.json.
+#
+# It runs `story taxonomy propose --write`. Claude invents names for the stories that
+# `story group` leaves unresolved, and only names Jev proves are written. The workflow then
+# opens a pull request when taxonomy.json changed. Nothing merges by itself.
+#
+# Repository secrets:
+#   TYPESAFE_API_KEY   Jev, which proves each proposed name
+#   ANTHROPIC_API_KEY  Claude, which invents the names
+#   STORY_TIME_TOKEN   read access to Team-Teddy-Development/story-time, to install `story`
+name: taxonomy-propose
+
+on:
+  schedule:
+    # Daily at 11:41 UTC. Pick a minute off the hour.
+    - cron: "41 11 * * *"
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: taxonomy-propose
+  cancel-in-progress: false
+
+jobs:
+  propose:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install story
+        run: |
+          git config --global url."https://x-access-token:${{ secrets.STORY_TIME_TOKEN }}@github.com/".insteadOf "https://github.com/"
+          cargo install --locked --git https://github.com/Team-Teddy-Development/story-time story-time-native --bin story
+
+      - name: Propose and prove names
+        env:
+          TYPESAFE_API_KEY: ${{ secrets.TYPESAFE_API_KEY }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: story taxonomy propose --write | tee proposal.txt
+
+      - name: Open a pull request when taxonomy.json changed
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if git diff --quiet -- .story-time/taxonomy.json; then
+            echo "No accepted names; nothing to open."
+            exit 0
+          fi
+          branch="taxonomy/$(date -u +%Y-%m-%d)"
+          git switch -c "$branch"
+          git -c user.name="story-time" -c user.email="story-time@users.noreply.github.com" \
+            commit -m "taxonomy: add names proven by Jev" -- .story-time/taxonomy.json
+          git push origin "$branch"
+          {
+            echo "Names that \`story taxonomy propose\` invented for uncovered stories and Jev proved."
+            echo "After merge, taxonomy-apply runs story group --sync-fields, story group --apply and story push."
+            echo
+            echo '```'
+            cat proposal.txt
+            echo '```'
+          } > body.md
+          # A repository that enforces story-link needs a Stories: line or an exemption label here.
+          gh pr create --title "Taxonomy: new names for uncovered stories" --body-file body.md

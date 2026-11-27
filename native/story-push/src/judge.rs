@@ -15,7 +15,7 @@ use serde_json::{json, Map, Value};
 use std::{sync::LazyLock, time::Duration};
 
 pub(crate) const JEV_ENDPOINT: &str = "https://api.typesafe.ai/v1/systemone";
-const JEV_DEFAULT_MODEL: &str = "jev-1.13.0";
+pub(crate) const JEV_DEFAULT_MODEL: &str = "jev-1.13.0";
 const JEV_INPUT_USD_PER_MTOK: f64 = 0.042;
 const FIB: [f64; 7] = [1.0, 2.0, 3.0, 5.0, 8.0, 13.0, 20.0];
 const CLOSED: [&str; 3] = ["done", "split", "archived"];
@@ -346,7 +346,7 @@ fn is_spike(story: &Js) -> bool {
 }
 
 /// `(spike ? sections?.Question : sections?.Story) ?? ''`.
-fn statement(story: &Js) -> String {
+pub(crate) fn statement(story: &Js) -> String {
     let name = if is_spike(story) { "Question" } else { "Story" };
     match story.get("sections").get(name) {
         Js::Undefined => String::new(),
@@ -354,7 +354,7 @@ fn statement(story: &Js) -> String {
     }
 }
 
-fn title(story: &Js) -> String {
+pub(crate) fn title(story: &Js) -> String {
     match story.get("title") {
         Js::Undefined => String::new(),
         v => v.string(),
@@ -387,7 +387,7 @@ const STOP: [&str; 23] = [
     "and", "of", "for", "me", "will", "get", "want", "need",
 ];
 
-fn words(s: &str) -> Vec<String> {
+pub(crate) fn words(s: &str) -> Vec<String> {
     let lower = s.to_lowercase();
     WORD.find_iter(&lower)
         .map(|m| m.as_str().to_owned())
@@ -715,16 +715,16 @@ fn interpret(story: &Js, answers: &Map<String, Value>) -> Decisions {
 }
 
 #[derive(Clone, Copy)]
-struct Retry {
-    max_attempts: u32,
-    base_delay_ms: f64,
-    max_delay_ms: f64,
-    jitter_ratio: f64,
-    max_retry_after_ms: f64,
-    request_timeout: Duration,
+pub(crate) struct Retry {
+    pub(crate) max_attempts: u32,
+    pub(crate) base_delay_ms: f64,
+    pub(crate) max_delay_ms: f64,
+    pub(crate) jitter_ratio: f64,
+    pub(crate) max_retry_after_ms: f64,
+    pub(crate) request_timeout: Duration,
 }
 impl Retry {
-    const DEFAULT: Retry = Retry {
+    pub(crate) const DEFAULT: Retry = Retry {
         max_attempts: 3,
         base_delay_ms: 500.0,
         max_delay_ms: 5_000.0,
@@ -741,16 +741,16 @@ enum Canary {
     Failed,
 }
 
-struct Answer {
-    model: String,
-    answers: Map<String, Value>,
-    input: u64,
-    output: u64,
+pub(crate) struct Answer {
+    pub(crate) model: String,
+    pub(crate) answers: Map<String, Value>,
+    pub(crate) input: u64,
+    pub(crate) output: u64,
 }
 
 /// `JevClient`: strict decoding, retries for 408/429/5xx/timeouts/transport errors, a key
 /// rejection that latches for the run, and a contradiction canary before the first real call.
-struct Client {
+pub(crate) struct Client {
     endpoint: String,
     key: String,
     model: String,
@@ -762,7 +762,12 @@ struct Client {
 }
 
 impl Client {
-    fn new(endpoint: &str, key: String, model: String, retry: Retry) -> Result<Self, String> {
+    pub(crate) fn new(
+        endpoint: &str,
+        key: String,
+        model: String,
+        retry: Retry,
+    ) -> Result<Self, String> {
         let http = reqwest::blocking::Client::builder()
             .redirect(reqwest::redirect::Policy::none())
             .timeout(retry.request_timeout)
@@ -780,7 +785,11 @@ impl Client {
         })
     }
 
-    fn decide(&mut self, state: &Value, questions: &Value) -> Result<Answer, &'static str> {
+    pub(crate) fn decide(
+        &mut self,
+        state: &Value,
+        questions: &Value,
+    ) -> Result<Answer, &'static str> {
         if self.auth_rejected {
             return Err("auth_rejected");
         }
@@ -1019,7 +1028,7 @@ static EGRESS: LazyLock<[Regex; 3]> = LazyLock::new(|| {
 });
 
 /// `scanPayload(...).length > 0`: any string that looks like personal data or a secret.
-fn egress_findings(v: &Value) -> bool {
+pub(crate) fn egress_findings(v: &Value) -> bool {
     match v {
         Value::String(s) => EGRESS.iter().any(|re| re.is_match(s)),
         Value::Array(items) => items.iter().any(egress_findings),
@@ -1029,4 +1038,4 @@ fn egress_findings(v: &Value) -> bool {
 }
 
 #[cfg(test)]
-mod tests;
+pub(crate) mod tests;

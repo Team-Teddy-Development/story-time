@@ -1,0 +1,44 @@
+{"epics":[
+ {"name":"Platform & infrastructure","description":"Hosting, OS roles, database roles and credentials, the workflow runtime, health, observability and recovery budgets for Core","features":[
+  {"name":"Core runtime hosting","description":"Run Core API, workers and relay on the dedicated EC2 host with isolated roles"},
+  {"name":"Database roles & credentials","description":"Database privileges, grants, read-only credentials and secret rotation"},
+  {"name":"Workflow runtime (Temporal)","description":"Rust Temporal workers, history migration, long-operation admission and status"},
+  {"name":"Observability & recovery budgets","description":"Metrics, business outcome measures, failure budgets and Redis-down behaviour"}]},
+ {"name":"Core cutover","description":"Strangler migration: move varsity-engine callers off the legacy DAL onto Core commands and retire the old paths","features":[
+  {"name":"Engine call cutovers","description":"Cut one varsity-engine module's calls over to the Core API"},
+  {"name":"Bypass retirement","description":"Remove migrated bypass paths and legacy credentials; verify Rust conversion"},
+  {"name":"Cutover rehearsal & rollback","description":"One-writer capability cutovers rehearsed with rollback"}]},
+ {"name":"Core contracts & domain model","description":"The shared ontology, identities, topology, request context and the delivery contract every Core domain relies on","features":[
+  {"name":"Ontology & identities","description":"Domain concepts, Rust types and shared identities with compatibility fixtures"},
+  {"name":"Topology & registrations","description":"Dependency and runtime graphs, static domain registration, diagrams"},
+  {"name":"Access & request context","description":"Authenticated callers, scoped request context, protected-action serialization"}]},
+ {"name":"Competition & results","description":"Schools, programs, schedules, fixtures, scores, results, standings and statistics","features":[
+  {"name":"Schools & programs","description":"Canonical school and program identities and the directory"},
+  {"name":"Schedules & fixtures","description":"Schedules, fixture revisions, roster snapshots, MAIS schedule proposals"},
+  {"name":"Scores & corrections","description":"Football and other sport scores, finals and corrections with receipts"},
+  {"name":"Standings & statistics","description":"Standings and statistics read from versioned results"}]},
+ {"name":"Athletes & privacy","description":"Athlete profiles, guardian consent and personal data rights","features":[
+  {"name":"Athlete profiles & guardian consent","description":"Athlete profiles and guardian claim and consent"},
+  {"name":"Personal data export","description":"Export personal records without cross-person disclosure"},
+  {"name":"Personal data erasure","description":"Erase personal data with suppression-first recovery"}]},
+ {"name":"Recruit portal","description":"Coaches and programs find, track and relate to recruits","features":[
+  {"name":"Prospects & private notes","description":"Program-scoped prospects and private notes"},
+  {"name":"Relationship graph","description":"Verified connections and graph traversal between people and programs"},
+  {"name":"Recruiting capabilities","description":"Recruiting domain commands and their MCP capabilities"}]},
+ {"name":"Ingestion & evidence","description":"Source rights, ingestion sweeps, media indexing, evidence, claims and accepted facts","features":[
+  {"name":"Source rights & identity links","description":"Register source rights and evidence-based identity links"},
+  {"name":"Ingestion sweeps","description":"Ingestion, discovery and broadcast workflows"},
+  {"name":"Media reporting index","description":"Index permitted print and TV reporting; Rivals observations"},
+  {"name":"Claims & accepted facts","description":"Attributed claims, denial lineage and accepted-fact rules"}]},
+ {"name":"AI & knowledge","description":"Model invocation, knowledge indexes, retrieval and bounded AI tool use","features":[
+  {"name":"Model invocation & spend limits","description":"Approved models with durable spending limits"},
+  {"name":"Knowledge indexes & retrieval","description":"Versioned knowledge indexes and authorized retrieval"},
+  {"name":"AI tool bounds","description":"Bound AI tool use to explicit domain capabilities and scoped MCP"}]},
+ {"name":"Media & social","description":"Score media production, artifact approval, uploads and social posting","features":[
+  {"name":"Score media","description":"Reproducible score media and uploads through Core-owned paths"},
+  {"name":"Artifact approval","description":"Approve exact artifacts for visibility and posting"},
+  {"name":"Social posting","description":"Deliver approved social posts with provider receipts"}]},
+ {"name":"Notifications & events","description":"Committed event delivery, outbox relay and follow notifications","features":[
+  {"name":"Event relay & outbox","description":"Relay committed events to idempotent receivers and reconcile delivery"},
+  {"name":"Follow notifications","description":"Deliver follow notifications with scoped receipts"}]}
+]}

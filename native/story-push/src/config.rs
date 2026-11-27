@@ -111,7 +111,7 @@ pub struct Flags {
 }
 impl Flags {
     pub fn parse(args: &[String]) -> Result<Self, Failure> {
-        const BOOLEAN: [&str; 7] = [
+        const BOOLEAN: [&str; 11] = [
             "json",
             "force",
             "include-refined",
@@ -119,6 +119,10 @@ impl Flags {
             "all",
             "dry-run",
             "fresh-only",
+            "apply",
+            "reassign",
+            "sync-fields",
+            "write",
         ];
         let mut positional = Vec::new();
         let mut named: HashMap<String, Vec<Option<String>>> = HashMap::new();

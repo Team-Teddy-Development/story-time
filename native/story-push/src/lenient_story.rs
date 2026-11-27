@@ -417,12 +417,13 @@ fn value(raw: &str) -> Result<Js, String> {
     Ok(Js::Str(raw.into()))
 }
 
-const KEY_ORDER: [&str; 20] = [
+const KEY_ORDER: [&str; 21] = [
     "id",
     "title",
     "status",
     "type",
     "epic",
+    "feature",
     "persona",
     "value",
     "time_criticality",
