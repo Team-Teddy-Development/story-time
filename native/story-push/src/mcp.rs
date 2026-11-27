@@ -1247,6 +1247,128 @@ fn story_show(server: &Server, args: &Map<String, Value>) -> Result<Value, ToolE
     Ok(shown)
 }
 
+fn story_taxonomy_propose(server: &Server, args: &Map<String, Value>) -> Result<Value, ToolError> {
+    use crate::group::{
+        engine_for, namer, propose, survey, taxonomy::Taxonomy, Engine, DEFAULT_MIN_CARDS,
+        DEFAULT_MIN_CONFIDENCE,
+    };
+    let repo = server.open(args)?;
+    let path = repo.root.path.join(".story-time/taxonomy.json");
+    let text = fs::read_to_string(&path).map_err(|_| {
+        fail(
+            "taxonomy_missing",
+            "The repository has no .story-time/taxonomy.json.",
+        )
+    })?;
+    let taxonomy = Taxonomy::parse(&text).map_err(|e| fail("taxonomy_invalid", &e))?;
+    let (all, _) = repo.stories()?;
+    let open: Vec<Js> = all
+        .into_iter()
+        .filter(|s| !matches!(s.get("status"), Js::Str(x) if ["done", "split", "archived"].contains(&x.as_str())))
+        .collect();
+    let key = std::env::var("TYPESAFE_API_KEY").ok();
+    let (engine, mut primary) = engine_for(
+        key,
+        repo.settings["jev"]["model"].as_str(),
+        crate::judge::Retry::DEFAULT,
+    )
+    .map_err(|e| fail("engine_unavailable", &e))?;
+    let mut fallback = crate::group::classifier::KeywordClassifier {
+        why: "keyword fallback".into(),
+    };
+    let (gaps, placed) = survey(
+        &taxonomy,
+        open,
+        primary.as_mut(),
+        &mut fallback,
+        DEFAULT_MIN_CONFIDENCE,
+    );
+    let engine = match engine {
+        Engine::Jev(model) => json!({"mode": "jev", "model": model}),
+        Engine::Code(why) => json!({"mode": "code", "why": why}),
+    };
+    let uncovered: Vec<Value> = gaps
+        .iter()
+        .map(|s| {
+            let state = crate::group::placement::state(s);
+            json!({"id": s.get("id").string(), "title": state["title"], "statement": state["statement"]})
+        })
+        .collect();
+    let mut result = json!({"repository": repo.root.key, "engine": engine, "uncovered": uncovered});
+    match args.get("proposals") {
+        None => result["taxonomy"] = propose::to_json(&taxonomy),
+        Some(raw) => {
+            let proposals = namer::parse_proposals(&json!({ "proposals": raw }))
+                .map_err(|e| fail("invalid_proposals", &e))?;
+            let rules = propose::Rules {
+                min_cards: DEFAULT_MIN_CARDS,
+                min_confidence: DEFAULT_MIN_CONFIDENCE,
+            };
+            let (after, verdicts) = propose::verify(
+                &taxonomy,
+                &proposals,
+                &gaps,
+                &placed,
+                primary.as_mut(),
+                &mut fallback,
+                rules,
+            );
+            result["taxonomy"] = propose::to_json(&after);
+            result["verdicts"] = verdicts
+                .iter()
+                .map(|v| {
+                    json!({
+                        "epic": v.proposal.epic,
+                        "feature": v.proposal.feature,
+                        "new_epic": v.proposal.epic_description.is_some(),
+                        "accepted": v.accepted,
+                        "reason": v.reason,
+                        "captured": v.captured,
+                        "stolen": v.stolen,
+                    })
+                })
+                .collect();
+        }
+    }
+    Ok(repo.at(result))
+}
+
+fn taxonomy_propose_schema() -> Value {
+    let feature = object(
+        &["name", "description"],
+        json!({"name": {"type": "string"}, "description": {"type": "string"}}),
+    );
+    let epic = object(
+        &["name", "description", "features"],
+        json!({"name": {"type": "string"}, "description": {"type": "string"}, "features": {"type": "array", "items": feature}}),
+    );
+    let story = object(
+        &["id", "title", "statement"],
+        json!({"id": {"type": "string"}, "title": {"type": "string"}, "statement": {"type": "string"}}),
+    );
+    let ids = json!({"type": "array", "items": {"type": "string"}});
+    let verdict = object(
+        &[
+            "epic", "feature", "new_epic", "accepted", "reason", "captured", "stolen",
+        ],
+        json!({
+            "epic": {"type": "string"}, "feature": {"type": "string"}, "new_epic": {"type": "boolean"},
+            "accepted": {"type": "boolean"}, "reason": {"type": ["string", "null"]},
+            "captured": ids, "stolen": ids,
+        }),
+    );
+    with_redactions(object(
+        &["repository", "engine", "uncovered", "taxonomy"],
+        json!({
+            "repository": {"type": "string"},
+            "engine": {"type": "object"},
+            "uncovered": {"type": "array", "items": story},
+            "taxonomy": object(&["epics"], json!({"epics": {"type": "array", "items": epic}})),
+            "verdicts": {"type": "array", "items": verdict},
+        }),
+    ))
+}
+
 fn story_lint(server: &Server, args: &Map<String, Value>) -> Result<Value, ToolError> {
     let repo = server.open(args)?;
     let (all, _) = repo.stories()?;
@@ -1759,6 +1881,7 @@ enum Kind {
     Changes,
     EvidenceEntries,
     UnblockEntries,
+    Proposals,
 }
 impl Kind {
     fn schema(&self) -> Value {
@@ -1789,6 +1912,21 @@ impl Kind {
                     "type": ["string", "number", "array", "null"],
                     "items": {"type": "string"},
                 },
+            }),
+            Kind::Proposals => json!({
+                "type": "array",
+                "minItems": 1,
+                "maxItems": 10,
+                "items": object(
+                    &["epic", "feature", "feature_description", "stories"],
+                    json!({
+                        "epic": {"type": "string", "minLength": 1, "maxLength": 50},
+                        "epic_description": {"type": "string", "maxLength": 500},
+                        "feature": {"type": "string", "minLength": 1, "maxLength": 50},
+                        "feature_description": {"type": "string", "minLength": 1, "maxLength": 500},
+                        "stories": {"type": "array", "minItems": 1, "maxItems": 50, "items": {"type": "string", "maxLength": 64}}
+                    })
+                )
             }),
             Kind::UnblockEntries => json!({
                 "type": "array",
@@ -1854,6 +1992,37 @@ impl Kind {
                     && changes.values().all(|v| match v {
                         Value::Array(items) => items.iter().all(Value::is_string),
                         _ => matches!(v, Value::String(_) | Value::Number(_) | Value::Null),
+                    })
+            }
+            (Kind::Proposals, Value::Array(entries)) => {
+                let text = |v: Option<&Value>, min: usize, max: usize| {
+                    v.and_then(Value::as_str)
+                        .is_some_and(|s| (min..=max).contains(&s.chars().count()))
+                };
+                (1..=10).contains(&entries.len())
+                    && entries.iter().all(|entry| {
+                        let Some(fields) = entry.as_object() else {
+                            return false;
+                        };
+                        fields.keys().all(|k| {
+                            [
+                                "epic",
+                                "epic_description",
+                                "feature",
+                                "feature_description",
+                                "stories",
+                            ]
+                            .contains(&k.as_str())
+                        }) && text(fields.get("epic"), 1, 50)
+                            && fields
+                                .get("epic_description")
+                                .is_none_or(|v| text(Some(v), 0, 500))
+                            && text(fields.get("feature"), 1, 50)
+                            && text(fields.get("feature_description"), 1, 500)
+                            && fields["stories"].as_array().is_some_and(|ids| {
+                                (1..=50).contains(&ids.len())
+                                    && ids.iter().all(|id| text(Some(id), 1, 64))
+                            })
                     })
             }
             (Kind::UnblockEntries, Value::Array(entries)) => {
@@ -1956,7 +2125,7 @@ struct Tool {
     run: fn(&Server, &Map<String, Value>) -> Result<Value, ToolError>,
 }
 
-const TOOLS: [Tool; 14] = [
+const TOOLS: [Tool; 15] = [
     Tool {
         name: "story_config",
         hints: READ,
@@ -2032,6 +2201,21 @@ const TOOLS: [Tool; 14] = [
         required: &[],
         output: lint_schema,
         run: story_lint,
+    },
+    Tool {
+        name: "story_taxonomy_propose",
+        hints: READ,
+        description: "The taxonomy upkeep loop that story taxonomy propose runs. Without proposals: the repository's .story-time/taxonomy.json and its open stories that no taxonomy epic and feature fits (Jev on the server, or the keyword fallback). With proposals (new features under an existing or new epic, each claiming story ids): each verdict, accepted only when Jev places at least 2 of its claimed uncovered stories on it and moves no placed story, with the taxonomy as it would be. Writes nothing; the caller invents the names and opens the pull request.",
+        fields: &[
+            REPOSITORY,
+            Field {
+                name: "proposals",
+                kind: Kind::Proposals,
+            },
+        ],
+        required: &[],
+        output: taxonomy_propose_schema,
+        run: story_taxonomy_propose,
     },
     Tool {
         name: "story_velocity",
@@ -2351,6 +2535,7 @@ impl Tool {
             "story_list"
                 | "story_show"
                 | "story_lint"
+                | "story_taxonomy_propose"
                 | "story_velocity"
                 | "story_burndown"
                 | "story_forecast"

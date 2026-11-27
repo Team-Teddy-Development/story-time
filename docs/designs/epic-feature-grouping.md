@@ -141,3 +141,30 @@ Recovery:
 - ADO (`Tags`) and Gitea mirroring.
 - User-owned repositories (`/user/issue-fields`).
 - Deleting options for epics removed from the taxonomy.
+
+## Taxonomy upkeep (ST-215)
+
+The taxonomy shouldn't need a person to write every name. `story taxonomy propose` splits the work in two: **an LLM proposes names and Jev checks them**, so no model grades its own names.
+
+```
+story group (dry) ─► uncovered stories (unresolved) + a sample of placed stories
+   fewer than --min-gaps (5) uncovered → stop: no model call
+Namer port ─► ClaudeNamer: one Messages API request (claude-opus-5-5 by default, --model to change;
+             output_config.format json_schema; server-side fallbacks "default")
+             sees titles, statements and criteria under keys s1..sN, never ids; egress scan first
+           └► FileNamer: --names-from proposals.json (a person, or an agent through MCP)
+verify ─► each proposal on a trial taxonomy (Taxonomy::parse keeps the 15×15 cap and unique names);
+          accepted only when Jev places ≥ --min-cards (2) of its claimed stories on exactly that
+          epic/feature at ≥ 0.7 and moves no placed story onto it. Accepted names accumulate in order.
+--write ─► taxonomy.json gains only the accepted names. Nothing is renamed or removed.
+```
+
+**MCP.** `story_taxonomy_propose`, a read-only tool on the hosted server. Without `proposals` it returns the taxonomy and the uncovered stories. With `proposals` it returns each verdict and the taxonomy as it would be. The calling agent (for example a scheduled Claude session) invents the names and opens the pull request, so the server needs no Anthropic key.
+
+**Daily automation.** Two templates:
+- `docs/designs/taxonomy-propose.workflow.yml`: a daily cron that runs `story taxonomy propose --write` and opens a PR only when `taxonomy.json` changed.
+- `docs/designs/taxonomy-apply.workflow.yml`: runs on merge and does `story group --sync-fields`, then `story group --apply`, then `story push --all`.
+
+A person approves every new name in the PR.
+
+**Keys.** For Claude: `ANTHROPIC_API_KEY`, or `.story-time/.anthropic.env` (mode 600, refused if loose or tracked by git). It is not a `story secret` provider, so the Node-parity secret commands are unchanged. For Jev: `story secret set jev` or `TYPESAFE_API_KEY`.

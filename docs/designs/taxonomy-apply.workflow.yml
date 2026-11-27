@@ -1,0 +1,57 @@
+# Apply a merged taxonomy (ST-214/ST-215). Copy to .github/workflows/taxonomy-apply.yml.
+#
+# When taxonomy.json changes on the default branch, this workflow:
+#   1. creates or extends the organization's Epic and Feature issue fields (--sync-fields);
+#   2. places the open stories that Jev confidently fits (story group --apply);
+#   3. mirrors them to GitHub (story push), then commits the story files.
+#
+# Repository secrets:
+#   TYPESAFE_API_KEY  Jev
+#   STORY_ORG_ADMIN   a token from an organization admin (admin:org for a classic PAT), for --sync-fields
+#   STORY_TIME_TOKEN  read access to Team-Teddy-Development/story-time, to install `story`
+name: taxonomy-apply
+
+on:
+  push:
+    branches: [main]
+    paths: [".story-time/taxonomy.json"]
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+  issues: write
+
+concurrency:
+  group: taxonomy-apply
+  cancel-in-progress: false
+
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install story
+        run: |
+          git config --global url."https://x-access-token:${{ secrets.STORY_TIME_TOKEN }}@github.com/".insteadOf "https://github.com/"
+          cargo install --locked --git https://github.com/Team-Teddy-Development/story-time story-time-native --bin story
+
+      - name: Create or extend the Epic and Feature issue fields
+        env:
+          GH_TOKEN: ${{ secrets.STORY_ORG_ADMIN }}
+        run: story group --sync-fields
+
+      - name: Place stories and mirror them
+        env:
+          TYPESAFE_API_KEY: ${{ secrets.TYPESAFE_API_KEY }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          story group --apply | tee placements.txt
+          story push --all
+
+      - name: Commit the placed stories
+        run: |
+          git diff --quiet -- backlog && exit 0
+          git -c user.name="story-time" -c user.email="story-time@users.noreply.github.com" \
+            commit -m "story: place stories in the merged taxonomy" -- backlog
+          git push

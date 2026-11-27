@@ -325,18 +325,13 @@ pub(crate) fn taxonomy_cmd(
     let min_gaps = count(&s.flags, "min-gaps", DEFAULT_MIN_GAPS)?;
     let stories = targets(&s, &ids)?;
     let (engine, mut primary, mut fallback) = classifiers(&s, env, endpoints.jev, retry)?;
-    let opts = Options {
-        min_confidence: rules.min_confidence,
-        reassign: false,
-    };
-    let (mut gaps, mut placed) = (Vec::new(), Vec::new());
-    for story in stories {
-        match place(&story, &s.taxonomy, primary.as_mut(), &mut fallback, opts).outcome {
-            Outcome::Unresolved(_) => gaps.push(story),
-            Outcome::Kept if placed.len() < STABILITY_SAMPLE => placed.push(story),
-            _ => {}
-        }
-    }
+    let (gaps, placed) = survey(
+        &s.taxonomy,
+        stories,
+        primary.as_mut(),
+        &mut fallback,
+        rules.min_confidence,
+    );
     let json = s.flags.has("json");
     if gaps.len() < min_gaps {
         return Ok((
@@ -375,6 +370,52 @@ pub(crate) fn taxonomy_cmd(
         ),
         0,
     ))
+}
+
+/// Splits stories into the uncovered ones (`story group` would leave them unresolved) and a
+/// sample of those already placed in the taxonomy, for the steal check.
+pub(crate) fn survey(
+    t: &Taxonomy,
+    stories: Vec<Js>,
+    primary: &mut dyn Classifier,
+    fallback: &mut dyn Classifier,
+    min_confidence: f64,
+) -> (Vec<Js>, Vec<Js>) {
+    let opts = Options {
+        min_confidence,
+        reassign: false,
+    };
+    let (mut gaps, mut placed) = (Vec::new(), Vec::new());
+    for story in stories {
+        match place(&story, t, primary, fallback, opts).outcome {
+            Outcome::Unresolved(_) => gaps.push(story),
+            Outcome::Kept if placed.len() < STABILITY_SAMPLE => placed.push(story),
+            _ => {}
+        }
+    }
+    (gaps, placed)
+}
+
+/// Jev for a key, the keyword fallback without one; for callers outside the CLI (MCP).
+pub(crate) fn engine_for(
+    key: Option<String>,
+    model: Option<&str>,
+    retry: Retry,
+) -> Result<(Engine, Box<dyn Classifier>), String> {
+    match key.map(|k| trim(&k).to_owned()).filter(|k| !k.is_empty()) {
+        Some(key) => {
+            let model = model.unwrap_or(JEV_DEFAULT_MODEL).to_owned();
+            let client = Client::new(LIVE.jev, key, model.clone(), retry)?;
+            Ok((Engine::Jev(model), Box::new(JevClassifier { client })))
+        }
+        None => {
+            let why = "no TypeSafe key on the server";
+            Ok((
+                Engine::Code(why),
+                Box::new(KeywordClassifier { why: why.into() }),
+            ))
+        }
+    }
 }
 
 fn write_taxonomy(path: &Path, t: &Taxonomy) -> Result<(), String> {

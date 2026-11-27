@@ -77,6 +77,11 @@ fn parse(
         .collect()
 }
 
+/// `{"proposals":[...]}` whose `stories` are story ids, as a file or an MCP caller gives them.
+pub(crate) fn parse_proposals(value: &Value) -> Result<Vec<Proposal>, String> {
+    parse(value, |id| Ok(id.to_owned()))
+}
+
 /// Proposals from a JSON file: `{"proposals":[{"epic","epic_description"?,"feature",
 /// "feature_description","stories":[ids]}]}`.
 pub(crate) struct FileNamer {
@@ -95,7 +100,7 @@ impl Namer for FileNamer {
     ) -> Result<Vec<Proposal>, String> {
         let value: Value = serde_json::from_str(&self.text)
             .map_err(|e| format!("proposals: invalid JSON ({e})"))?;
-        parse(&value, |id| Ok(id.to_owned()))
+        parse_proposals(&value)
     }
 }
 
@@ -179,10 +184,12 @@ impl ClaudeNamer {
                         .json::<Value>()
                         .map_err(|_| "Anthropic returned invalid JSON.".to_string())
                 }
-                Ok(r) if [401, 403].contains(&r.status().as_u16()) => return Err(format!(
+                Ok(r) if [401, 403].contains(&r.status().as_u16()) => {
+                    return Err(format!(
                     "Anthropic rejected the API key (HTTP {}). Check it with: story secret status",
                     r.status().as_u16()
-                )),
+                ))
+                }
                 Ok(r) if r.status().as_u16() == 429 || r.status().is_server_error() => {
                     format!("Anthropic is unavailable (HTTP {}).", r.status().as_u16())
                 }
