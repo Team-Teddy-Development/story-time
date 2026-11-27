@@ -1,3 +1,4 @@
+use crate::github_fields::{self, Field, GithubApi};
 use crate::story::ado_args;
 use reqwest::blocking::Client;
 use reqwest::{Method, StatusCode, Url};
@@ -26,6 +27,8 @@ enum Backend {
         cli: Cli,
         /// Label names in the repository, listed once per process.
         labels: Option<HashSet<String>>,
+        /// The owner's issue fields, listed once per process; `Some(None)` when it has none.
+        fields: Option<Option<Vec<Field>>>,
     },
     Ado {
         organization: String,
@@ -316,6 +319,7 @@ impl Gateway {
                     repo: repo.into(),
                     cli: cli("gh"),
                     labels: None,
+                    fields: None,
                 }
             }
             "ado" => {
@@ -532,7 +536,12 @@ impl Gateway {
         let tracker = self.tracker();
         let card = crate::story::tracker_card(story, tracker, &self.config)?;
         match &mut self.backend {
-            Backend::Github { repo, cli, labels } => {
+            Backend::Github {
+                repo,
+                cli,
+                labels,
+                fields,
+            } => {
                 let names = card_labels(&card)?;
                 ensure_github_labels(cli, repo, labels, &names)?;
                 if cli.uses_github_proxy() {
@@ -540,6 +549,7 @@ impl Gateway {
                         "title": required(&card, "title")?, "body": required(&card, "body")?, "labels": names,
                     })))?;
                     let remote = github_rest_remote(repo, &created)?;
+                    mirror_fields(cli, repo, fields, &remote.remote_id, story)?;
                     if let Some(reason) = closing(story) {
                         cli.github_rest(
                             "PATCH",
@@ -564,6 +574,7 @@ impl Gateway {
                 }
                 let out = cli.run(&args, Some(required(&card, "body")?))?;
                 let id = github_created_id(&out, repo)?;
+                mirror_fields(cli, repo, fields, &id, story)?;
                 github_state(cli, repo, &id, closing(story), "OPEN")?;
                 Ok(Remote {
                     url: format!("https://github.com/{repo}/issues/{id}"),
@@ -635,9 +646,12 @@ impl Gateway {
         })?;
         let card = crate::story::tracker_card(story, self.tracker(), &self.config)?;
         match &mut self.backend {
-            Backend::Github { repo, cli, labels } => {
-                Ok(github_update(cli, repo, labels, &id, &card, story)?)
-            }
+            Backend::Github {
+                repo,
+                cli,
+                labels,
+                fields,
+            } => Ok(github_update(cli, repo, labels, fields, &id, &card, story)?),
             Backend::Ado {
                 organization,
                 project,
@@ -1110,7 +1124,7 @@ fn closing(story: &Value) -> Option<&'static str> {
 fn managed(name: &str, gitea: bool) -> bool {
     ["story", "spike", "bug", "chore", "blocked"].contains(&name)
         || (gitea && name == "not-planned")
-        || ["size:", "value:", "epic:"]
+        || ["size:", "value:", "epic:", "feature:"]
             .iter()
             .any(|prefix| name.starts_with(prefix))
 }
@@ -1147,6 +1161,7 @@ fn github_label_color(name: &str) -> &'static str {
         Some("size") => "c5def5",
         Some("value") => "fbca04",
         Some("epic") => "5319e7",
+        Some("feature") => "d4c5f9",
         _ if ["story", "spike", "bug", "chore"].contains(&name) => "0e8a16",
         _ => "ededed",
     }
@@ -1216,12 +1231,15 @@ fn github_update(
     cli: &Cli,
     repo: &str,
     labels: &mut Option<HashSet<String>>,
+    fields: &mut Option<Option<Vec<Field>>>,
     id: &str,
     card: &Value,
     story: &Value,
 ) -> Result<Remote, TrackerError> {
     if cli.uses_github_proxy() {
-        return github_rest_update(cli, repo, labels, id, card, story);
+        let remote = github_rest_update(cli, repo, labels, id, card, story)?;
+        mirror_fields(cli, repo, fields, id, story)?;
+        return Ok(remote);
     }
     let current = parse_json(&cli.run_classified(
         &strings(&[
@@ -1277,11 +1295,52 @@ fn github_update(
     }
     let body = required(card, "body").map_err(TrackerError::permanent)?;
     cli.run_classified(&args, Some(body))?;
+    mirror_fields(cli, repo, fields, id, story)?;
     github_state(cli, repo, id, closing(story), state)?;
     Ok(Remote {
         url: format!("https://github.com/{repo}/issues/{id}"),
         remote_id: id.to_string(),
     })
+}
+
+impl GithubApi for Cli {
+    fn rest(&self, method: &str, path: &str, body: Option<Value>) -> Result<Value, TrackerError> {
+        self.github_rest(method, path, body)
+    }
+}
+
+/// Mirrors a placed story's epic and feature names into the owner's `Epic` and `Feature`
+/// issue fields. Only stories with a `feature` were placed from the taxonomy, so an
+/// epic-only story keeps labels only and never fails on a legacy epic id. A failure to list
+/// the fields (for example a token without `read:org`) warns once and keeps labels only,
+/// so pushes that work today keep working.
+fn mirror_fields(
+    cli: &Cli,
+    repo: &str,
+    cache: &mut Option<Option<Vec<Field>>>,
+    issue: &str,
+    story: &Value,
+) -> Result<(), TrackerError> {
+    let text = |key: &str| story[key].as_str().map(str::trim).filter(|s| !s.is_empty());
+    let Some(feature) = text("feature") else {
+        return Ok(());
+    };
+    if cache.is_none() {
+        let owner = repo.split('/').next().unwrap_or_default();
+        *cache = Some(match github_fields::org_fields(cli, owner) {
+            Ok(fields) => fields,
+            Err(_) => {
+                eprintln!("story push: could not list the {owner} issue fields; epic and feature are mirrored as labels only.");
+                None
+            }
+        });
+    }
+    match cache {
+        Some(Some(fields)) => {
+            github_fields::mirror(cli, repo, issue, fields, text("epic"), Some(feature))
+        }
+        _ => Ok(()),
+    }
 }
 
 fn github_rest_remote(repo: &str, issue: &Value) -> Result<Remote, TrackerError> {
@@ -1388,9 +1447,30 @@ pub(crate) const ACTIONS_BOT_ID: u64 = 41898282;
 impl Gateway {
     fn github_parts(&mut self) -> Result<(&str, &Cli, &mut Option<HashSet<String>>), TrackerError> {
         match &mut self.backend {
-            Backend::Github { repo, cli, labels } => Ok((repo.as_str(), &*cli, labels)),
+            Backend::Github {
+                repo, cli, labels, ..
+            } => Ok((repo.as_str(), &*cli, labels)),
             _ => Err(TrackerError::permanent("unsupported tracker")),
         }
+    }
+
+    /// `story group --sync-fields`: makes the owner's `Epic` and `Feature` single-select issue
+    /// fields hold every taxonomy name. Needs an organization admin token.
+    pub(crate) fn sync_issue_fields(
+        &mut self,
+        epics: &[String],
+        features: &[String],
+    ) -> Result<(String, Vec<github_fields::Change>), String> {
+        let Backend::Github {
+            repo, cli, fields, ..
+        } = &mut self.backend
+        else {
+            return Err("unsupported tracker".into());
+        };
+        let owner = repo.split('/').next().unwrap_or_default().to_owned();
+        let changes = github_fields::sync(cli, &owner, epics, features).map_err(String::from)?;
+        *fields = None;
+        Ok((owner, changes))
     }
 
     /// The configured repository, `owner/name`, for GitHub and Gitea.
@@ -1412,9 +1492,16 @@ impl Gateway {
         }
         let card = crate::story::tracker_card(story, self.tracker(), &self.config)
             .map_err(TrackerError::permanent)?;
-        let (repo, cli, labels) = self.github_parts()?;
-        let repo = repo.to_string();
-        github_update(cli, &repo, labels, &id, &card, story)
+        let Backend::Github {
+            repo,
+            cli,
+            labels,
+            fields,
+        } = &mut self.backend
+        else {
+            return Err(TrackerError::permanent("unsupported tracker"));
+        };
+        github_update(cli, repo, labels, fields, &id, &card, story)
     }
 
     /// The head commit of the last successful push-triggered run of `workflow` on `branch`.
@@ -2361,6 +2448,15 @@ mod tests {
                 let mut log=OpenOptions::new().create(true).append(true).open("calls").unwrap();
                 writeln!(log,"{:?} stdin={}",args,input).unwrap();
                 if args.iter().any(|s|s=="fail") { eprintln!("private-cli-token");std::process::exit(7); }
+                if args.first().map(String::as_str)==Some("api") {
+                    let path=args.get(3).cloned().unwrap_or_default();
+                    if path.ends_with("/issue-fields") && args.get(2).map(String::as_str)==Some("GET") {
+                        match std::fs::read_to_string("fields.json") { Ok(t)=>print!("{}",t), Err(_)=>{ eprintln!("gh: Not Found (HTTP 404)"); std::process::exit(1);} }
+                    } else if path.ends_with("/issue-field-values") && args.get(2).map(String::as_str)==Some("GET") {
+                        print!("{}", std::fs::read_to_string("values.json").unwrap_or_else(|_| "[]".into()));
+                    } else { print!("{{}}"); }
+                    return;
+                }
                 if args.first().map(String::as_str)==Some("label") && args.get(1).map(String::as_str)==Some("list") {
                     print!("{}", std::fs::read_to_string("labels.json").unwrap_or_else(|_| "[]".into()));
                 } else if args.first().map(String::as_str)==Some("issue") {
@@ -2462,6 +2558,7 @@ mod tests {
                 repo: "acme/shop".into(),
                 cli: stub_cli(&tmp.0, "gh"),
                 labels: None,
+                fields: None,
             },
         }
     }
@@ -2540,6 +2637,7 @@ mod tests {
                 repo: "acme/shop".into(),
                 cli,
                 labels: None,
+                fields: None,
             },
         };
         assert_eq!(
@@ -2585,6 +2683,7 @@ mod tests {
                 repo: "acme/shop".into(),
                 cli,
                 labels: None,
+                fields: None,
             },
         };
         let started = std::time::Instant::now();
@@ -2634,5 +2733,73 @@ mod tests {
         assert!(calls.contains("\"delete\", \"--id\", \"12\""));
         assert!(calls.contains("\"--yes\""));
         assert!(!calls.contains("private-cli-token"));
+    }
+
+    const FIELDS: &str = r#"[{"id":900,"name":"Epic","data_type":"single_select","options":[{"id":11,"name":"Core cutover","color":"blue","priority":1}]},{"id":901,"name":"Feature","data_type":"text","options":null}]"#;
+
+    fn placed(status: &str) -> Value {
+        let mut s = story(status);
+        s["remote"] = json!(11);
+        s["epic"] = json!("Core cutover");
+        s["feature"] = json!("Engine call cutovers");
+        s
+    }
+
+    #[test]
+    fn github_push_mirrors_epic_and_feature_into_org_issue_fields_once_listed() {
+        let tmp = Temp::new();
+        fs::write(tmp.0.join("fields.json"), FIELDS).unwrap();
+        let mut gateway = github_gateway(&tmp);
+        gateway.update(&placed("ready")).unwrap();
+        gateway.create(&placed("ready")).unwrap();
+        let calls = fs::read_to_string(tmp.0.join("calls")).unwrap();
+        assert_eq!(
+            calls
+                .lines()
+                .filter(|l| l.contains("\"orgs/acme/issue-fields\""))
+                .count(),
+            1,
+            "the organization's fields are listed once per process: {calls}"
+        );
+        let posts: Vec<&str> = calls
+            .lines()
+            .filter(|l| l.contains("\"POST\", \"repos/acme/shop/issues/11/issue-field-values\""))
+            .collect();
+        assert_eq!(posts.len(), 2, "{calls}");
+        assert!(posts[0].ends_with(r#"stdin={"issue_field_values":[{"field_id":900,"value":"Core cutover"},{"field_id":901,"value":"Engine call cutovers"}]}"#), "{calls}");
+        assert!(
+            calls.contains("\"--add-label\", \"epic:Core cutover\""),
+            "{calls}"
+        );
+        assert!(
+            calls.contains("\"--add-label\", \"feature:Engine call cutovers\""),
+            "{calls}"
+        );
+    }
+
+    #[test]
+    fn a_missing_epic_option_fails_the_push_naming_sync_fields() {
+        let tmp = Temp::new();
+        fs::write(tmp.0.join("fields.json"), FIELDS).unwrap();
+        let mut s = placed("ready");
+        s["epic"] = json!("Recruit portal");
+        let error = github_gateway(&tmp).update_classified(&s).unwrap_err();
+        assert_eq!(error.kind, ErrorKind::Permanent);
+        assert!(
+            error.message.contains("story group --sync-fields"),
+            "{error:?}"
+        );
+    }
+
+    #[test]
+    fn an_owner_without_issue_fields_gets_labels_only() {
+        let tmp = Temp::new();
+        github_gateway(&tmp).update(&placed("ready")).unwrap();
+        let calls = fs::read_to_string(tmp.0.join("calls")).unwrap();
+        assert!(!calls.contains("issue-field-values"), "{calls}");
+        assert!(
+            calls.contains("\"--add-label\", \"feature:Engine call cutovers\""),
+            "{calls}"
+        );
     }
 }

@@ -356,6 +356,7 @@ fn read_tools_match_their_output_schemas_and_agree_with_the_cli() {
             "story_list",
             "story_show",
             "story_lint",
+            "story_taxonomy_propose",
             "story_velocity",
             "story_burndown",
             "story_forecast"
@@ -582,7 +583,7 @@ fn modern_and_legacy_clients_both_work_and_version_faults_use_their_codes() {
     );
     let tools = modern.modern("tools/list", json!({}));
     assert_eq!(tools["result"]["resultType"], "complete");
-    assert_eq!(tools["result"]["tools"].as_array().unwrap().len(), 7);
+    assert_eq!(tools["result"]["tools"].as_array().unwrap().len(), 8);
     assert!(tools["result"].get("nextCursor").is_none());
     for tool in tools["result"]["tools"].as_array().unwrap() {
         assert_eq!(
@@ -639,7 +640,7 @@ fn modern_and_legacy_clients_both_work_and_version_faults_use_their_codes() {
     assert_eq!(init["result"]["serverInfo"]["name"], "story-time");
     legacy.notify(&json!({"jsonrpc": "2.0", "method": "notifications/initialized"}));
     let tools = legacy.send(&request("tools/list", json!({})));
-    assert_eq!(tools["result"]["tools"].as_array().unwrap().len(), 7);
+    assert_eq!(tools["result"]["tools"].as_array().unwrap().len(), 8);
     assert!(tools["result"].get("resultType").is_none());
     let called = legacy.send(&request(
         "tools/call",
@@ -995,11 +996,12 @@ fn story_lint_reads_an_outside_machine_the_same_whether_it_exists() {
     server.finish();
 }
 
-const READ_TOOLS: [&str; 7] = [
+const READ_TOOLS: [&str; 8] = [
     "story_config",
     "story_list",
     "story_show",
     "story_lint",
+    "story_taxonomy_propose",
     "story_velocity",
     "story_burndown",
     "story_forecast",
@@ -1343,7 +1345,10 @@ fn story_accept_records_evidence_and_preserves_criterion_wording() {
     let second = "Given two, when run, then it passes";
     fixture.write(
         "backlog/ST-009.md",
-        &accepting("story", &format!("- [ ] {first}\n- [ ] {second}"), None),
+        &format!(
+            "{}\n## Changelog\n- 2026-11-14 set status=in-progress\n",
+            accepting("story", &format!("- [ ] {first}\n- [ ] {second}"), None)
+        ),
     );
     let before = sha256(&fixture, "ST-009");
     let mut server = fixture.writer();
@@ -1364,6 +1369,21 @@ fn story_accept_records_evidence_and_preserves_criterion_wording() {
     assert!(saved.contains("First integration test passed."));
     assert!(saved.contains("Second integration test passed."));
     server.finish();
+
+    let today = chrono::Utc::now().format("%Y-%m-%d").to_string();
+    assert!(saved.contains(&format!(
+        "- {today} set status=done \u{2014} accepted with evidence for every criterion"
+    )));
+    let metrics = fixture.cli(&["metrics", "--from", &today, "--to", &today, "--json"]);
+    let throughput = metrics["figures"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|f| f["metric"] == "throughput")
+        .unwrap();
+    assert_eq!(throughput["stories"], json!(["ST-009"]), "{metrics}");
+    let gaps = throughput["unknown"].as_array().unwrap();
+    assert!(gaps.iter().all(|g| g["id"] != "ST-009"), "{metrics}");
 }
 
 #[test]
@@ -1886,4 +1906,72 @@ fn the_agile_tools_refuse_an_oversized_story_file() {
     );
     assert_eq!(tool_error(&refused)["code"], "story_too_large");
     server.finish();
+}
+
+const TAXONOMY: &str = r#"{"epics":[{"name":"Planning","description":"Plan and share work across the team","features":[
+  {"name":"Sprint planning","description":"Plan a sprint and share it"}]}]}"#;
+
+#[test]
+fn taxonomy_propose_lists_uncovered_stories_and_judges_proposals_without_writing() {
+    let fixture = Fixture::new().with_stories(8);
+    fixture.write(".story-time/taxonomy.json", TAXONOMY);
+    let before = fixture.snapshot();
+    let mut server = fixture.server();
+    let schemas = output_schemas(&mut server);
+    let schema = &schemas["story_taxonomy_propose"];
+
+    let gaps = server.tool("story_taxonomy_propose", json!({}));
+    let gaps = structured(&gaps).clone();
+    conforms(schema, &gaps, "story_taxonomy_propose").unwrap_or_else(|e| panic!("{e}\n{gaps:#}"));
+    assert_eq!(
+        gaps["engine"]["mode"], "code",
+        "the test server has no TypeSafe key"
+    );
+    assert_eq!(gaps["taxonomy"]["epics"][0]["name"], "Planning");
+    let uncovered: Vec<String> = gaps["uncovered"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|s| s["id"].as_str().unwrap().to_owned())
+        .collect();
+    assert!(uncovered.len() >= 2, "{gaps:#}");
+    assert!(
+        !uncovered.contains(&"ST-003".to_string()),
+        "a done story (ST-003) is never uncovered"
+    );
+    assert!(gaps.get("verdicts").is_none());
+
+    let judged = server.tool(
+        "story_taxonomy_propose",
+        json!({"proposals": [
+            {"epic": "Planning", "feature": "Backlog upkeep", "feature_description": "Keep the backlog tidy", "stories": [uncovered[0], uncovered[1]]},
+            {"epic": "Planning", "feature": "Other", "feature_description": "x", "stories": ["ST-999"]}
+        ]}),
+    );
+    let judged = structured(&judged).clone();
+    conforms(schema, &judged, "story_taxonomy_propose")
+        .unwrap_or_else(|e| panic!("{e}\n{judged:#}"));
+    let verdicts = judged["verdicts"].as_array().unwrap();
+    assert_eq!(
+        verdicts[0]["accepted"], false,
+        "keyword guesses never clear the 0.7 bar"
+    );
+    assert!(
+        verdicts[0]["reason"]
+            .as_str()
+            .unwrap()
+            .starts_with("Jev placed 0 of 2 claimed stories"),
+        "{judged:#}"
+    );
+    assert_eq!(verdicts[1]["reason"], "ST-999 is not an uncovered story");
+    assert_eq!(
+        judged["taxonomy"]["epics"][0]["features"]
+            .as_array()
+            .unwrap()
+            .len(),
+        1,
+        "nothing was accepted"
+    );
+    server.finish();
+    assert_eq!(fixture.snapshot(), before, "the tool writes nothing");
 }

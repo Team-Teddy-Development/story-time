@@ -9,6 +9,8 @@ pub mod estimates;
 pub mod export;
 pub mod forecast;
 pub mod gateway;
+mod github_fields;
+mod group;
 pub mod help;
 pub mod init;
 mod js_number;
@@ -87,6 +89,8 @@ pub const NATIVE_COMMANDS: &[(&str, Native)] = &[
     ("rank", |args| rank::run(args).map(|out| (out, 0))),
     ("assignment", assignment::run),
     ("judge", judge::run),
+    ("group", group::run),
+    ("taxonomy", group::run_taxonomy),
     ("set", |args| set::run(args).map(|out| (out, 0))),
     ("split", |args| split::run(args).map(|out| (out, 0))),
     ("check-pr", check_pr::run),
