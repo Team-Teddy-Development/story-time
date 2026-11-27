@@ -6,6 +6,7 @@ const KEY_ORDER: &[&str] = &[
     "status",
     "type",
     "epic",
+    "feature",
     "persona",
     "value",
     "time_criticality",
@@ -366,6 +367,9 @@ pub fn render_card(story: &Value, tracker: &str, config: &Value) -> Result<Value
             }
             if truthy(story.get("epic")) {
                 labels.push(format!("epic:{}", display(&story["epic"])));
+            }
+            if truthy(story.get("feature")) {
+                labels.push(format!("feature:{}", display(&story["feature"])));
             }
             with_frontmatter_labels(&mut labels, story);
             let body = format!("{}\n\n{}", markdown_body(story), footer(story));

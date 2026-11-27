@@ -26,6 +26,11 @@ Commands:
   push   <id...> | --all [--dry-run]       Create/update items in GitHub or ADO (only if sync is not "off")
   judge  [id...]                           Judgement calls: need vs solution, real benefit, testable criteria,
                                            type, size, split pattern. Jev with a key, code heuristics without
+  group  [id...] [--apply] [--reassign] [--min-confidence 0.7] [--taxonomy PATH] [--sync-fields]
+                                           Place open stories in named epics and features from
+                                           .story-time/taxonomy.json. Jev decides with a key; dry run
+                                           unless --apply. --sync-fields creates the GitHub Epic and
+                                           Feature issue fields and their options (org admin)
   secret set|status|clear <github|ado|gitea|jev> Store a token or API key in .story-time/.<name>.env (0600, git-ignored)
   machine check|criteria|diagram <file>    Check a state machine (model/state/<entity>.toml), or print its
                                            Given/When/Then criteria or its Mermaid diagram (exit 1 on defects)

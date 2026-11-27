@@ -12,18 +12,18 @@ use std::{
     },
 };
 
-const KEY: &str = "tsk_fake_0123456789abcdef0123456789abcdef";
+pub(crate) const KEY: &str = "tsk_fake_0123456789abcdef0123456789abcdef";
 static NEXT: AtomicUsize = AtomicUsize::new(0);
 
-struct Request {
-    head: String,
-    body: String,
+pub(crate) struct Request {
+    pub(crate) head: String,
+    pub(crate) body: String,
 }
 impl Request {
-    fn json(&self) -> Value {
+    pub(crate) fn json(&self) -> Value {
         serde_json::from_str(&self.body).unwrap()
     }
-    fn is_canary(&self) -> bool {
+    pub(crate) fn is_canary(&self) -> bool {
         self.json()["questions"]
             .as_object()
             .unwrap()
@@ -32,15 +32,15 @@ impl Request {
     }
 }
 
-type Reply = (u16, String, Vec<(&'static str, &'static str)>);
+pub(crate) type Reply = (u16, String, Vec<(&'static str, &'static str)>);
 
 /// A local HTTP server standing in for the Jev API; `respond` sees each request and its number.
-struct Fake {
-    url: String,
+pub(crate) struct Fake {
+    pub(crate) url: String,
     requests: Arc<Mutex<Vec<Request>>>,
 }
 impl Fake {
-    fn new(respond: impl Fn(&Value, usize) -> Reply + Send + 'static) -> Self {
+    pub(crate) fn new(respond: impl Fn(&Value, usize) -> Reply + Send + 'static) -> Self {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let url = format!("http://{}/v1/systemone", listener.local_addr().unwrap());
         let requests = Arc::new(Mutex::new(Vec::new()));
@@ -91,13 +91,13 @@ impl Fake {
         });
         Self { url, requests }
     }
-    fn requests(&self) -> std::sync::MutexGuard<'_, Vec<Request>> {
+    pub(crate) fn requests(&self) -> std::sync::MutexGuard<'_, Vec<Request>> {
         self.requests.lock().unwrap()
     }
 }
 
 /// `answerFor` and `okBody` from the Node test helper `fake-jev.mjs`.
-fn answer_for(id: &str, q: &Value) -> Value {
+pub(crate) fn answer_for(id: &str, q: &Value) -> Value {
     match q["type"].as_str().unwrap() {
         "noul" if id == "canary_true" => json!({"type": "noul", "noul": 0.95}),
         "noul" if id.starts_with("canary_false") => json!({"type": "noul", "noul": 0.04}),
@@ -136,7 +136,7 @@ fn status(code: u16) -> impl Fn(&Value, usize) -> Reply {
     move |_, _| (code, json!({"error_type": "stub"}).to_string(), vec![])
 }
 
-const FAST: Retry = Retry {
+pub(crate) const FAST: Retry = Retry {
     base_delay_ms: 1.0,
     max_delay_ms: 2.0,
     ..Retry::DEFAULT
