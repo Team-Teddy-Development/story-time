@@ -75,6 +75,7 @@ impl Project {
         let env = Env {
             key: fake.map(|_| KEY.into()),
             switch: None,
+            anthropic: None,
         };
         let url = fake
             .map(|f| f.url.clone())
@@ -274,4 +275,234 @@ fn sync_fields_report_lists_each_change() {
         }],
     );
     assert_eq!(same, "o issue fields:\n  Epic: unchanged\n");
+}
+
+// ---- story taxonomy propose ----
+
+use super::{taxonomy_cmd, Endpoints};
+
+impl Project {
+    fn add(&self, id: &str, title: &str, frontmatter: &str) {
+        fs::write(
+            self.0.join(format!("backlog/{id}.md")),
+            format!("---\nid: {id}\ntitle: {title}\nstatus: refined\ntype: story\n{frontmatter}---\n\n## Story\nAs a program admin, I want to {title}.\n\n## Acceptance Criteria\n- [ ] Given x, when y, then z\n\n## Changelog\n- 2026-11-01 created\n"),
+        )
+        .unwrap();
+    }
+    fn taxonomy_run(
+        &self,
+        jev: &Fake,
+        anthropic: Option<&Fake>,
+        extra: &[&str],
+    ) -> Result<String, String> {
+        let env = Env {
+            key: Some(KEY.into()),
+            switch: None,
+            anthropic: anthropic.map(|_| "sk-ant-test".into()),
+        };
+        let anthropic_url = anthropic
+            .map(|f| f.url.clone())
+            .unwrap_or_else(|| "http://127.0.0.1:9/unused".into());
+        let endpoints = Endpoints {
+            jev: &jev.url,
+            anthropic: &anthropic_url,
+        };
+        let mut args = vec!["propose"];
+        args.extend_from_slice(extra);
+        taxonomy_cmd(&self.args(&args), &env, endpoints, FAST)
+            .map(|(out, _)| out)
+            .map_err(|f| f.message)
+    }
+    fn taxonomy_text(&self) -> String {
+        fs::read_to_string(self.0.join(".story-time/taxonomy.json")).unwrap()
+    }
+}
+
+/// A Jev that answers by story title: the option whose text starts with the epic or feature
+/// name for that title, `none_fit` when the question offers no such option.
+fn by_title(request: &Value, _: usize) -> Reply {
+    let questions = request["questions"].as_object().unwrap();
+    if questions.keys().any(|k| k.starts_with("canary_")) {
+        return first_options(request, 0);
+    }
+    let title = request["state"]["title"].as_str().unwrap_or("");
+    let (epic, feature) = if title.contains("guardian") {
+        ("Athletes & privacy", "Guardian claim review")
+    } else if title.contains("results") || title.contains("Keep") {
+        ("Core cutover", "Engine call cutovers")
+    } else {
+        ("-", "-")
+    };
+    let answers: serde_json::Map<String, Value> = questions
+        .iter()
+        .map(|(id, q)| {
+            let want = if id == "epic" { epic } else { feature };
+            let key = q["criteria"]
+                .as_object()
+                .unwrap()
+                .iter()
+                .find(|(_, text)| text.as_str().unwrap().starts_with(&format!("{want}:")))
+                .map(|(k, _)| k.clone())
+                .unwrap_or("none_fit".into());
+            (
+                id.clone(),
+                json!({"type":"choice","choice":key,"confidence":0.93,"probabilities":{}}),
+            )
+        })
+        .collect();
+    (200, json!({"model":"jev-1.14.0","answers":answers,"usage":{"input_tokens":300,"output_tokens":9}}).to_string(), vec![])
+}
+
+fn guardian_project() -> Project {
+    let p = Project::new(Some(TAXONOMY));
+    p.add("VC-301", "review guardian claims before approval", "");
+    p.add("VC-302", "escalate disputed guardian claims", "");
+    p.add(
+        "VC-076",
+        "Keep engine calls on Core",
+        "epic: Core cutover\nfeature: Engine call cutovers\n",
+    );
+    p
+}
+
+const PROPOSALS: &str = r#"{"proposals":[
+  {"epic":"Athletes & privacy","epic_description":"Athlete profiles, guardians and personal data","feature":"Guardian claim review","feature_description":"Review, approve and escalate guardian claims","stories":["VC-301","VC-302"]},
+  {"epic":"Core cutover","feature":"Media cutovers","feature_description":"Move media calls onto Core","stories":["VC-074"]}]}"#;
+
+#[test]
+fn taxonomy_propose_dry_run_reports_each_verdict_and_writes_nothing() {
+    let p = guardian_project();
+    let file = p.0.join("proposals.json");
+    fs::write(&file, PROPOSALS).unwrap();
+    let before = p.taxonomy_text();
+    let fake = Fake::new(by_title);
+    let out = p
+        .taxonomy_run(
+            &fake,
+            None,
+            &["--names-from", file.to_str().unwrap(), "--min-gaps", "2"],
+        )
+        .unwrap();
+    assert!(
+        out.starts_with("engine: jev (jev-1.13.0)\nnamer: file\n3 uncovered stories.\n"),
+        "{out}"
+    );
+    assert!(out.contains("\naccepted  Athletes & privacy / Guardian claim review (new epic)\n  covers VC-301, VC-302\n"), "{out}");
+    assert!(out.contains("\nrejected  Core cutover / Media cutovers: Jev placed 0 of 1 claimed stories on it; at least 2 are needed\n"), "{out}");
+    assert!(out.ends_with("1 accepted, 1 rejected. Dry run: rerun with --write to add the accepted names to taxonomy.json.\n"), "{out}");
+    assert_eq!(p.taxonomy_text(), before);
+}
+
+#[test]
+fn taxonomy_propose_write_adds_only_the_accepted_names_and_json_reports_them() {
+    let p = guardian_project();
+    let file = p.0.join("proposals.json");
+    fs::write(&file, PROPOSALS).unwrap();
+    let fake = Fake::new(by_title);
+    let out = p
+        .taxonomy_run(
+            &fake,
+            None,
+            &[
+                "--names-from",
+                file.to_str().unwrap(),
+                "--min-gaps",
+                "2",
+                "--write",
+                "--json",
+            ],
+        )
+        .unwrap();
+    let report: Value = serde_json::from_str(&out).unwrap();
+    assert_eq!(report["wrote"], true);
+    assert_eq!(report["uncovered"], 3);
+    assert_eq!(report["proposals"][0]["accepted"], true);
+    assert_eq!(report["proposals"][0]["new_epic"], true);
+    assert_eq!(
+        report["proposals"][0]["captured"],
+        json!(["VC-301", "VC-302"])
+    );
+    assert_eq!(report["proposals"][1]["accepted"], false);
+    let t = super::taxonomy::Taxonomy::parse(&p.taxonomy_text()).unwrap();
+    let names: Vec<&str> = t.epics.iter().map(|e| e.name.as_str()).collect();
+    assert_eq!(
+        names,
+        [
+            "Core cutover",
+            "Platform & infrastructure",
+            "Athletes & privacy"
+        ]
+    );
+    assert_eq!(
+        t.epic("Core cutover").unwrap().features.len(),
+        2,
+        "the rejected Media cutovers was not added"
+    );
+    let grouped: Value =
+        serde_json::from_str(&p.run(Some(&fake), &["VC-301", "--json"]).unwrap()).unwrap();
+    assert_eq!(
+        grouped["placements"][0]["feature"]["name"], "Guardian claim review",
+        "story group now places the story on the new name"
+    );
+    assert_eq!(grouped["placements"][0]["outcome"], "assigned");
+}
+
+#[test]
+fn taxonomy_propose_with_too_few_uncovered_stories_calls_no_model() {
+    let p = guardian_project();
+    let fake = Fake::new(by_title);
+    let out = p.taxonomy_run(&fake, None, &[]).unwrap();
+    assert!(
+        out.ends_with(
+            "3 uncovered stories; at least 5 are needed to propose names. Nothing to do.\n"
+        ),
+        "{out}"
+    );
+}
+
+#[test]
+fn taxonomy_propose_asks_claude_and_proves_its_names_with_jev() {
+    let p = guardian_project();
+    let jev = Fake::new(by_title);
+    let claude = Fake::new(|request: &Value, _| {
+        let task = request["messages"][0]["content"].as_str().unwrap();
+        let stories: Value = serde_json::from_str(&task[task.find('{').unwrap()..]).unwrap();
+        let keys: Vec<String> = stories["stories"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|s| s["title"].as_str().unwrap().contains("guardian"))
+            .map(|s| s["key"].as_str().unwrap().to_owned())
+            .collect();
+        let text = json!({"proposals":[{"epic":"Athletes & privacy","epic_description":"Athlete profiles, guardians and personal data","feature":"Guardian claim review","feature_description":"Review guardian claims","stories":keys}]}).to_string();
+        (200, json!({"content":[{"type":"text","text":text}],"stop_reason":"end_turn","model":"claude-opus-5-5"}).to_string(), vec![])
+    });
+    let out = p
+        .taxonomy_run(&jev, Some(&claude), &["--min-gaps", "2", "--write"])
+        .unwrap();
+    assert!(out.contains("namer: claude-opus-5-5\n"), "{out}");
+    assert!(
+        out.contains("accepted  Athletes & privacy / Guardian claim review (new epic)"),
+        "{out}"
+    );
+    assert!(out.ends_with("Wrote 1 name to taxonomy.json. Review it in a pull request, then run story group --sync-fields and story group --apply.\n"), "{out}");
+    assert_eq!(claude.requests().len(), 1, "one Messages API request");
+    assert!(
+        !claude.requests()[0].body.contains("VC-30"),
+        "no ids sent to Claude"
+    );
+}
+
+#[test]
+fn taxonomy_propose_without_a_namer_says_how_to_add_one() {
+    let p = guardian_project();
+    let fake = Fake::new(by_title);
+    assert_eq!(
+        p.taxonomy_run(&fake, None, &["--min-gaps", "2"]).unwrap_err(),
+        "No Anthropic key: set ANTHROPIC_API_KEY (or .story-time/.anthropic.env, mode 600), or pass --names-from proposals.json."
+    );
+    assert_eq!(
+        p.taxonomy_run(&fake, None, &["--max", "0"]).unwrap_err(),
+        "--max must be a whole number of 1 or more, got \"0\"."
+    );
 }

@@ -1028,7 +1028,7 @@ static EGRESS: LazyLock<[Regex; 3]> = LazyLock::new(|| {
 });
 
 /// `scanPayload(...).length > 0`: any string that looks like personal data or a secret.
-fn egress_findings(v: &Value) -> bool {
+pub(crate) fn egress_findings(v: &Value) -> bool {
     match v {
         Value::String(s) => EGRESS.iter().any(|re| re.is_match(s)),
         Value::Array(items) => items.iter().any(egress_findings),

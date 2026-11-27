@@ -163,6 +163,19 @@ pub(crate) fn jev_key(dir: &Path) -> Result<Option<String>, String> {
     load(dir, &PROVIDERS[3])
 }
 
+/// The stored Anthropic key in `dir` (`.anthropic.env`, `ANTHROPIC_API_KEY=`), under the same
+/// refusals. It is not a `story secret` provider, so the Node-parity commands are unchanged;
+/// CI passes `ANTHROPIC_API_KEY` in the environment instead.
+pub(crate) fn anthropic_key(dir: &Path) -> Result<Option<String>, String> {
+    const ANTHROPIC: Provider = Provider {
+        name: "anthropic",
+        file: ".anthropic.env",
+        variable: "ANTHROPIC_API_KEY",
+        label: "Anthropic",
+    };
+    load(dir, &ANTHROPIC)
+}
+
 /// Refuses a group- or world-readable file, or one git tracks, the way ssh refuses a loose private key.
 fn load(dir: &Path, provider: &Provider) -> Result<Option<String>, String> {
     let path = dir.join(provider.file);

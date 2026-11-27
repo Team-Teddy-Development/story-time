@@ -176,3 +176,102 @@ pub(crate) fn sync(org: &str, changes: &[crate::github_fields::Change]) -> Strin
     }
     out
 }
+
+/// The `story taxonomy propose` report.
+pub(crate) fn proposals(
+    engine: &Engine,
+    namer: Option<&str>,
+    gaps: usize,
+    min_gaps: usize,
+    verdicts: &[super::propose::Verdict],
+    wrote: bool,
+    json: bool,
+) -> String {
+    let plural = |n: usize, one: &str, many: &str| {
+        if n == 1 {
+            format!("{n} {one}")
+        } else {
+            format!("{n} {many}")
+        }
+    };
+    if json {
+        let engine = match engine {
+            Engine::Jev(model) => json!({"mode": "jev", "model": model}),
+            Engine::Code(why) => json!({"mode": "code", "why": why}),
+        };
+        let proposals: Vec<Value> = verdicts
+            .iter()
+            .map(|v| {
+                json!({
+                    "epic": v.proposal.epic,
+                    "new_epic": v.proposal.epic_description.is_some(),
+                    "epic_description": v.proposal.epic_description,
+                    "feature": v.proposal.feature,
+                    "feature_description": v.proposal.feature_description,
+                    "stories": v.proposal.stories,
+                    "accepted": v.accepted,
+                    "reason": v.reason,
+                    "captured": v.captured,
+                    "stolen": v.stolen,
+                })
+            })
+            .collect();
+        let skipped = namer
+            .is_none()
+            .then(|| format!("at least {min_gaps} uncovered stories are needed to propose names"));
+        return format!(
+            "{}\n",
+            json!({"engine": engine, "namer": namer, "uncovered": gaps, "skipped": skipped, "proposals": proposals, "wrote": wrote})
+        );
+    }
+    let mut out = match engine {
+        Engine::Jev(model) => format!("engine: jev ({model})\n"),
+        Engine::Code(why) => format!("engine: code ({why})\n"),
+    };
+    let Some(namer) = namer else {
+        out.push_str(&format!(
+            "{}; at least {min_gaps} are needed to propose names. Nothing to do.\n",
+            plural(gaps, "uncovered story", "uncovered stories")
+        ));
+        return out;
+    };
+    out.push_str(&format!(
+        "namer: {namer}\n{}.\n",
+        plural(gaps, "uncovered story", "uncovered stories")
+    ));
+    for v in verdicts {
+        let name = format!("{} / {}", v.proposal.epic, v.proposal.feature);
+        let new = if v.proposal.epic_description.is_some() {
+            " (new epic)"
+        } else {
+            ""
+        };
+        if v.accepted {
+            out.push_str(&format!(
+                "\naccepted  {name}{new}\n  covers {}\n",
+                v.captured.join(", ")
+            ));
+        } else {
+            out.push_str(&format!(
+                "\nrejected  {name}: {}\n",
+                v.reason.as_deref().unwrap_or("")
+            ));
+        }
+    }
+    let accepted = verdicts.iter().filter(|v| v.accepted).count();
+    out.push_str(&format!(
+        "\n{accepted} accepted, {} rejected. ",
+        verdicts.len() - accepted
+    ));
+    if wrote {
+        out.push_str(&format!(
+            "Wrote {} to taxonomy.json. Review it in a pull request, then run story group --sync-fields and story group --apply.\n",
+            plural(accepted, "name", "names")
+        ));
+    } else if accepted == 0 {
+        out.push_str("Nothing to add.\n");
+    } else {
+        out.push_str("Dry run: rerun with --write to add the accepted names to taxonomy.json.\n");
+    }
+    out
+}

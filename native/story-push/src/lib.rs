@@ -90,6 +90,7 @@ pub const NATIVE_COMMANDS: &[(&str, Native)] = &[
     ("assignment", assignment::run),
     ("judge", judge::run),
     ("group", group::run),
+    ("taxonomy", group::run_taxonomy),
     ("set", |args| set::run(args).map(|out| (out, 0))),
     ("split", |args| split::run(args).map(|out| (out, 0))),
     ("check-pr", check_pr::run),
